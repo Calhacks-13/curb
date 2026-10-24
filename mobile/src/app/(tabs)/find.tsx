@@ -28,9 +28,19 @@ import { getDeviceId, newCaptureSessionId, type FrameContext } from "@/features/
 import { useDriverLocation } from "@/features/capture/useDriverLocation";
 import { ageSeconds } from "@/features/find/freshness";
 import { mergeAlert, newOpening, worthInterruptingRoute, type SpotAlert } from "@/features/find/newSpots";
-import { findOptions, mapPills, mapSignature, mapStalls, mapZones, type FindOption, type SearchArea } from "@/features/find/options";
+import {
+  findOptions,
+  mapPills,
+  mapSignature,
+  mapStalls,
+  mapZones,
+  myReservation,
+  type FindOption,
+  type SearchArea,
+} from "@/features/find/options";
 import { replacementFor, requestRoute, type Route } from "@/features/find/route";
 import { useFreshnessClock } from "@/features/find/useFreshnessClock";
+import { useBooking } from "@/features/find/useBooking";
 import { useDrivewayBooking } from "@/features/find/useDrivewayBooking";
 import { useParkingState } from "@/features/find/useParkingState";
 import { useSpaceDetail } from "@/features/find/useSpaceDetail";
@@ -92,6 +102,9 @@ export default function FindScreen() {
   const userId = useSession().session?.user.id ?? null;
   const now = useFreshnessClock();
   const options = useMemo(() => findOptions(state, now, driver.position, userId, area), [state, now, driver.position, userId, area]);
+  // Booked driveways are map context only; never list them or offer them as a replacement.
+  const offered = useMemo(() => options.filter((o) => !o.booked), [options]);
+  const reservation = myReservation(options);
   const { checkout, reserve, pay, cancel, reset } = useDrivewayBooking(() => haptics.success());
 
   // Frame metadata for camera sampling.
@@ -172,7 +185,7 @@ export default function FindScreen() {
   }, [state.zones, area, send, mapGen]);
 
   useEffect(() => {
-    send({ type: "setStalls", stalls: mapStalls(options) });
+    send({ type: "setStalls", stalls: mapStalls(offered) });
     send({ type: "setPills", pills: mapPills(options) });
     // `options` changes every tick; the signature only when a bay appears, ages or goes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -260,7 +273,7 @@ export default function FindScreen() {
   // Taken or stale while routing: offer a replacement, but only change on confirm.
   const replacement =
     sheet.mode === "route" && !keptRoutes[sheet.id] && optionById(sheet.id)?.kind !== "driveway"
-      ? replacementFor(sheet.id, sheet.position, options)
+      ? replacementFor(sheet.id, sheet.position, offered)
       : null;
   const keepRoute = () => sheet.mode === "route" && setKeptRoutes((k) => ({ ...k, [sheet.id]: true }));
   const acceptReplacement = () => {
@@ -288,11 +301,14 @@ export default function FindScreen() {
   // reopening returns to payment. A driveway this driver already booked shows its receipt.
   const driveway = sheet.mode === "driveway" ? state.driveways[sheet.id] : undefined;
   const drivewayOption = sheet.mode === "driveway" ? optionById(sheet.id) : null;
-  const myBooking =
-    driveway &&
-    (checkout.booking?.driveway_id === driveway.id && checkout.phase === "confirmed"
+  const knownBooking = driveway
+    ? checkout.booking?.driveway_id === driveway.id && checkout.phase === "confirmed"
       ? checkout.booking
-      : Object.values(state.bookings).find((b) => b.driveway_id === driveway.id && b.driver_id === userId && b.state === "CONFIRMED"));
+      : Object.values(state.bookings).find((b) => b.driveway_id === driveway.id && b.driver_id === userId && b.state === "CONFIRMED")
+    : undefined;
+  // After a reload the confirmation event is gone; the driveway still names its booking.
+  const bookedByMe = driveway?.state === "BOOKED" && driveway.held_by_user_id === userId;
+  const myBooking = useBooking(bookedByMe ? (driveway?.active_booking?.id ?? null) : null, knownBooking ?? undefined) ?? knownBooking;
   const drivewayDone = () => {
     reset();
     closeSheet();
@@ -353,7 +369,14 @@ export default function FindScreen() {
               </Pressable>
             </View>
           ) : (
-            <NearbyList options={options} load={load} locating={live && !location.position} onOpen={open} onRetry={refresh} />
+            <NearbyList
+              options={offered}
+              reservation={reservation}
+              load={load}
+              locating={live && !location.position}
+              onOpen={open}
+              onRetry={refresh}
+            />
           ))}
         {sheet.mode === "detail" && detailOption && (
           <>
@@ -394,6 +417,7 @@ export default function FindScreen() {
                 driveway={driveway}
                 distanceM={drivewayOption.distanceM}
                 holding={checkout.phase === "holding"}
+                own={drivewayOption.own}
                 error={checkout.error}
                 onReserve={() => reserve(driveway)}
                 onClose={closeSheet}
@@ -418,7 +442,7 @@ export default function FindScreen() {
           <NewSpotBanner
             key={spotAlert.ids[0]}
             alert={spotAlert}
-            options={options}
+            options={offered}
             routing={sheet.mode === "route"}
             reduceMotion={reduceMotion}
             onOpen={open}

@@ -237,13 +237,15 @@ export const MAP_RUNTIME_JS = String.raw`
           post({ type: "spotTapped", id: p.id });
         });
         var marker = new mapboxgl.Marker({ element: el, anchor: "bottom" }).setLngLat(p.position).addTo(map);
-        entry = pills[p.id] = { marker: marker, el: el, kind: null, label: null, mine: null };
+        entry = pills[p.id] = { marker: marker, el: el, kind: null, label: null, mine: null, muted: null };
       }
       entry.marker.setLngLat(p.position);
-      if (entry.kind !== p.kind || entry.label !== p.label || entry.mine !== !!p.mine) {
+      if (entry.kind !== p.kind || entry.label !== p.label || entry.mine !== !!p.mine || entry.muted !== !!p.muted) {
         entry.kind = p.kind;
         entry.label = p.label;
         entry.mine = !!p.mine;
+        entry.muted = !!p.muted;
+        entry.el.classList.toggle("is-muted", entry.muted);
         entry.el.dataset.kind = p.kind;
         entry.el.setAttribute("aria-label", p.label);
         entry.el.querySelector(".callout").innerHTML = chipHtml(p.kind, p.mine) + "<span>" + labelHtml(p.label) + "</span>";

@@ -1,6 +1,6 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { font, ink, radius, SEP } from "@/config/tokens";
+import { font, ink, radius, SEP, status } from "@/config/tokens";
 import type { FindOption } from "@/features/find/options";
 import type { ParkingLoad } from "@/features/find/useParkingState";
 
@@ -8,6 +8,8 @@ import { OptionIcon } from "../OptionIcon";
 
 type Props = {
   options: FindOption[];
+  /** The driver's booked driveway, pinned above the list. */
+  reservation?: FindOption | null;
   load: ParkingLoad;
   /** Live mode waiting for the first location fix. */
   locating?: boolean;
@@ -18,11 +20,31 @@ type Props = {
 const MAX_ROWS = 4;
 
 /** Ranked nearby options: fresh curb openings first, then the guaranteed driveway, then aging. */
-export function NearbyList({ options, load, locating = false, onOpen, onRetry }: Props) {
-  const rows = options.slice(0, MAX_ROWS);
+export function NearbyList({ options, reservation = null, load, locating = false, onOpen, onRetry }: Props) {
+  const rows = options.filter((o) => o.id !== reservation?.id).slice(0, MAX_ROWS);
 
   return (
     <View>
+      {reservation && (
+        <Pressable
+          onPress={() => onOpen(reservation)}
+          accessibilityRole="button"
+          accessibilityLabel={`Your reservation. ${reservation.detail}`}
+          accessibilityHint="Opens the receipt and route"
+          style={({ pressed }) => [styles.reservation, pressed && styles.rowPressed]}
+        >
+          <OptionIcon kind="driveway" mine />
+          <View style={styles.rowText}>
+            <Text style={styles.reservationLabel}>Your reservation</Text>
+            <Text style={styles.rowTitle}>Private driveway</Text>
+            <Text style={styles.rowDetail} numberOfLines={1}>
+              {reservation.detail}
+            </Text>
+          </View>
+          <Text style={styles.trailing}>Receipt</Text>
+        </Pressable>
+      )}
+
       <View style={styles.header}>
         <Text style={styles.title} accessibilityRole="header">
           Parking near you
@@ -84,6 +106,17 @@ const styles = StyleSheet.create({
   subtitle: { fontFamily: font.regular, fontSize: 13, color: ink.grey500 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, height: 58, paddingHorizontal: 10, borderRadius: radius.button },
   rowPressed: { backgroundColor: ink.grey100 },
+  reservation: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderRadius: radius.button,
+    borderWidth: 1.5,
+    borderColor: status.driveway,
+  },
+  reservationLabel: { fontFamily: font.semibold, fontSize: 12, color: status.driveway, marginTop: 2 },
   rowText: { flex: 1 },
   rowTitle: { fontFamily: font.bold, fontSize: 16, color: ink.black, marginTop: 2 },
   rowDetail: { fontFamily: font.regular, fontSize: 13, color: ink.grey500 },

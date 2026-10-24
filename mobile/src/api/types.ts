@@ -58,6 +58,8 @@ export type Driveway = {
   availability_timezone: "America/Los_Angeles";
   state: DrivewayState;
   held_by_user_id: string | null;
+  /** The live server's summary of the hold or booking, when there is one. */
+  active_booking?: { id: string; state: BookingState; payment_status: string } | null;
   version: number;
 };
 

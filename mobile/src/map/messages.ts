@@ -25,7 +25,7 @@ export type MapZone = { id: string; coordinates: LngLat[] };
 export type MapStall = { id: string; kind: StallKind; ring: LngLat[] };
 
 /** A callout. Text and chip shape carry the meaning, not color alone. */
-export type MapPill = { id: string; kind: StallKind; label: string; position: LngLat; mine?: boolean };
+export type MapPill = { id: string; kind: StallKind; label: string; position: LngLat; mine?: boolean; muted?: boolean };
 
 export type AppToMap =
   | { type: "setMood"; mood: Mood; animate: boolean }
