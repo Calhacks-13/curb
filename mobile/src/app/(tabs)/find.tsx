@@ -41,6 +41,7 @@ import {
 import { replacementFor, requestRoute, type Route } from "@/features/find/route";
 import { useFreshnessClock } from "@/features/find/useFreshnessClock";
 import { useBooking } from "@/features/find/useBooking";
+import { useCheckoutWallet, usePaymentPhase } from "@/features/find/useCheckoutWallet";
 import { useDrivewayBooking } from "@/features/find/useDrivewayBooking";
 import { useParkingState } from "@/features/find/useParkingState";
 import { useSpaceDetail } from "@/features/find/useSpaceDetail";
@@ -309,6 +310,9 @@ export default function FindScreen() {
   // After a reload the confirmation event is gone; the driveway still names its booking.
   const bookedByMe = driveway?.state === "BOOKED" && driveway.held_by_user_id === userId;
   const myBooking = useBooking(bookedByMe ? (driveway?.active_booking?.id ?? null) : null, knownBooking ?? undefined) ?? knownBooking;
+  const inCheckout = checkout.phase === "review" || checkout.phase === "failed";
+  const checkoutWallet = useCheckoutWallet(inCheckout);
+  const paymentStep = usePaymentPhase(checkout.booking?.id ?? null, checkout.phase === "processing");
   const drivewayDone = () => {
     reset();
     closeSheet();
@@ -409,6 +413,11 @@ export default function FindScreen() {
                 phase={checkout.phase}
                 error={checkout.error}
                 demo={mode === "demo"}
+                wallet={checkoutWallet.wallet}
+                walletFailed={checkoutWallet.failed}
+                topUp={checkoutWallet.topUp}
+                step={paymentStep}
+                onTopUp={checkoutWallet.requestTopUp}
                 onPay={pay}
                 onCancel={() => cancel(driveway)}
               />

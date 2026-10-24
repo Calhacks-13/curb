@@ -17,9 +17,11 @@ import {
   type FrameAccepted,
   type FrameMetadata,
   type NearbyParkingResponse,
+  type PaymentProgress,
   type RealtimeEvent,
   type Session,
   type SpaceDetail,
+  type WalletInfo,
 } from "./types";
 
 export { ApiError };
@@ -40,6 +42,11 @@ export interface CurbApi {
   cancelHold(drivewayId: string, bookingId: string): Promise<Driveway>;
   recoverDriveway(drivewayId: string, expectedVersion: number): Promise<Driveway>;
   executePayment(bookingId: string): Promise<Booking>;
+  /** Where a payment is right now, for the live checkout steps. */
+  paymentProgress(bookingId: string): Promise<PaymentProgress>;
+  wallet(): Promise<WalletInfo>;
+  /** Requests testnet USDC for the checkout wallet. */
+  topUpWallet(): Promise<{ transaction_hash: string; explorer_url: string }>;
   booking(bookingId: string): Promise<Booking>;
   uploadFrame(jpegUri: string, meta: FrameMetadata): Promise<FrameAccepted>;
   connectRealtime(onEvent: (e: RealtimeEvent) => void, onStatus?: (s: RealtimeStatus) => void): RealtimeConnection;
@@ -57,7 +64,11 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
       },
       body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) throw new ApiError(res.status, `${method} ${path} failed (${res.status})`);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
+      const code = typeof body?.code === "string" ? body.code : null;
+      throw new ApiError(res.status, `${method} ${path} failed (${res.status})`, code);
+    }
     return (await res.json()) as T;
   }
 
@@ -86,6 +97,9 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
       );
       return "booking" in res ? res.booking : res;
     },
+    paymentProgress: (bookingId) => call("GET", `/v1/payments/${encodeURIComponent(bookingId)}`, undefined, paymentsUrl),
+    wallet: () => call("GET", "/v1/wallet", undefined, paymentsUrl),
+    topUpWallet: () => call("POST", "/v1/wallet/top-up", undefined, paymentsUrl),
     booking: (id) => call("GET", `/v1/bookings/${encodeURIComponent(id)}`),
     async uploadFrame(jpegUri, meta) {
       // Use native FileSystem upload — React Native's fetch+FormData is unreliable for file uploads.

@@ -177,3 +177,20 @@ export const DEMO_IDS = {
   owner: "owner_demo",
   driveway: "driveway_demo_1",
 } as const;
+
+/** The checkout wallet the payment service pays from (spec 7.8). */
+export type WalletInfo = {
+  network: "base-sepolia";
+  payer: { name: string; address: string; usdc_balance: string; explorer_url: string };
+  payee: { name: string; address: string };
+};
+
+export type PaymentPhase = "approved" | "signed" | "settled" | "confirmed" | "failed" | "reconciliation_required";
+
+export type PaymentProgress = {
+  booking_id: string;
+  phase: PaymentPhase | null;
+  transaction_hash?: string | null;
+  explorer_url?: string | null;
+  error_code?: string | null;
+};

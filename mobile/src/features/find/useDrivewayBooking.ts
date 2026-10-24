@@ -1,5 +1,5 @@
 // Driver checkout for a driveway (spec 7.7 / 7.8). Reserve places a hold, the
-// payment sheet runs the x402 payment through the backend's demo wallet, and a
+// payment sheet runs the x402 payment from the checkout wallet, and a
 // failure keeps the hold so the driver can retry or cancel. Holds have no
 // automatic timeout, so there's no countdown.
 
@@ -57,8 +57,16 @@ export function useDrivewayBooking(onConfirmed?: (booking: Booking) => void) {
       } else {
         setCheckout({ phase: "failed", booking: confirmed, error: "Payment didn't complete." });
       }
-    } catch {
-      setCheckout({ phase: "failed", booking, error: "Payment didn't go through. Your hold is still in place." });
+    } catch (e) {
+      const code = e instanceof ApiError ? e.code : null;
+      const short = code === "RECEIPT_402" || code === "INSUFFICIENT_FUNDS";
+      setCheckout({
+        phase: "failed",
+        booking,
+        error: short
+          ? "Not enough USDC in the wallet. Add test USDC, then retry. Your hold is still in place."
+          : "Payment didn't go through. Your hold is still in place.",
+      });
     }
   }, [api, checkout.booking, onConfirmed]);
 
