@@ -9,6 +9,8 @@ import { OptionIcon } from "../OptionIcon";
 type Props = {
   options: FindOption[];
   load: ParkingLoad;
+  /** Live mode waiting for the first location fix. */
+  locating?: boolean;
   onOpen: (option: FindOption) => void;
   onRetry: () => void;
 };
@@ -16,7 +18,7 @@ type Props = {
 const MAX_ROWS = 4;
 
 /** Ranked nearby options: fresh curb openings first, then the guaranteed driveway, then aging. */
-export function NearbyList({ options, load, onOpen, onRetry }: Props) {
+export function NearbyList({ options, load, locating = false, onOpen, onRetry }: Props) {
   const rows = options.slice(0, MAX_ROWS);
 
   return (

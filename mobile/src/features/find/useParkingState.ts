@@ -12,32 +12,47 @@ function reduce(state: ParkingState, action: Action): ParkingState {
 
 export type ParkingLoad = "loading" | "ready" | "error";
 
+/** ~100 m grid, so a moving driver doesn't refetch on every location update. */
+function centerKey(center: LngLat | null): string | null {
+  return center ? `${center[0].toFixed(3)},${center[1].toFixed(3)}` : null;
+}
+
 /** Nearby supply around `center`, kept current by versioned realtime events. */
 export function useParkingState(center: LngLat | null) {
   const api = getApi();
   const [state, dispatch] = useReducer(reduce, emptyParkingState);
-  const [load, setLoad] = useState<ParkingLoad>("loading");
+  const [result, setResult] = useState<{ key: string; ok: boolean } | null>(null);
   const [realtime, setRealtime] = useState<RealtimeStatus>("connecting");
-
-  const refresh = useCallback(async () => {
-    if (!center) return;
-    try {
-      const res = await api.nearby(center[1], center[0], FIND_RADIUS_M);
-      dispatch({ type: "nearby", res });
-      setLoad("ready");
-    } catch {
-      setLoad((l) => (l === "ready" ? l : "error"));
-    }
-  }, [api, center]);
+  const [attempt, setAttempt] = useState(0);
+  const key = centerKey(center);
+  const fetchKey = key ? `${key}#${attempt}` : null;
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!fetchKey) return;
+    let cancelled = false;
+    const [lng, lat] = fetchKey.split("#")[0].split(",").map(Number);
+    api
+      .nearby(lat, lng, FIND_RADIUS_M)
+      .then((res) => {
+        if (cancelled) return;
+        dispatch({ type: "nearby", res });
+        setResult({ key: fetchKey, ok: true });
+      })
+      .catch(() => !cancelled && setResult({ key: fetchKey, ok: false }));
+    return () => {
+      cancelled = true;
+    };
+  }, [api, fetchKey]);
 
   useEffect(() => {
     const conn = api.connectRealtime((event) => dispatch({ type: "event", event }), setRealtime);
     return () => conn.close();
   }, [api]);
+
+  // Once anything has loaded, keep showing it (last honest state) through later failures.
+  const everLoaded = Object.keys(state.versions).length > 0;
+  const load: ParkingLoad = everLoaded ? "ready" : result?.key === fetchKey ? (result.ok ? "ready" : "error") : "loading";
+  const refresh = useCallback(() => setAttempt((a) => a + 1), []);
 
   return { state, load, realtime, refresh, mode: api.mode };
 }

@@ -1,6 +1,6 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { font, ink, radius, shadow } from "@/config/tokens";
@@ -21,7 +21,7 @@ type Props = {
 const PREFERRED_SIZES = ["1280x720", "Medium", "High"];
 
 function LiveDot({ on, reduceMotion }: { on: boolean; reduceMotion: boolean }) {
-  const blink = useRef(new Animated.Value(1)).current;
+  const [blink] = useState(() => new Animated.Value(1));
   useEffect(() => {
     if (!on || reduceMotion) {
       blink.setValue(1);
@@ -39,27 +39,29 @@ function LiveDot({ on, reduceMotion }: { on: boolean; reduceMotion: boolean }) {
   return <Animated.View style={[styles.dot, { opacity: blink, backgroundColor: on ? ink.live : ink.grey500 }]} />;
 }
 
-/** Floating live camera card on Find: preview, scanning indicator, frame sampling. */
-export function CameraOverlay({ active, sampling, frameContext, reduceMotion }: Props) {
-  const [permission, requestPermission] = useCameraPermissions();
+type LiveCameraProps = {
+  sampling: boolean;
+  frameContext: () => FrameContext | null;
+  onFrameSent: () => void;
+  onCapturing: (capturing: boolean) => void;
+};
+
+/**
+ * The preview itself. Mounted only while Find is active, so camera readiness and
+ * the sampler start fresh every time the screen comes back.
+ */
+function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing }: LiveCameraProps) {
   const camera = useRef<CameraView>(null);
   const [ready, setReady] = useState(false);
   const [pictureSize, setPictureSize] = useState<string | undefined>();
-  const [sent, setSent] = useState(0);
   const ctxRef = useRef(frameContext);
   useEffect(() => {
     ctxRef.current = frameContext;
   }, [frameContext]);
 
-  // Ask once when Find first needs the camera.
+  const capturing = ready && sampling;
   useEffect(() => {
-    if (active && permission && !permission.granted && permission.canAskAgain && permission.status === "undetermined") requestPermission();
-  }, [active, permission, requestPermission]);
-
-  const granted = !!permission?.granted;
-  const capturing = active && granted && ready && sampling;
-
-  useEffect(() => {
+    onCapturing(capturing);
     if (!capturing) return;
     const controller = new CaptureController({
       capture: async () => {
@@ -71,27 +73,53 @@ export function CameraOverlay({ active, sampling, frameContext, reduceMotion }: 
         const ctx = ctxRef.current();
         if (!ctx) throw new Error("no location yet");
         await uploadFrame(uri, ctx);
-        setSent((n) => n + 1);
+        onFrameSent();
       },
       discard: discardFrame,
     });
     controller.start();
-    return () => controller.stop();
-  }, [capturing]);
+    return () => {
+      controller.stop();
+      onCapturing(false);
+    };
+  }, [capturing, onCapturing, onFrameSent]);
 
   const onReady = async () => {
     setReady(true);
     try {
       const sizes = (await camera.current?.getAvailablePictureSizesAsync()) ?? [];
-      setPictureSize(PREFERRED_SIZES.find((s) => sizes.includes(s)));
+      setPictureSize(PREFERRED_SIZES.find((sz) => sizes.includes(sz)));
     } catch {
       // Keep the default size.
     }
   };
 
+  return (
+    <CameraView
+      ref={camera}
+      style={StyleSheet.absoluteFill}
+      facing="back"
+      animateShutter={false}
+      pictureSize={pictureSize}
+      onCameraReady={onReady}
+    />
+  );
+}
+
+/** Floating live camera card on Find: preview, scanning indicator, frame sampling. */
+export function CameraOverlay({ active, sampling, frameContext, reduceMotion }: Props) {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [sent, setSent] = useState(0);
+  const [capturing, setCapturing] = useState(false);
+  const onFrameSent = useCallback(() => setSent((n) => n + 1), []);
+
+  // Ask once when Find first needs the camera.
   useEffect(() => {
-    if (!active) setReady(false);
-  }, [active]);
+    if (active && permission && !permission.granted && permission.canAskAgain && permission.status === "undetermined") requestPermission();
+  }, [active, permission, requestPermission]);
+
+  const granted = !!permission?.granted;
+  const live = active && capturing;
 
   if (!granted) {
     const blocked = permission && !permission.canAskAgain;
@@ -118,20 +146,10 @@ export function CameraOverlay({ active, sampling, frameContext, reduceMotion }: 
       accessibilityLabel={sampling ? `Scanning the curb. ${sent} frames shared.` : "Camera preview. Demo replay, not uploading."}
     >
       <View style={styles.preview}>
-        {active && (
-          <CameraView
-            ref={camera}
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            active={active}
-            animateShutter={false}
-            pictureSize={pictureSize}
-            onCameraReady={onReady}
-          />
-        )}
+        {active && <LiveCamera sampling={sampling} frameContext={frameContext} onFrameSent={onFrameSent} onCapturing={setCapturing} />}
         <View style={styles.liveTag}>
-          <LiveDot on={capturing} reduceMotion={reduceMotion} />
-          <Text style={styles.liveText}>{capturing ? "Live" : "Preview"}</Text>
+          <LiveDot on={live} reduceMotion={reduceMotion} />
+          <Text style={styles.liveText}>{live ? "Live" : "Preview"}</Text>
         </View>
       </View>
       <Text style={styles.caption}>{sampling ? "Scanning curb" : "Camera on"}</Text>

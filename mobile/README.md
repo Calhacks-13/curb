@@ -95,6 +95,12 @@ one upload in flight (dropping, not queueing), and deletes every frame after
 upload. In Demo replay it's preview only and says "Not uploading". Location is
 foreground-only and is used in live mode for centering and distances.
 
+Every screen has designed loading, empty, error and permission states; the map
+has its own error card with Try again, and a "Reconnecting" pill shows while
+realtime is down (the map keeps the last state).
+
+Checks: `npm test`, `npm run typecheck`, `npm run lint`.
+
 Run the tests with `npm test` (freshness boundaries, out-of-order realtime
 events, version conflicts, idempotent payment, DST).
 

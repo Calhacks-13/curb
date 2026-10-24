@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getApi } from "@/api/client";
 import { AccountMenu } from "@/components/AccountMenu";
 import { CurbMap } from "@/components/map/CurbMap";
+import { MapErrorCard } from "@/components/map/MapErrorCard";
+import { StatusPill } from "@/components/StatusPill";
 import { MapLegend } from "@/components/MapLegend";
 import { MoodToggle } from "@/components/MoodToggle";
 import { BookingConfirmation } from "@/components/find/BookingConfirmation";
@@ -62,7 +64,7 @@ export default function FindScreen() {
       live && location.position ? { position: location.position, heading: location.heading ?? 0 } : DEMO_DRIVER,
     [live, location.position, location.heading],
   );
-  const { state, load, refresh, mode } = useParkingState(live ? location.position : HOME_CAMERA.center);
+  const { state, load, refresh, mode, realtime } = useParkingState(live ? location.position : HOME_CAMERA.center);
   const userId = useSession().session?.user.id ?? null;
   const now = useFreshnessClock();
   const options = useMemo(() => findOptions(state, now, driver.position, userId), [state, now, driver.position, userId]);
@@ -87,9 +89,17 @@ export default function FindScreen() {
   }, [location.position, location.accuracyM, location.heading, deviceId, captureSession]);
   const signature = mapSignature(options);
 
-  const [sheet, setSheet] = useState<Sheet>({ mode: "list" });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [sheetState, setSheet] = useState<Sheet>({ mode: "list" });
+  const [selectedState, setSelectedId] = useState<string | null>(null);
+  // A browsed opening that expired or was taken closes its details. While routing,
+  // the replacement prompt handles it instead, so the route never changes silently.
+  const detailGone = sheetState.mode === "detail" && !options.some((o) => o.id === sheetState.id);
+  const sheet: Sheet = detailGone ? { mode: "list" } : sheetState;
+  const selectedId = detailGone ? null : selectedState;
   const [mapError, setMapError] = useState<string | null>(null);
+  // Bumps on every mapReady so a reloaded map gets the full state again.
+  const [mapGen, setMapGen] = useState(0);
+  const [mapKey, setMapKey] = useState(0);
   const [routing, setRouting] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [keptRoutes, setKeptRoutes] = useState<Record<string, true>>({});
@@ -103,18 +113,18 @@ export default function FindScreen() {
 
   useEffect(() => {
     send({ type: "setZones", zones: mapZones(state.zones) });
-  }, [state.zones, send]);
+  }, [state.zones, send, mapGen]);
 
   useEffect(() => {
     send({ type: "setStalls", stalls: mapStalls(options) });
     send({ type: "setPills", pills: mapPills(options) });
     // `options` changes every tick; the signature only when a bay appears, ages or goes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signature, send]);
+  }, [signature, send, mapGen]);
 
   useEffect(() => {
     send({ type: "setCarPosition", position: driver.position, heading: driver.heading });
-  }, [driver, send]);
+  }, [driver, send, mapGen]);
 
   // Live: center on the driver once, at the first location fix.
   const centered = useRef(false);
@@ -133,24 +143,16 @@ export default function FindScreen() {
     lastPhase.current = checkout.phase;
   }, [checkout.phase]);
 
-  // A browsed opening that expired or was taken closes its details. While routing,
-  // the replacement prompt handles it instead, so the route never changes silently.
-  useEffect(() => {
-    if (sheet.mode === "detail" && !options.some((o) => o.id === sheet.id)) {
-      setSheet({ mode: "list" });
-      setSelectedId(null);
-    }
-  }, [options, sheet]);
 
   useEffect(() => {
     send({ type: "selectSpot", id: selectedId });
-  }, [selectedId, send]);
+  }, [selectedId, send, mapGen]);
 
   const [sheetH, setSheetH] = useState(260);
   const padding = useMemo(() => ({ top: insets.top + 70, bottom: sheetH + 12, left: 0, right: 0 }), [insets.top, sheetH]);
   useEffect(() => {
     send({ type: "setPadding", padding });
-  }, [padding, send]);
+  }, [padding, send, mapGen]);
 
   // --- interactions ---------------------------------------------------------
 
@@ -208,7 +210,10 @@ export default function FindScreen() {
   const onMapMessage = useCallback(
     (msg: MapToApp) => {
       if (msg.type === "mapError") setMapError(msg.message);
-      if (msg.type === "mapReady") setMapError(null);
+      if (msg.type === "mapReady") {
+        setMapError(null);
+        setMapGen((g) => g + 1);
+      }
       if (msg.type === "spotTapped") {
         const o = options.find((x) => x.id === msg.id);
         if (o) open(o);
@@ -236,11 +241,12 @@ export default function FindScreen() {
   return (
     <View style={styles.root}>
       <StatusBar style={mood === "clay" ? "dark" : "light"} />
-      <CurbMap ref={mapRef} mood={mood} reduceMotion={reduceMotion} onMapMessage={onMapMessage} />
+      <CurbMap key={mapKey} ref={mapRef} mood={mood} reduceMotion={reduceMotion} onMapMessage={onMapMessage} />
 
       <View style={[styles.top, { top: insets.top + 8 }]}>
         <View style={styles.leftCol}>
           {mode === "demo" && <DemoModeBadge />}
+          {realtime === "reconnecting" && <StatusPill text="Reconnecting · showing last update" />}
           <CameraOverlay
             active={focused && appActive}
             sampling={live && location.status === "granted"}
@@ -271,7 +277,7 @@ export default function FindScreen() {
               </Pressable>
             </View>
           ) : (
-            <NearbyList options={options} load={load} onOpen={open} onRetry={refresh} />
+            <NearbyList options={options} load={load} locating={live && !location.position} onOpen={open} onRetry={refresh} />
           ))}
         {sheet.mode === "detail" && detailOption && (
           <>
@@ -338,8 +344,14 @@ export default function FindScreen() {
       )}
 
       {mapError && (
-        <View style={[styles.error, { top: insets.top + 140 }]} accessibilityLiveRegion="polite">
-          <Text style={styles.errorText}>Map: {mapError}</Text>
+        <View style={[styles.mapError, { top: insets.top + 170 }]}>
+          <MapErrorCard
+            message={mapError}
+            onRetry={() => {
+              setMapError(null);
+              setMapKey((k) => k + 1);
+            }}
+          />
         </View>
       )}
     </View>
@@ -358,13 +370,5 @@ const styles = StyleSheet.create({
   locationButton: { marginTop: 8, height: 42, paddingHorizontal: 18, borderRadius: radius.control, backgroundColor: ink.black, justifyContent: "center" },
   locationButtonText: { fontFamily: font.bold, fontSize: 14, color: ink.white, marginTop: 2 },
   routeError: { fontFamily: font.semibold, fontSize: 13, color: ink.black, marginTop: 8, marginHorizontal: 4 },
-  error: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    backgroundColor: ink.black,
-    borderRadius: radius.button,
-    padding: 12,
-  },
-  errorText: { color: ink.white, fontFamily: font.regular, fontSize: 13 },
+  mapError: { position: "absolute", left: 16, right: 16 },
 });

@@ -7,21 +7,24 @@ export type DetailLoad = { status: "idle" | "loading" | "error" } | { status: "r
 
 /** Loads a space's rule and zone for the detail sheet. */
 export function useSpaceDetail(spaceId: string | null) {
-  const [load, setLoad] = useState<DetailLoad>({ status: "idle" });
-
-  const fetchDetail = useCallback(async () => {
-    if (!spaceId) return setLoad({ status: "idle" });
-    setLoad({ status: "loading" });
-    try {
-      setLoad({ status: "ready", detail: await getApi().space(spaceId) });
-    } catch {
-      setLoad({ status: "error" });
-    }
-  }, [spaceId]);
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<{ key: string; detail: SpaceDetail | null } | null>(null);
+  const key = spaceId ? `${spaceId}#${attempt}` : null;
 
   useEffect(() => {
-    fetchDetail();
-  }, [fetchDetail]);
+    if (!key || !spaceId) return;
+    let cancelled = false;
+    getApi()
+      .space(spaceId)
+      .then((detail) => !cancelled && setResult({ key, detail }))
+      .catch(() => !cancelled && setResult({ key, detail: null }));
+    return () => {
+      cancelled = true;
+    };
+  }, [key, spaceId]);
 
-  return { load, retry: fetchDetail };
+  const load: DetailLoad =
+    !key ? { status: "idle" } : result?.key !== key ? { status: "loading" } : result.detail ? { status: "ready", detail: result.detail } : { status: "error" };
+
+  return { load, retry: useCallback(() => setAttempt((a) => a + 1), []) };
 }

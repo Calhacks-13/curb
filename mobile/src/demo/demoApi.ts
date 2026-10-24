@@ -8,7 +8,6 @@ import { ApiError } from "@/api/errors";
 import {
   DEMO_IDS,
   type Booking,
-  type DemoProfile,
   type Driveway,
   type NearbyParkingResponse,
   type ParkingSpace,

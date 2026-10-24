@@ -1,6 +1,6 @@
 import { SymbolView } from "expo-symbols";
 import * as WebBrowser from "expo-web-browser";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import type { Booking, Driveway } from "@/api/types";
@@ -55,18 +55,16 @@ function Stepper({ label, value, onMinus, onPlus, disabled }: { label: string; v
 /** Owner controls for the seeded driveway listing. */
 export function DrivewayEditor({ driveway, booking, onConflict }: Props) {
   const { busy, message, save, recover, clearMessage } = useDrivewayActions(onConflict);
-  const [draft, setDraft] = useState<DrivewayDraft>(() => draftOf(driveway));
-
-  // Server state wins whenever the listing changes (another device, a booking, a conflict).
-  useEffect(() => {
-    setDraft(draftOf(driveway));
-  }, [driveway]);
+  // Edits are tied to the version they started from; when the listing changes
+  // (another device, a booking, a conflict) server state wins.
+  const [edits, setEdits] = useState<{ version: number; draft: DrivewayDraft } | null>(null);
+  const draft = edits && edits.version === driveway.version ? edits.draft : draftOf(driveway);
 
   const locked = driveway.state === "HELD" || driveway.state === "BOOKED";
   const dirty = !sameDraft(draft, draftOf(driveway));
   const edit = (next: DrivewayDraft) => {
     clearMessage();
-    setDraft(next);
+    setEdits({ version: driveway.version, draft: next });
   };
   const inWindow = inLaWindow(driveway.availability_start, driveway.availability_end, new Date());
 
