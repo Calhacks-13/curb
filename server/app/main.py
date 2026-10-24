@@ -75,12 +75,18 @@ async def health():
     from app.cv.depth import is_available as depth_is_available, is_metric as depth_is_metric
     from app.cv.pipeline import get_pipeline
 
+    from app.config import settings as _settings
     pipeline = get_pipeline()
     return {
         "status": "ok",
+        "device": _settings.device,
+        "seg_model": _settings.seg_model_path,
+        "yolo_imgsz": _settings.yolo_imgsz,
+        "yolo_half": _settings.yolo_half,
         "vehicle_model_loaded": _vehicle_model is not None,
         "seg_model_available": _seg_model_available or False,
         "sign_model_available": _sign_model_available or False,
+        "depth_enabled": _settings.depth_enabled,
         "depth_model_available": depth_is_available(),
         "depth_metric": depth_is_metric(),
         "cosmos_configured": cosmos._is_configured(),

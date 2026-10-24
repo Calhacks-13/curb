@@ -154,3 +154,4 @@ class SpotDocument(BaseModel):
     version: int = 1
     ttl: int = 1800
     source_session_id: str = ""
+    is_seed: bool = False  # permanent mapped spot, no freshness expiry

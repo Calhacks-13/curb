@@ -13,7 +13,7 @@ export type CaptureDeps = {
 
 export type CaptureStats = { sent: number; dropped: number; failed: number };
 
-export const DEFAULT_INTERVAL_MS = 500;
+export const DEFAULT_INTERVAL_MS = 200;
 
 export class CaptureController {
   private timer: ReturnType<typeof setInterval> | null = null;

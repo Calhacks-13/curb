@@ -36,6 +36,12 @@ _sign_model: YOLO | None = None
 _sign_model_available: bool | None = None
 _seg_model_available: bool | None = None
 
+# Frame counter + cached results for skip-frame logic
+_frame_count: int = 0
+_cached_depth_map: np.ndarray | None = None
+_cached_signs: list[SignDetection] = []
+_cached_sign_raws: list[RawDetection] = []
+
 
 def get_seg_model() -> YOLO | None:
     """Load YOLOv8-seg model for instance segmentation."""
@@ -116,7 +122,7 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float
     vehicle_masks = None  # combined binary mask of all vehicles
 
     if seg_model is not None:
-        results = seg_model(image, verbose=False)[0]
+        results = seg_model(image, verbose=False, imgsz=settings.yolo_imgsz, half=settings.yolo_half)[0]
         used_segmentation = True
         vehicle_masks = np.zeros((img_h, img_w), dtype=np.uint8)
 
@@ -164,7 +170,7 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float
     else:
         # Fallback: bbox-only detection
         model = get_vehicle_model()
-        results = model(image, verbose=False)[0]
+        results = model(image, verbose=False, imgsz=settings.yolo_imgsz, half=settings.yolo_half)[0]
 
         for box in results.boxes:
             cls_id = int(box.cls[0])
@@ -200,22 +206,31 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float
                     accepted=False, reason="not vehicle class",
                 ))
 
-    # If fine-tuned sign model exists, run it separately
+    # If fine-tuned sign model exists, run it every Nth frame (signs are static)
+    global _frame_count, _cached_signs, _cached_sign_raws
+    _frame_count += 1
+    run_signs = (_frame_count % settings.sign_every_n == 0)
+
     sign_model = get_sign_model()
-    if sign_model is not None:
-        sign_results = sign_model(image, verbose=False)[0]
+    if sign_model is not None and run_signs:
+        sign_results = sign_model(image, verbose=False, imgsz=settings.yolo_imgsz, half=settings.yolo_half)[0]
+        _cached_signs = []
+        _cached_sign_raws = []
         for box in sign_results.boxes:
             conf = float(box.conf[0])
             bbox = box.xyxy[0].tolist()
             if conf >= settings.sign_confidence:
                 crop = _crop_bbox(image, bbox)
-                signs.append(SignDetection(
+                _cached_signs.append(SignDetection(
                     bbox=bbox, confidence=round(conf, 3), crop_bytes=crop,
                 ))
-                raw_detections.append(RawDetection(
+                _cached_sign_raws.append(RawDetection(
                     bbox=bbox, cls="sign", confidence=round(conf, 3),
                     accepted=True, reason="sign",
                 ))
+    # Use cached signs on skip frames
+    signs.extend(_cached_signs)
+    raw_detections.extend(_cached_sign_raws)
 
     # Estimate gaps — segmentation-based or bbox-based
     if used_segmentation and vehicle_masks is not None and vehicle_masks.any():
@@ -223,12 +238,18 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float
     else:
         gap_bboxes = _gaps_from_bboxes(vehicles, img_w, img_h)
 
-    # Depth estimation for gap sizing + viewer visualization
+    # Depth estimation for gap sizing + viewer visualization (every Nth frame, cached)
+    global _cached_depth_map
     depth_map = None
     bev = None  # reused for both gap measurement and viz
     gap_measurements: list[GapMeasurement] = []
+    run_depth = (_frame_count % settings.depth_every_n == 0)
     if depth_is_available():
-        depth_map = estimate_depth(image)
+        if run_depth:
+            depth_map = estimate_depth(image)
+            _cached_depth_map = depth_map
+        else:
+            depth_map = _cached_depth_map
     if depth_map is not None:
         used_depth = True
 
@@ -344,7 +365,9 @@ def _gaps_from_segmentation(
     """
     Find gaps from segmentation masks.
     Projects vehicle mask to a 1D occupancy strip (bottom 60% of frame = road level),
-    then finds connected empty regions.
+    then finds connected empty regions BETWEEN occupied runs.
+    Skips edge gaps (before first vehicle or after last vehicle) since the
+    frame boundary may cut through a parked car.
     """
     # Focus on bottom 60% where road/vehicles are
     road_start = int(img_h * 0.4)
@@ -353,27 +376,32 @@ def _gaps_from_segmentation(
     # Collapse to 1D: for each column, is there a vehicle pixel?
     column_occupied = road_mask.any(axis=0).astype(np.uint8)
 
-    # Find runs of unoccupied columns
-    gap_bboxes: list[list[float]] = []
+    # Find runs of occupied and unoccupied columns
     min_gap_pixels = img_w * settings.min_gap_fraction
+    runs: list[tuple[bool, int, int]] = []  # (is_occupied, start_x, end_x)
+    in_occupied = column_occupied[0] == 1
+    run_start = 0
+    for x in range(1, img_w):
+        is_occ = column_occupied[x] == 1
+        if is_occ != in_occupied:
+            runs.append((in_occupied, run_start, x))
+            in_occupied = is_occ
+            run_start = x
+    runs.append((in_occupied, run_start, img_w))
 
-    in_gap = False
-    gap_start = 0
-    for x in range(img_w):
-        if column_occupied[x] == 0 and not in_gap:
-            in_gap = True
-            gap_start = x
-        elif column_occupied[x] == 1 and in_gap:
-            in_gap = False
-            gap_width = x - gap_start
-            if gap_width >= min_gap_pixels:
-                gap_bboxes.append([float(gap_start), float(road_start), float(x), float(img_h)])
-
-    # Handle gap at right edge
-    if in_gap:
-        gap_width = img_w - gap_start
-        if gap_width >= min_gap_pixels:
-            gap_bboxes.append([float(gap_start), float(road_start), float(img_w), float(img_h)])
+    # Only keep empty runs that are BETWEEN two occupied runs (skip edges)
+    gap_bboxes: list[list[float]] = []
+    for i, (is_occ, start_x, end_x) in enumerate(runs):
+        if is_occ:
+            continue
+        gap_width = end_x - start_x
+        if gap_width < min_gap_pixels:
+            continue
+        # Must have an occupied run on both sides
+        has_left = any(r[0] for r in runs[:i])
+        has_right = any(r[0] for r in runs[i + 1:])
+        if has_left and has_right:
+            gap_bboxes.append([float(start_x), float(road_start), float(end_x), float(img_h)])
 
     return gap_bboxes
 
@@ -381,26 +409,23 @@ def _gaps_from_segmentation(
 def _gaps_from_bboxes(
     vehicles: list[VehicleDetection], frame_width: int, frame_height: int
 ) -> list[list[float]]:
-    """Legacy bbox gap estimation (fallback)."""
+    """Legacy bbox gap estimation (fallback).
+
+    Only counts gaps BETWEEN two vehicles — skips frame-edge gaps.
+    """
     min_gap = frame_width * settings.min_gap_fraction
     gap_bboxes: list[list[float]] = []
 
-    if not vehicles:
+    if len(vehicles) < 2:
         return []
 
     sorted_v = sorted(vehicles, key=lambda v: v.bbox[0])
-
-    if sorted_v[0].bbox[0] >= min_gap:
-        gap_bboxes.append([0, 0, sorted_v[0].bbox[0], frame_height])
 
     for i in range(len(sorted_v) - 1):
         right_edge = sorted_v[i].bbox[2]
         left_edge = sorted_v[i + 1].bbox[0]
         if left_edge - right_edge >= min_gap:
             gap_bboxes.append([right_edge, 0, left_edge, frame_height])
-
-    if frame_width - sorted_v[-1].bbox[2] >= min_gap:
-        gap_bboxes.append([sorted_v[-1].bbox[2], 0, frame_width, frame_height])
 
     return gap_bboxes
 

@@ -95,6 +95,7 @@ export type NearbyParkingResponse = {
   zones: CurbZone[];
   spaces: ParkingSpace[];
   driveways: Driveway[];
+  garages?: Garage[];
 };
 
 /** Current-time view of a structured sign rule, as shown in the detail sheet. */

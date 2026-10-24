@@ -26,6 +26,11 @@ def load_depth_model():
     import logging
     logger = logging.getLogger(__name__)
 
+    if not settings.depth_enabled:
+        logger.info("Depth model disabled (CURB_DEPTH_ENABLED=false)")
+        _depth_available = False
+        return False
+
     for device in ("cuda", "cpu"):
         try:
             from transformers import pipeline

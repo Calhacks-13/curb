@@ -62,7 +62,7 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* HUD overlays on feed — minimal, no background */
+/* HUD overlays on feed */
 .hud-tl, .hud-tr, .hud-bl {
   position: absolute; z-index: 10;
   font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.7);
@@ -73,6 +73,26 @@ body {
 .hud-bl { bottom: 12px; left: 12px; }
 .hud-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
 .hud-dot.on { background: var(--green); }
+
+/* Mapping mode button */
+.mapping-btn {
+  position: absolute; z-index: 10; top: 12px; right: 80px;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px; font-weight: 500;
+  padding: 4px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.6);
+  transition: border-color 0.2s, color 0.2s;
+}
+.mapping-btn:hover { border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.8); }
+.mapping-btn.active {
+  background: rgba(194,59,59,0.25); border-color: var(--red);
+  color: var(--red); animation: mappingPulse 2s ease-in-out infinite;
+}
+@keyframes mappingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
 
 /* Sign overlay */
 .sign-hud {
@@ -85,34 +105,6 @@ body {
 .sign-hud .dim { color: rgba(255,255,255,0.5); font-weight: 400; }
 
 /* ---- Data column ---- */
-
-/* Viz panels row: depth + BEV side by side */
-.viz-row {
-  display: flex; gap: 1px; flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--cloud);
-}
-.viz-panel {
-  flex: 1; position: relative;
-  background: #0C0C0E;
-  display: flex; flex-direction: column;
-  align-items: center;
-}
-.viz-label {
-  position: absolute; top: 6px; left: 8px;
-  font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.4);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  z-index: 2;
-}
-.viz-panel canvas, .viz-panel img {
-  width: 100%; height: 100%;
-  object-fit: contain;
-  display: block;
-}
-.viz-panel .placeholder {
-  color: rgba(255,255,255,0.15); font-size: 11px; font-weight: 500;
-  padding: 40px 0; text-align: center;
-}
 
 /* Stats bar */
 .stats-bar {
@@ -221,6 +213,7 @@ body {
     <canvas id="frame-canvas"></canvas>
     <canvas id="overlay-canvas"></canvas>
     <div class="hud-tl"><div class="hud-dot" id="conn-dot"></div></div>
+    <button class="mapping-btn" id="mapping-btn" onclick="toggleMapping()">MAP</button>
     <div class="hud-tr" id="fps-hud">0 fps</div>
     <div class="hud-bl" id="pipeline-hud"></div>
     <div class="sign-hud" id="sign-hud"><span id="sign-text"></span> <span class="dim" id="sign-detail"></span></div>
@@ -228,20 +221,6 @@ body {
 </div>
 
 <div class="data-col">
-  <!-- Visualization panels -->
-  <div class="viz-row" style="height:200px;">
-    <div class="viz-panel" id="depth-panel">
-      <span class="viz-label">Depth</span>
-      <canvas id="depth-canvas"></canvas>
-      <div class="placeholder" id="depth-empty">no depth data</div>
-    </div>
-    <div class="viz-panel" id="bev-panel" style="position:relative;">
-      <span class="viz-label">BEV</span>
-      <canvas id="bev-canvas"></canvas>
-      <div class="placeholder" id="bev-empty">no BEV data</div>
-    </div>
-  </div>
-
   <div class="stats-bar">
     <div class="stat-cell"><div class="stat-num" id="s-vehicles">0</div><div class="stat-lbl">Vehicles</div></div>
     <div class="stat-cell"><div class="stat-num green" id="s-gaps">0</div><div class="stat-lbl">Gaps</div></div>
@@ -265,11 +244,6 @@ const overC = document.getElementById('overlay-canvas');
 const fCtx = frameC.getContext('2d');
 const oCtx = overC.getContext('2d');
 
-const depthC = document.getElementById('depth-canvas');
-const bevC = document.getElementById('bev-canvas');
-const depthCtx = depthC.getContext('2d');
-const bevCtx = bevC.getContext('2d');
-
 const connDot = document.getElementById('conn-dot');
 const feedEmpty = document.getElementById('feed-empty');
 const pipeHud = document.getElementById('pipeline-hud');
@@ -278,8 +252,6 @@ const signHud = document.getElementById('sign-hud');
 const detStrip = document.getElementById('det-strip');
 const term = document.getElementById('term');
 const toast = document.getElementById('toast');
-const depthEmpty = document.getElementById('depth-empty');
-const bevEmpty = document.getElementById('bev-empty');
 
 let ws, reconnect = 1000, frameCount = 0, totalFrames = 0, confirmedCount = 0;
 let lastFpsTime = performance.now(), ready = false;
@@ -287,12 +259,8 @@ const MAX_LINES = 500;
 let lineCount = 0;
 let signHudTimer = null;
 
-// --- Multi-binary protocol state ---
-// Expect: binary(frame) -> binary(depth) -> binary(bev) -> text(json)
+// Protocol: binary(frame JPEG) -> text(JSON)
 let pendingFrame = null;
-let pendingDepth = null;
-let pendingBev = null;
-let binaryIndex = 0;
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -302,59 +270,26 @@ function connect() {
   ws.onopen = () => {
     connDot.classList.add('on');
     reconnect = 1000;
-    binaryIndex = 0;
     emit('sys', 'connected to pipeline server');
   };
 
   ws.onmessage = (e) => {
     if (e.data instanceof ArrayBuffer) {
       const bytes = new Uint8Array(e.data);
-      const isPlaceholder = bytes.length <= 1;
-
-      if (binaryIndex === 0) {
-        if (!isPlaceholder) {
-          const blob = new Blob([e.data], { type: 'image/jpeg' });
-          pendingFrame = createImageBitmap(blob);
-        } else {
-          pendingFrame = null;
-        }
-        binaryIndex = 1;
-      } else if (binaryIndex === 1) {
-        if (!isPlaceholder) {
-          const blob = new Blob([e.data], { type: 'image/jpeg' });
-          pendingDepth = createImageBitmap(blob);
-        } else {
-          pendingDepth = null;
-        }
-        binaryIndex = 2;
+      if (bytes.length > 1) {
+        const blob = new Blob([e.data], { type: 'image/jpeg' });
+        pendingFrame = createImageBitmap(blob);
       } else {
-        if (!isPlaceholder) {
-          const blob = new Blob([e.data], { type: 'image/jpeg' });
-          pendingBev = createImageBitmap(blob);
-        } else {
-          pendingBev = null;
-        }
-        binaryIndex = 0;
+        pendingFrame = null;
       }
     } else {
       try {
         const d = JSON.parse(e.data);
         const fp = pendingFrame;
-        const dp = pendingDepth;
-        const bp = pendingBev;
         pendingFrame = null;
-        pendingDepth = null;
-        pendingBev = null;
-        binaryIndex = 0;
 
-        Promise.all([
-          fp ? fp : Promise.resolve(null),
-          dp ? dp : Promise.resolve(null),
-          bp ? bp : Promise.resolve(null),
-        ]).then(([frameBmp, depthBmp, bevBmp]) => {
+        (fp ? fp : Promise.resolve(null)).then((frameBmp) => {
           if (frameBmp) showFrame(frameBmp);
-          showDepth(depthBmp);
-          showBev(bevBmp);
           if (ready) render(d);
         });
       } catch (err) { console.error('render error:', err); }
@@ -384,38 +319,6 @@ function showFrame(bmp) {
   if (now - lastFpsTime >= 1000) {
     fpsHud.textContent = frameCount + ' fps';
     frameCount = 0; lastFpsTime = now;
-  }
-}
-
-function showDepth(bmp) {
-  if (bmp) {
-    depthEmpty.style.display = 'none';
-    depthC.style.display = 'block';
-    if (depthC.width !== bmp.width || depthC.height !== bmp.height) {
-      depthC.width = bmp.width; depthC.height = bmp.height;
-    }
-    depthCtx.drawImage(bmp, 0, 0);
-  } else {
-    if (!depthC.width) {
-      depthEmpty.style.display = 'block';
-      depthC.style.display = 'none';
-    }
-  }
-}
-
-function showBev(bmp) {
-  if (bmp) {
-    bevEmpty.style.display = 'none';
-    bevC.style.display = 'block';
-    if (bevC.width !== bmp.width || bevC.height !== bmp.height) {
-      bevC.width = bmp.width; bevC.height = bmp.height;
-    }
-    bevCtx.drawImage(bmp, 0, 0);
-  } else {
-    if (!bevC.width) {
-      bevEmpty.style.display = 'block';
-      bevC.style.display = 'none';
-    }
   }
 }
 
@@ -544,7 +447,7 @@ function render(d) {
   if (d.lat && d.lng) {
     const depthTag = d.used_depth ? ' <span class="hi">depth</span>' : '';
     const segTag = d.used_segmentation ? ' <span class="hi">seg</span>' : '';
-    emit('scene', `frame at <em>${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}</em>${segTag}${depthTag}  scene:${d.scene_valid?'<span class="hi">valid</span>':'<span class="err">invalid</span>'}  pipeline:<em>${d.pipeline_state||'—'}</em>`);
+    emit('scene', `frame at <em>${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}</em>${segTag}${depthTag}  scene:${d.scene_valid?'<span class="hi">valid</span>':'<span class="err">invalid</span>'}  pipeline:<em>${d.pipeline_state||'\u2014'}</em>`);
   }
 
   // Detection chips
@@ -570,10 +473,10 @@ function render(d) {
   if (d.tracked_gaps) {
     for (const g of d.tracked_gaps) {
       if (g.confirmed) {
-        const w = g.median_width_meters ? g.median_width_meters.toFixed(1)+'m' : '—';
-        emit('gap', `gap T${g.left_track_id}–T${g.right_track_id} <span class="hi">CONFIRMED</span>  width:<em>${w}</em>  dur:${g.duration.toFixed(1)}s`);
+        const w = g.median_width_meters ? g.median_width_meters.toFixed(1)+'m' : '\u2014';
+        emit('gap', `gap T${g.left_track_id}\u2013T${g.right_track_id} <span class="hi">CONFIRMED</span>  width:<em>${w}</em>  dur:${g.duration.toFixed(1)}s`);
       } else {
-        emit('gap', `gap T${g.left_track_id}–T${g.right_track_id}  accumulating <span class="warn">${g.duration.toFixed(1)}s</span>/2.0s`);
+        emit('gap', `gap T${g.left_track_id}\u2013T${g.right_track_id}  accumulating <span class="warn">${g.duration.toFixed(1)}s</span>/2.0s`);
       }
     }
   }
@@ -584,7 +487,7 @@ function render(d) {
     const txt = sr.combined_summary || sr.summary;
     document.getElementById('sign-text').textContent = txt;
     const parts = [sr.combined_hours||sr.hours, sr.combined_price||sr.price].filter(Boolean);
-    document.getElementById('sign-detail').textContent = parts.join(' · ');
+    document.getElementById('sign-detail').textContent = parts.join(' \u00b7 ');
     signHud.style.display = 'block';
     if (signHudTimer) clearTimeout(signHudTimer);
     signHudTimer = setTimeout(() => { signHud.style.display = 'none'; signHudTimer = null; }, 10000);
@@ -597,9 +500,8 @@ function render(d) {
     document.getElementById('s-spots').textContent = confirmedCount;
     const cb = d.confirmed_block;
     emit('spot', `<em>SPOT CONFIRMED</em>  gaps:<span class="hi">${cb.gap_count}</span>  segment:<em>${esc(cb.segment_id)}</em>  at ${cb.lat?.toFixed(5)},${cb.lng?.toFixed(5)}`, true);
-    toast.textContent = 'SPOT CONFIRMED — ' + cb.gap_count + ' gap' + (cb.gap_count>1?'s':'');
-    toast.classList.add('on');
-    setTimeout(() => toast.classList.remove('on'), 3000);
+    const seedTag = mappingMode ? ' [SEED]' : '';
+    showToast('SPOT CONFIRMED' + seedTag + ' \u2014 ' + cb.gap_count + ' gap' + (cb.gap_count>1?'s':''));
   }
 }
 
@@ -616,6 +518,41 @@ function emit(tag, msg, highlight) {
   while (lineCount > MAX_LINES) { term.removeChild(term.firstChild); lineCount--; }
   term.scrollTop = term.scrollHeight;
 }
+
+// ---- Mapping mode ----
+let mappingMode = false;
+const mappingBtn = document.getElementById('mapping-btn');
+
+async function toggleMapping() {
+  try {
+    const res = await fetch('/v1/mapping/toggle', { method: 'POST' });
+    const data = await res.json();
+    mappingMode = data.mapping_mode;
+    mappingBtn.classList.toggle('active', mappingMode);
+    mappingBtn.textContent = mappingMode ? 'MAPPING' : 'MAP';
+    emit('sys', mappingMode
+      ? '<span class="warn">MAPPING MODE ON</span> — spots saved as permanent seed'
+      : 'mapping mode off');
+    showToast(mappingMode ? 'MAPPING MODE ON' : 'Mapping mode off');
+  } catch (e) {
+    emit('sys', '<span class="err">failed to toggle mapping mode</span>');
+  }
+}
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('on');
+  setTimeout(() => toast.classList.remove('on'), 3000);
+}
+
+// Check initial mapping state on load
+fetch('/v1/mapping/status').then(r => r.json()).then(d => {
+  mappingMode = d.mapping_mode;
+  if (mappingMode) {
+    mappingBtn.classList.add('active');
+    mappingBtn.textContent = 'MAPPING';
+  }
+}).catch(() => {});
 
 function rr(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}

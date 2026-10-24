@@ -211,6 +211,26 @@ def _sign_to_rule_view(sign_doc: dict) -> SignRuleView:
     )
 
 
+def _garage_to_view(g: dict) -> dict:
+    """Convert an in-memory garage doc to the mobile Garage shape."""
+    loc = g.get("location", {})
+    if not loc:
+        lng, lat = g.get("lng", 0), g.get("lat", 0)
+        loc = {"type": "Point", "coordinates": [lng, lat]}
+    return {
+        "id": g.get("id", ""),
+        "location": loc,
+        "lat": g.get("lat", 0),
+        "lng": g.get("lng", 0),
+        "name": g.get("name"),
+        "summary": g.get("summary", ""),
+        "price": g.get("price"),
+        "arrow_direction": g.get("arrow_direction"),
+        "sign_category": g.get("sign_category", "garage"),
+        "version": g.get("version", 1),
+    }
+
+
 def _driveway_to_view(dw: dict) -> dict:
     """Convert an in-memory driveway doc to the mobile Driveway shape."""
     loc = dw.get("location", {})
@@ -263,6 +283,7 @@ async def nearby_parking(
     blocks = await cosmos.query_blocks_nearby(lat, lng, radius_m)
     signs = await cosmos.query_signs_nearby(lat, lng, radius_m)
     raw_driveways = await cosmos.query_driveways_nearby(lat, lng, radius_m)
+    raw_garages = await cosmos.query_garages_nearby(lat, lng, radius_m)
 
     # Refresh seed timestamps relative to now with per-spot age offsets
     # so they never expire but show different freshness colors on the map
@@ -287,13 +308,15 @@ async def nearby_parking(
 
     zones = [_block_to_zone(b, signs) for b in blocks]
     driveways = [_driveway_to_view(d) for d in raw_driveways]
+    garages = [_garage_to_view(g) for g in raw_garages]
 
-    return NearbyParkingResponse(
-        generated_at=datetime.now(timezone.utc).isoformat(),
-        zones=zones,
-        spaces=spaces,
-        driveways=driveways,
-    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "zones": [z.model_dump() for z in zones],
+        "spaces": [s.model_dump() for s in spaces],
+        "driveways": driveways,
+        "garages": garages,
+    }
 
 
 @router.get("/spaces/{space_id}")
@@ -368,18 +391,14 @@ async def upload_frame(
         heading=heading,
     )
 
-    # Relay to WS viewers (frame + depth + BEV + JSON)
+    # Relay to WS viewers (frame JPEG + JSON)
     if ws_viewers:
         viewer_json = json.dumps(result["frame_result"].model_dump(mode="json"))
-        depth_jpeg = result.get("depth_jpeg") or b"\x00"
-        bev_jpeg = result.get("bev_jpeg") or b"\x00"
         async def _relay():
             dead = []
             for v in ws_viewers:
                 try:
                     await v.send_bytes(image_bytes)
-                    await v.send_bytes(depth_jpeg)
-                    await v.send_bytes(bev_jpeg)
                     await v.send_text(viewer_json)
                 except Exception:
                     dead.append(v)
@@ -467,6 +486,43 @@ async def debug_state():
         "recent_blocks": len(pipeline.recent_blocks),
         "event_buffer": len(signalr.get_recent_events(0)),
     }
+
+
+# ---------- mapping mode ----------
+
+@router.get("/mapping/status")
+async def mapping_status():
+    """Check if mapping mode is active."""
+    pipeline = get_pipeline()
+    return {"mapping_mode": pipeline.mapping_mode}
+
+
+@router.post("/mapping/toggle")
+async def mapping_toggle():
+    """Toggle mapping mode on/off. Returns new state."""
+    pipeline = get_pipeline()
+    pipeline.mapping_mode = not pipeline.mapping_mode
+    state = "ON" if pipeline.mapping_mode else "OFF"
+    logger.info("Mapping mode toggled %s", state)
+    return {"mapping_mode": pipeline.mapping_mode}
+
+
+@router.delete("/mapping/spots")
+async def delete_seed_spots(spot_id: str | None = Query(None)):
+    """Delete seed spots. If spot_id given, delete that one; otherwise delete all seed spots."""
+    deleted = await cosmos.delete_seed_spots(spot_id)
+    # Also clear from in-memory SpotManager
+    pipeline = get_pipeline()
+    mgr = pipeline._spot_mgr
+    to_remove = []
+    for seg_id, spot in mgr._spots.items():
+        if spot.is_seed:
+            if spot_id is None or spot.id == spot_id:
+                to_remove.append(seg_id)
+    for seg_id in to_remove:
+        mgr._spots.pop(seg_id, None)
+    logger.info("Deleted %d seed spots (cosmos: %d)", len(to_remove), deleted)
+    return {"deleted_memory": len(to_remove), "deleted_cosmos": deleted}
 
 
 @router.post("/realtime/negotiate")
