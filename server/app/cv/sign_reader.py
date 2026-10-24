@@ -1,83 +1,120 @@
 """
 Claude Vision sign interpreter.
 
-Takes a cropped sign image, sends to Claude Vision API,
-returns structured parking rules.
+Async client with confidence scoring. Takes a cropped sign image,
+sends to Claude Vision API, returns structured SignRules.
 """
 
 import base64
+import json
 import anthropic
 
-_client = None
+from app.config import settings
+from app.models import SignRules
+
+_client: anthropic.AsyncAnthropic | None = None
+
+SIGN_PROMPT = (
+    "This is a photo of a parking sign. Read every line of text "
+    "and return a JSON object with these fields:\n"
+    '- "summary": plain English one-liner of the rules\n'
+    '- "price": hourly price or null if free\n'
+    '- "max_duration_min": max parking minutes or null\n'
+    '- "hours": when rules apply\n'
+    '- "restrictions": array of special restrictions\n'
+    '- "raw_text": exact text on the sign\n'
+    "Return ONLY the JSON, no markdown."
+)
 
 
-def get_client() -> anthropic.Anthropic:
+def get_client() -> anthropic.AsyncAnthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
+        kwargs = {}
+        if settings.anthropic_api_key:
+            kwargs["api_key"] = settings.anthropic_api_key
+        _client = anthropic.AsyncAnthropic(**kwargs)
     return _client
 
 
-def read_sign(image_bytes: bytes) -> dict:
+async def read_sign(image_bytes: bytes) -> SignRules:
     """
     Send cropped sign image to Claude Vision.
-
-    Returns:
-        {
-            "summary": "2hr parking Mon-Sat 8am-6pm, metered $2/hr",
-            "price": "$2/hr" | null,
-            "max_duration_min": 120 | null,
-            "hours": "Mon-Sat 8am-6pm" | null,
-            "restrictions": ["no parking Sunday", "street cleaning Thu 10am-12pm"],
-            "raw_text": "the literal text on the sign"
-        }
+    Returns SignRules with confidence scoring.
     """
     client = get_client()
     b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6-20250514",
-        max_tokens=512,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": b64,
+    try:
+        response = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=512,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": b64,
+                            },
                         },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "This is a photo of a parking sign. Read every line of text "
-                            "and return a JSON object with these fields:\n"
-                            '- "summary": plain English one-liner of the rules\n'
-                            '- "price": hourly price or null if free\n'
-                            '- "max_duration_min": max parking minutes or null\n'
-                            '- "hours": when rules apply\n'
-                            '- "restrictions": array of special restrictions\n'
-                            '- "raw_text": exact text on the sign\n'
-                            "Return ONLY the JSON, no markdown."
-                        ),
-                    },
-                ],
-            }
-        ],
+                        {"type": "text", "text": SIGN_PROMPT},
+                    ],
+                }
+            ],
+        )
+    except anthropic.APIError:
+        return SignRules(
+            summary="API error reading sign",
+            confidence_score=0.0,
+            flagged=True,
+        )
+
+    raw_text = response.content[0].text
+    return _parse_and_score(raw_text)
+
+
+def _parse_and_score(raw_text: str) -> SignRules:
+    """Parse Claude response and compute confidence score."""
+    try:
+        data = json.loads(raw_text)
+        json_parsed = True
+    except json.JSONDecodeError:
+        data = {}
+        json_parsed = False
+
+    rules = SignRules(
+        summary=data.get("summary", raw_text),
+        price=data.get("price"),
+        max_duration_min=data.get("max_duration_min"),
+        hours=data.get("hours"),
+        restrictions=data.get("restrictions", []),
+        raw_text=data.get("raw_text", raw_text),
     )
 
-    import json
-    try:
-        return json.loads(response.content[0].text)
-    except (json.JSONDecodeError, IndexError):
-        return {
-            "summary": response.content[0].text,
-            "price": None,
-            "max_duration_min": None,
-            "hours": None,
-            "restrictions": [],
-            "raw_text": response.content[0].text,
-        }
+    # Confidence scoring: 0.0-1.0 based on completeness
+    score = 0.0
+    if json_parsed:
+        score += 0.3
+    if rules.summary and len(rules.summary) > 10:
+        score += 0.2
+    if rules.raw_text and rules.raw_text != rules.summary:
+        score += 0.2
+    if rules.hours:
+        score += 0.15
+    if rules.price or rules.max_duration_min:
+        score += 0.15
+
+    rules.confidence_score = round(score, 2)
+    rules.flagged = score < settings.sign_read_confidence_threshold
+    return rules
+
+
+async def close_client() -> None:
+    global _client
+    if _client is not None:
+        await _client.close()
+        _client = None

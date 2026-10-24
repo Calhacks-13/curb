@@ -1,7 +1,38 @@
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="Curb API", version="0.1.0")
+from app.azure import cosmos, signalr
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: preload models, init Azure clients
+    from app.cv.detector import get_vehicle_model, get_sign_model, get_seg_model
+    from app.cv.depth import load_depth_model
+
+    get_seg_model()  # try segmentation first (preferred)
+    get_vehicle_model()  # bbox fallback
+    get_sign_model()
+    load_depth_model()
+    await cosmos.init()
+    await signalr.init()
+    yield
+    # Shutdown
+    from app.cv.sign_reader import close_client
+
+    await close_client()
+    await cosmos.close()
+    await signalr.close()
+
+
+app = FastAPI(title="Curb API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -10,11 +41,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Wire routers
+from app.routes.ws import router as ws_router
+from app.routes.spots import router as spots_router
+from app.routes.signs import router as signs_router
+from app.routes.dashboard import router as dashboard_router
+
+app.include_router(ws_router)
+app.include_router(spots_router)
+app.include_router(signs_router)
+app.include_router(dashboard_router)
+
+# Serve static files
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/")
+async def root():
+    return FileResponse(STATIC_DIR / "client.html")
+
+
+@app.get("/dashboard")
+async def dashboard_page():
+    return FileResponse(STATIC_DIR / "dashboard.html")
+
+
+@app.get("/viewer")
+async def viewer_page():
+    return FileResponse(STATIC_DIR / "viewer.html")
+
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    from app.cv.detector import _vehicle_model, _sign_model_available, _seg_model_available
+    from app.cv.depth import is_available as depth_is_available
 
-
-# Routes wired in once built:
-# from app.routes import spots, signs, marketplace
+    return {
+        "status": "ok",
+        "vehicle_model_loaded": _vehicle_model is not None,
+        "seg_model_available": _seg_model_available or False,
+        "sign_model_available": _sign_model_available or False,
+        "depth_model_available": depth_is_available(),
+        "cosmos_configured": cosmos._is_configured(),
+        "signalr_configured": signalr._is_configured(),
+    }
