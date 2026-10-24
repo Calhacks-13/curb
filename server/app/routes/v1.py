@@ -12,7 +12,7 @@ import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Form, Query, UploadFile, File
+from fastapi import APIRouter, Form, Query, Request, UploadFile, File
 from pydantic import BaseModel
 
 from app.azure import cosmos, signalr
@@ -274,6 +274,7 @@ async def demo_session(body: dict | None = None):
 
 @router.get("/parking/nearby")
 async def nearby_parking(
+    request: Request,
     lat: float = Query(...),
     lng: float = Query(...),
     radius_m: float = Query(805, ge=50, le=5000),
@@ -308,6 +309,10 @@ async def nearby_parking(
 
     zones = [_block_to_zone(b, signs) for b in blocks]
     driveways = [_driveway_to_view(d) for d in raw_driveways]
+    service = getattr(request.app.state, "driveway_service", None)
+    if service is not None:
+        from app.wiring import overlay_driveway_state
+        driveways = [await overlay_driveway_state(d, service, now) for d in driveways]
     garages = [_garage_to_view(g) for g in raw_garages]
 
     return {

@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     webpubsub_connection_string: str = ""
     webpubsub_hub: str = "curb"
 
+    # Shared secret the payment service sends as its bearer token
+    payment_service_token: str = ""
+
     # Anthropic
     anthropic_api_key: str = ""
 
