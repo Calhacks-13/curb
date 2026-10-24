@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     min_gap_meters: float = 4.5  # minimum gap to count as a parking spot
 
     # Frame selection (simple rate limiter, no MAD)
-    target_fps: float = 2.5
+    target_fps: float = 4.0
 
     # Object tracking (IoU-based)
     track_iou_threshold: float = 0.2

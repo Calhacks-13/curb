@@ -108,6 +108,7 @@ class SpotManager:
         gap: TrackedGap,
         session_id: str,
         sign_rules: SignPoleReading | None = None,
+        is_seed: bool = False,
     ) -> SpotDocument:
         """Create a new OPEN spot and broadcast space.opened + sign_rule.updated."""
         now = datetime.utcnow()
@@ -125,8 +126,9 @@ class SpotManager:
             opened_at=now,
             last_seen_at=now,
             version=1,
-            ttl=settings.default_ttl_sec,
+            ttl=-1 if is_seed else settings.default_ttl_sec,
             source_session_id=session_id,
+            is_seed=is_seed,
         )
         self._spots[segment_id] = spot
         asyncio.create_task(_safe(cosmos.upsert_spot(spot)))
@@ -164,9 +166,13 @@ class SpotManager:
 
     async def occupy_spot(self, segment_id: str) -> None:
         """Gap disappeared — mark spot as occupied and broadcast."""
-        spot = self._spots.pop(segment_id, None)
+        spot = self._spots.get(segment_id)
         if spot is None:
             return
+        # Seed spots (mapping mode) are permanent — never occupy them
+        if spot.is_seed:
+            return
+        self._spots.pop(segment_id)
         spot.status = "occupied"
         spot.occupied_at = datetime.utcnow()
         spot.version += 1
@@ -263,6 +269,7 @@ class Pipeline:
         self._spot_mgr = SpotManager()
         self._sessions: dict[str, SessionState] = {}
         self.recent_blocks: deque[dict] = deque(maxlen=50)
+        self.mapping_mode: bool = False  # when True, spots are saved as permanent seed
 
     @property
     def spots_in_memory(self) -> int:
@@ -403,6 +410,7 @@ class Pipeline:
                         gap=best_gap,
                         session_id=session_id,
                         sign_rules=sign_rules,
+                        is_seed=self.mapping_mode,
                     )
                     # Track gap→segment mapping for occupy detection
                     for gap in newly_confirmed:
@@ -415,7 +423,7 @@ class Pipeline:
                     confidence=1.0,
                     sign_rules=sign_pole_reading or session.last_sign_reading,
                     confirmed_at=datetime.utcnow(),
-                    ttl=settings.default_ttl_sec,
+                    ttl=-1 if self.mapping_mode else settings.default_ttl_sec,
                     lat=lat,
                     lng=lng,
                     location={"type": "Point", "coordinates": [lng, lat]},

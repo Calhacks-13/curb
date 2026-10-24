@@ -232,23 +232,15 @@ class GapTracker:
         current_gaps: dict[tuple[int, int], list[float]] = {}
         min_gap_px = frame_width * settings.min_gap_fraction
 
-        # Left edge gap (before first vehicle)
-        if sorted_tracks[0].bbox[0] >= min_gap_px:
-            key = (0, sorted_tracks[0].id)  # 0 = frame edge
-            current_gaps[key] = [0, 0, sorted_tracks[0].bbox[0], frame_height]
-
-        # Gaps between vehicles
+        # Only count gaps BETWEEN two tracked vehicles — skip frame-edge gaps.
+        # Edge gaps are unreliable: the frame boundary may cut through a parked
+        # car, or there may be more cars just outside the frame.
         for i in range(len(sorted_tracks) - 1):
             right_edge = sorted_tracks[i].bbox[2]
             left_edge = sorted_tracks[i + 1].bbox[0]
             if left_edge - right_edge >= min_gap_px:
                 key = (sorted_tracks[i].id, sorted_tracks[i + 1].id)
                 current_gaps[key] = [right_edge, 0, left_edge, frame_height]
-
-        # Right edge gap (after last vehicle)
-        if frame_width - sorted_tracks[-1].bbox[2] >= min_gap_px:
-            key = (sorted_tracks[-1].id, 0)
-            current_gaps[key] = [sorted_tracks[-1].bbox[2], 0, frame_width, frame_height]
 
         # Match current gaps to tracked gaps
         active_keys = set()

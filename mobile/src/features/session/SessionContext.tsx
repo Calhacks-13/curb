@@ -53,12 +53,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      const saved = await SecureStore.getItemAsync(PROFILE_KEY).catch(() => null);
-      if (saved === "driver" || saved === "owner") await start(saved);
-      setRestoring(false);
-    })();
-  }, [start]);
+    // Skip auto-restore: always show the profile picker on app start
+    // so each demo session begins with the home screen.
+    setRestoring(false);
+  }, []);
 
   const value = useMemo(
     () => ({ restoring, session, starting, error, start, signOut }),

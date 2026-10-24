@@ -23,6 +23,7 @@ _mem_blocks: dict[str, dict] = {}
 _mem_spots: dict[str, dict] = {}
 _mem_signs: dict[str, dict] = {}
 _mem_driveways: dict[str, dict] = {}
+_mem_garages: dict[str, dict] = {}
 _use_memory: bool = False
 
 
@@ -198,6 +199,12 @@ async def query_driveways_nearby(
     return _mem_nearby(_mem_driveways, lat, lng, radius_m)
 
 
+async def query_garages_nearby(
+    lat: float, lng: float, radius_m: float = 1500
+) -> list[dict]:
+    return _mem_nearby(_mem_garages, lat, lng, radius_m)
+
+
 async def get_block(segment_id: str) -> dict | None:
     if _use_memory:
         return _mem_blocks.get(segment_id)
@@ -207,6 +214,51 @@ async def get_block(segment_id: str) -> dict | None:
         return await _blocks_container.read_item(segment_id, partition_key=segment_id)
     except Exception:
         return None
+
+
+async def delete_seed_spots(spot_id: str | None = None) -> int:
+    """Delete seed spots from Cosmos (and in-memory). Returns count deleted."""
+    deleted = 0
+
+    if _use_memory:
+        to_del = []
+        for sid, doc in _mem_spots.items():
+            if doc.get("is_seed"):
+                if spot_id is None or sid == spot_id:
+                    to_del.append(sid)
+        for sid in to_del:
+            _mem_spots.pop(sid, None)
+        # Also clean blocks
+        block_del = []
+        for bid, doc in _mem_blocks.items():
+            if doc.get("ttl") == -1 and doc.get("is_seed"):
+                if spot_id is None:
+                    block_del.append(bid)
+        for bid in block_del:
+            _mem_blocks.pop(bid, None)
+        return len(to_del)
+
+    if _spots_container is None:
+        return 0
+
+    # Query seed spots from Cosmos
+    if spot_id:
+        query = "SELECT * FROM c WHERE c.is_seed = true AND c.id = @id"
+        params = [{"name": "@id", "value": spot_id}]
+    else:
+        query = "SELECT * FROM c WHERE c.is_seed = true"
+        params = []
+
+    async for item in _spots_container.query_items(query, parameters=params):
+        try:
+            await _spots_container.delete_item(
+                item["id"], partition_key=item.get("segment_id", item["id"])
+            )
+            deleted += 1
+        except Exception:
+            pass
+
+    return deleted
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -273,7 +325,12 @@ def _seed_demo_data() -> None:
         doc = {**dw, "location": {"type": "Point", "coordinates": [lng, lat]}}
         _mem_driveways[dw["id"]] = doc
 
-    logger.info("Seeded %d demo spots + blocks + %d driveways into memory store", len(SEED_SPOTS), len(_SEED_DRIVEWAYS))
+    for g in _SEED_GARAGES:
+        lng, lat = g["lng"], g["lat"]
+        doc = {**g, "location": {"type": "Point", "coordinates": [lng, lat]}}
+        _mem_garages[g["id"]] = doc
+
+    logger.info("Seeded %d spots + %d driveways + %d garages into memory", len(SEED_SPOTS), len(_SEED_DRIVEWAYS), len(_SEED_GARAGES))
 
 
 # Shared seed data used by both in-memory and Cosmos paths
@@ -290,6 +347,15 @@ _SEED_SPOTS = [
      "confidence": 0.80, "lat": 37.80310, "lng": -122.44550, "width_meters": 5.2, "seed_age_sec": 220},
 ]
 
+
+_SEED_GARAGES = [
+    {"id": "seed_garage_1", "lat": 37.80050, "lng": -122.44900,
+     "name": "Palace of Fine Arts Garage", "summary": "Public parking, $3/hr, 120 spaces",
+     "price": "$3/hr", "arrow_direction": "right", "sign_category": "garage", "version": 1},
+    {"id": "seed_garage_2", "lat": 37.80350, "lng": -122.44400,
+     "name": "Marina Blvd Parking Lot", "summary": "Open lot, $2/hr, first hour free",
+     "price": "$2/hr", "arrow_direction": None, "sign_category": "lot", "version": 1},
+]
 
 _SEED_DRIVEWAYS = [
     # Private driveways near Palace of Fine Arts — purple on map

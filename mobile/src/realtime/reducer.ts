@@ -37,7 +37,7 @@ export function fromNearby(prev: ParkingState, res: NearbyParkingResponse): Park
     spaces: keepNewer(byId(res.spaces), prev.spaces),
     driveways: keepNewer(byId(res.driveways), prev.driveways),
     bookings: prev.bookings,
-    garages: prev.garages,
+    garages: res.garages?.length ? keepNewer(byId(res.garages), prev.garages) : prev.garages,
     versions,
   };
 }
