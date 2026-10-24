@@ -1,9 +1,8 @@
-// Seeded demo session (spec section 7.1): pick Driver or Driveway Owner, get a
-// stable backend user and token, remember the choice on the device. No
-// registration, passwords, or profile editing.
+// Seeded demo session (spec section 7.1): pick Driver or Driveway Owner and get
+// a stable backend user and token. No registration, passwords, or profile editing.
 
 import * as SecureStore from "expo-secure-store";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 import { getApi } from "@/api/client";
 import type { DemoProfile, Session } from "@/api/types";
@@ -11,7 +10,7 @@ import type { DemoProfile, Session } from "@/api/types";
 const PROFILE_KEY = "curb.demo-profile";
 
 type SessionState = {
-  /** True until the saved profile (if any) has been restored. */
+  /** Always false: profiles aren't restored on launch. */
   restoring: boolean;
   session: Session | null;
   starting: boolean;
@@ -24,7 +23,9 @@ const SessionContext = createContext<SessionState | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [restoring, setRestoring] = useState(true);
+  // Each launch starts at the picker so every demo begins from the home screen;
+  // the saved profile is kept but not restored.
+  const [restoring] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,12 +51,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     getApi().setToken(null);
     setSession(null);
     await SecureStore.deleteItemAsync(PROFILE_KEY).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    // Skip auto-restore: always show the profile picker on app start
-    // so each demo session begins with the home screen.
-    setRestoring(false);
   }, []);
 
   const value = useMemo(
