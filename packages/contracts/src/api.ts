@@ -81,6 +81,7 @@ export const FinalizeBookingRequestSchema = z.strictObject({
   expected_booking_version: z.number().int().positive(),
 });
 export const PaymentFailedRequestSchema = z.strictObject({
+  expected_booking_version: z.number().int().positive(),
   code: z.string().min(1),
   retryable: z.boolean(),
 });
