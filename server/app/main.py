@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
             ) if cosmos._is_configured() else InMemoryParkingRepository()
         )
         app.state.parking_repository = repository
+    app.state.local_demo = isinstance(repository, InMemoryParkingRepository)
     # Local in-memory startup uses a clearly demo-only, fresh observation window
     # so the seeded curb spaces remain visible while developing on a phone.
     await load_seed(repository, refresh_observations=isinstance(repository, InMemoryParkingRepository))
