@@ -76,7 +76,16 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
       call("DELETE", `/v1/driveways/${encodeURIComponent(id)}/holds/${encodeURIComponent(bookingId)}`),
     recoverDriveway: (id, expected_version) =>
       call("POST", `/v1/driveways/${encodeURIComponent(id)}/recover`, { expected_version }),
-    executePayment: (bookingId) => call("POST", `/v1/payments/${encodeURIComponent(bookingId)}/execute`, undefined, paymentsUrl),
+    async executePayment(bookingId) {
+      // The payment service answers { booking, explorer_url }; accept a bare booking too.
+      const res = await call<Booking | { booking: Booking }>(
+        "POST",
+        `/v1/payments/${encodeURIComponent(bookingId)}/execute`,
+        undefined,
+        paymentsUrl,
+      );
+      return "booking" in res ? res.booking : res;
+    },
     booking: (id) => call("GET", `/v1/bookings/${encodeURIComponent(id)}`),
     async uploadFrame(jpegUri, meta) {
       // Use native FileSystem upload — React Native's fetch+FormData is unreliable for file uploads.

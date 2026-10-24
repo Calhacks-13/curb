@@ -51,6 +51,9 @@ export function useDrivewayBooking(onConfirmed?: (booking: Booking) => void) {
       if (confirmed.state === "CONFIRMED") {
         setCheckout({ phase: "confirmed", booking: confirmed, error: null });
         onConfirmed?.(confirmed);
+      } else if (confirmed.state === "RECONCILIATION_REQUIRED") {
+        // Paid on-chain but not recorded yet; a retry only finishes recording it.
+        setCheckout({ phase: "failed", booking: confirmed, error: "Payment went through. Retry to finish confirming your booking." });
       } else {
         setCheckout({ phase: "failed", booking: confirmed, error: "Payment didn't complete." });
       }
