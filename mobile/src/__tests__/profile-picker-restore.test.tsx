@@ -16,9 +16,10 @@ jest.mock("expo-secure-store", () => {
 const { mockStore } = jest.requireMock("expo-secure-store") as { mockStore: Map<string, string> };
 
 describe("demo profile picker: restore", () => {
-  it("skips the picker when a profile was saved on this device", async () => {
+  it("shows the picker on cold launch even when a profile was saved", async () => {
     mockStore.set("curb.demo-profile", "owner");
     await renderRouter(sessionRoutes, { initialUrl: "/" });
-    expect(await screen.findByText("Host screen")).toBeTruthy();
+    expect(await screen.findByText("Continue as Driver")).toBeTruthy();
+    expect(screen.getByText("Continue as Driveway Owner")).toBeTruthy();
   });
 });
