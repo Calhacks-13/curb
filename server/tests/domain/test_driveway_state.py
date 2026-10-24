@@ -32,6 +32,18 @@ class CommitCheckingPublisher:
         self.events.append(event)
 
 
+class FailFirstConfirmationPublisher(CommitCheckingPublisher):
+    def __init__(self, repository: InMemoryDrivewayRepository):
+        super().__init__(repository)
+        self.failed_once = False
+
+    async def publish(self, event):
+        if event.type == "booking.confirmed" and not self.failed_once:
+            self.failed_once = True
+            raise RuntimeError("simulated Web PubSub outage")
+        await super().publish(event)
+
+
 def make_driveway(
     *,
     state: DrivewayState = DrivewayState.AVAILABLE,
@@ -123,6 +135,7 @@ async def test_failed_payment_stays_held_and_driver_can_cancel():
     processing = await service.mark_payment_processing(booking.id, 1, NOW)
     failed = await service.mark_payment_failed(
         booking.id,
+        expected_booking_version=processing.version,
         code="FACILITATOR_UNAVAILABLE",
         retryable=True,
         now=NOW,
@@ -226,6 +239,25 @@ async def test_availability_window_uses_pacific_dst_boundaries():
 
 
 @pytest.mark.asyncio
+async def test_availability_inside_both_folds_of_repeated_hour():
+    driveway = make_driveway(
+        start=datetime(2026, 11, 1, 8, 30, tzinfo=UTC),
+        end=datetime(2026, 11, 1, 9, 30, tzinfo=UTC),
+    )
+    service, _, _ = make_service(driveway)
+
+    first_fold = await service.get_driveway(
+        driveway.id, datetime(2026, 11, 1, 8, 45, tzinfo=UTC)
+    )
+    second_fold = await service.get_driveway(
+        driveway.id, datetime(2026, 11, 1, 9, 15, tzinfo=UTC)
+    )
+
+    assert first_fold.available_now is True
+    assert second_fold.available_now is True
+
+
+@pytest.mark.asyncio
 async def test_hold_outside_availability_window_is_rejected():
     service, _, _ = make_service()
 
@@ -233,3 +265,114 @@ async def test_hold_outside_availability_window_is_rejected():
         await service.start_hold(
             "driveway_demo_1", "driver_demo", 1, NOW + timedelta(days=1)
         )
+
+
+@pytest.mark.asyncio
+async def test_delayed_failure_cannot_reset_a_newer_processing_attempt():
+    service, repository, _ = make_service()
+    booking = await service.start_hold("driveway_demo_1", "driver_demo", 1, NOW)
+    first_processing = await service.mark_payment_processing(booking.id, 1, NOW)
+    first_failure = await service.mark_payment_failed(
+        booking.id,
+        expected_booking_version=first_processing.version,
+        code="FACILITATOR_UNAVAILABLE",
+        retryable=True,
+        now=NOW,
+    )
+    duplicate = await service.mark_payment_failed(
+        booking.id,
+        expected_booking_version=first_processing.version,
+        code="FACILITATOR_UNAVAILABLE",
+        retryable=True,
+        now=NOW,
+    )
+    assert duplicate == first_failure
+    retry_processing = await service.mark_payment_processing(
+        booking.id, first_failure.version, NOW
+    )
+
+    with pytest.raises(VersionConflictError):
+        await service.mark_payment_failed(
+            booking.id,
+            expected_booking_version=first_processing.version,
+            code="FACILITATOR_UNAVAILABLE",
+            retryable=True,
+            now=NOW,
+        )
+
+    current = await repository.get_booking(booking.id)
+    driveway = await repository.get_driveway("driveway_demo_1")
+    assert current is not None and current.version == retry_processing.version
+    assert current.state == BookingState.PROCESSING
+    assert driveway is not None
+    with pytest.raises(InvalidTransitionError):
+        await service.recover_driveway(
+            driveway.id, "owner_demo", driveway.version, NOW
+        )
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_finalization_preserves_settlement_hash():
+    service, repository, _ = make_service()
+    booking = await service.start_hold("driveway_demo_1", "driver_demo", 1, NOW)
+    recorded_hash = "0x" + "a" * 64
+    conflicting_hash = "0x" + "b" * 64
+    reconciliation = await service.mark_reconciliation_required(
+        booking.id,
+        transaction_hash=recorded_hash,
+        expected_booking_version=booking.version,
+        now=NOW,
+    )
+
+    with pytest.raises(InvalidTransitionError):
+        await service.finalize_booking(
+            booking.id,
+            idempotency_key=booking.idempotency_key,
+            transaction_hash=conflicting_hash,
+            expected_booking_version=reconciliation.version,
+            now=NOW,
+        )
+
+    unchanged = await repository.get_booking(booking.id)
+    assert unchanged is not None and unchanged.transaction_hash == recorded_hash
+    confirmed = await service.finalize_booking(
+        booking.id,
+        idempotency_key=booking.idempotency_key,
+        transaction_hash=recorded_hash,
+        expected_booking_version=reconciliation.version,
+        now=NOW,
+    )
+    assert confirmed.transaction_hash == recorded_hash
+
+
+@pytest.mark.asyncio
+async def test_matching_finalize_retry_republishes_confirmation_after_outage():
+    repository = InMemoryDrivewayRepository([make_driveway()])
+    publisher = FailFirstConfirmationPublisher(repository)
+    service = DrivewayService(repository, publisher)
+    booking = await service.start_hold("driveway_demo_1", "driver_demo", 1, NOW)
+    processing = await service.mark_payment_processing(booking.id, 1, NOW)
+    transaction_hash = "0x" + "c" * 64
+
+    with pytest.raises(RuntimeError, match="Web PubSub outage"):
+        await service.finalize_booking(
+            booking.id,
+            idempotency_key=booking.idempotency_key,
+            transaction_hash=transaction_hash,
+            expected_booking_version=processing.version,
+            now=NOW,
+        )
+
+    confirmed = await service.finalize_booking(
+        booking.id,
+        idempotency_key=booking.idempotency_key,
+        transaction_hash=transaction_hash,
+        expected_booking_version=processing.version,
+        now=NOW + timedelta(seconds=1),
+    )
+    assert confirmed.state == BookingState.CONFIRMED
+    confirmation_events = [
+        event for event in publisher.events if event.type == "booking.confirmed"
+    ]
+    assert len(confirmation_events) == 1
+    assert confirmation_events[0].entity_version == confirmed.version

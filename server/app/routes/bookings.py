@@ -62,6 +62,7 @@ async def mark_payment_failed(
     try:
         booking = await service.mark_payment_failed(
             booking_id,
+            expected_booking_version=request.expected_booking_version,
             code=request.code,
             retryable=request.retryable,
             now=now,

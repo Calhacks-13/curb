@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol
 from uuid import uuid4
@@ -204,13 +204,16 @@ class InMemoryDrivewayRepository:
 
 
 def is_available_now(driveway: Driveway, now: datetime) -> bool:
-    timezone = ZoneInfo(driveway.availability_timezone)
-    local_now = now.astimezone(timezone)
-    local_start = driveway.availability_start.astimezone(timezone)
-    local_end = driveway.availability_end.astimezone(timezone)
+    # Resolve the named business timezone so invalid seed data fails loudly,
+    # then compare instants in UTC. Local wall-time comparison loses the fold
+    # distinction during the repeated hour at the end of daylight saving time.
+    ZoneInfo(driveway.availability_timezone)
+    utc_now = now.astimezone(UTC)
+    utc_start = driveway.availability_start.astimezone(UTC)
+    utc_end = driveway.availability_end.astimezone(UTC)
     return (
         driveway.state == DrivewayState.AVAILABLE
-        and local_start <= local_now < local_end
+        and utc_start <= utc_now < utc_end
     )
 
 
@@ -443,11 +446,23 @@ class DrivewayService:
         self,
         booking_id: str,
         *,
+        expected_booking_version: int,
         code: str,
         retryable: bool,
         now: datetime,
     ) -> Booking:
         booking = await self._booking(booking_id)
+        if booking.version != expected_booking_version:
+            is_exact_duplicate = (
+                booking.version == expected_booking_version + 1
+                and booking.state == BookingState.PENDING_PAYMENT
+                and booking.payment_status == PaymentStatus.FAILED
+                and booking.payment_failure_code == code
+                and booking.payment_retryable == retryable
+            )
+            if is_exact_duplicate:
+                return booking
+            raise VersionConflictError("booking version is stale")
         driveway = await self._driveway(booking.driveway_id)
         if booking.state != BookingState.PROCESSING:
             raise InvalidTransitionError("only processing payments can fail")
@@ -516,12 +531,23 @@ class DrivewayService:
                 booking.idempotency_key == idempotency_key
                 and booking.transaction_hash == transaction_hash
             ):
+                driveway = await self._driveway(booking.driveway_id)
+                await self._publish_confirmed(
+                    driveway, booking, booking.confirmed_at or now
+                )
                 return booking
             raise InvalidTransitionError("booking was finalized with different evidence")
         if booking.version != expected_booking_version:
             raise VersionConflictError("booking version is stale")
         if booking.idempotency_key != idempotency_key:
             raise InvalidTransitionError("idempotency key does not match booking")
+        if (
+            booking.transaction_hash is not None
+            and booking.transaction_hash != transaction_hash
+        ):
+            raise InvalidTransitionError(
+                "transaction hash does not match recorded settlement evidence"
+            )
         if booking.state not in {
             BookingState.PROCESSING,
             BookingState.RECONCILIATION_REQUIRED,
@@ -540,19 +566,24 @@ class DrivewayService:
             expected_driveway_version=driveway.version,
             expected_booking_version=booking.version,
         )
-        view = await self._view(booked, now)
+        await self._publish_confirmed(booked, confirmed, now)
+        return confirmed
+
+    async def _publish_confirmed(
+        self, driveway: Driveway, booking: Booking, occurred_at: datetime
+    ) -> None:
+        view = await self._view(driveway, occurred_at)
         await self.publisher.publish(
             BookingConfirmedEvent(
                 type="booking.confirmed",
-                entity_id=confirmed.id,
-                entity_version=confirmed.version,
-                occurred_at=now,
+                entity_id=booking.id,
+                entity_version=booking.version,
+                occurred_at=occurred_at,
                 payload=BookingConfirmedPayload(
-                    booking=confirmed.to_view(), driveway=view
+                    booking=booking.to_view(), driveway=view
                 ),
             )
         )
-        return confirmed
 
     @staticmethod
     def _release(driveway: Driveway, booking: Booking) -> tuple[Driveway, Booking]:

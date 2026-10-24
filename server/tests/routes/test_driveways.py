@@ -127,7 +127,11 @@ def test_hold_failure_cancel_and_booking_receipt_flow():
 
     failed = client.post(
         f"/v1/bookings/{booking['id']}/payment-failed",
-        json={"code": "FACILITATOR_UNAVAILABLE", "retryable": True},
+        json={
+            "expected_booking_version": processing.json()["version"],
+            "code": "FACILITATOR_UNAVAILABLE",
+            "retryable": True,
+        },
     )
     assert failed.status_code == 200
     assert failed.json()["state"] == "PENDING_PAYMENT"
