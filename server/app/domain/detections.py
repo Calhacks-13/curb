@@ -54,7 +54,7 @@ class DetectionSubmission(BaseModel):
     captured_at: datetime
     lat: Annotated[FiniteNumber, Field(ge=-90, le=90)]
     lng: Annotated[FiniteNumber, Field(ge=-180, le=180)]
-    accuracy_m: Annotated[FiniteNumber, Field(ge=0)]
+    accuracy_m: Annotated[FiniteNumber, Field(ge=0)] | None
     heading: FiniteNumber = 0.0
     vehicles: list[VehicleDetectionInput]
     signs: list[SignDetectionInput]

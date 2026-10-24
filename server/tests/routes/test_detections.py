@@ -203,7 +203,7 @@ def test_detection_endpoint_rejects_invalid_confidence(monkeypatch, kind, confid
     {"frame_height": True}, {"frame_width": "1280"},
     {"lat": 91}, {"lng": -181}, {"lat": None},
     {"lng": None}, {"heading": None},
-    {"accuracy_m": -1}, {"accuracy_m": None},
+    {"accuracy_m": -1},
     {"session_id": ""}, {"device_id": ""}, {"captured_at": "invalid"},
 ])
 def test_detection_endpoint_rejects_invalid_metadata(monkeypatch, change):
@@ -212,6 +212,19 @@ def test_detection_endpoint_rejects_invalid_metadata(monkeypatch, change):
     response = client.post("/v1/vision/detections", json=submission(**change))
     assert response.status_code == 422
     assert pipeline.calls == []
+
+
+def test_detection_endpoint_accepts_unavailable_gps_accuracy(monkeypatch):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+
+    response = client.post("/v1/vision/detections", json=submission(accuracy_m=None))
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert len(pipeline.calls) == 1
+    assert pipeline.calls[0]["lat"] == 37.8
+    assert pipeline.calls[0]["lng"] == -122.44
 
 
 @pytest.mark.parametrize("crop", ["anBlZw", "anBlZw==\n", "é", ""])
