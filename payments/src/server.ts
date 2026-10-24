@@ -3,7 +3,7 @@
 import { paymentMiddlewareFromHTTPServer } from "@x402/express";
 
 import { createBookingApi } from "./apiClient.js";
-import { createCdpGateway, createReceiptServer, RECEIPT_ROUTE } from "./cdp.js";
+import { createCdpGateway, createReceiptServer, createWalletApi, RECEIPT_ROUTE } from "./cdp.js";
 import { createOrchestrator } from "./orchestrator.js";
 import { createApp } from "./routes.js";
 import { MemoryPaymentStore } from "./types.js";
@@ -41,6 +41,7 @@ const orchestrator = createOrchestrator({
 const app = createApp({
   orchestrator,
   api,
+  wallet: createWalletApi(),
   serviceToken,
   payeeAddress: () => payee,
   paywall: paymentMiddlewareFromHTTPServer(receipts.httpServer),

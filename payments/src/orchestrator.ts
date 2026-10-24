@@ -5,7 +5,16 @@
 // payment goes back to the server as retryable, leaving the driveway held.
 
 import { ApiError } from "./apiClient.js";
-import type { Booking, BookingApi, PaymentGateway, PaymentResult, PaymentStore, SettlementEvidence } from "./types.js";
+import type {
+  Booking,
+  BookingApi,
+  PaymentGateway,
+  PaymentPhase,
+  PaymentProgress,
+  PaymentResult,
+  PaymentStore,
+  SettlementEvidence,
+} from "./types.js";
 
 export class PaymentError extends Error {
   constructor(
@@ -34,6 +43,19 @@ function failureCode(err: unknown): string {
 
 export function createOrchestrator({ api, gateway, store, resourceUrl, explorerUrl }: OrchestratorDeps) {
   const inFlight = new Map<string, Promise<PaymentResult>>();
+  const progress = new Map<string, PaymentProgress>();
+
+  function mark(bookingId: string, phase: PaymentPhase, extra: Partial<PaymentProgress> = {}) {
+    const prev = progress.get(bookingId);
+    const transaction_hash = extra.transaction_hash ?? prev?.transaction_hash ?? null;
+    progress.set(bookingId, {
+      booking_id: bookingId,
+      phase,
+      transaction_hash,
+      explorer_url: transaction_hash ? explorerUrl(transaction_hash) : null,
+      error_code: extra.error_code ?? null,
+    });
+  }
 
   const result = (booking: Booking): PaymentResult => ({
     booking,
@@ -44,6 +66,7 @@ export function createOrchestrator({ api, gateway, store, resourceUrl, explorerU
     try {
       const confirmed = await api.finalize(booking.id, booking.idempotency_key, evidence.transactionHash, booking.version);
       store.put({ bookingId: booking.id, evidence, reconciliationRequired: false });
+      mark(booking.id, "confirmed");
       return result(confirmed);
     } catch (err) {
       // A lost response can hide a finalize that did land; check before flagging.
@@ -51,10 +74,12 @@ export function createOrchestrator({ api, gateway, store, resourceUrl, explorerU
         const latest = await api.getBooking(booking.id).catch(() => null);
         if (latest?.state === "CONFIRMED" && latest.transaction_hash === evidence.transactionHash) {
           store.put({ bookingId: booking.id, evidence, reconciliationRequired: false });
+          mark(booking.id, "confirmed");
           return result(latest);
         }
       }
       store.put({ bookingId: booking.id, evidence, reconciliationRequired: true });
+      mark(booking.id, "reconciliation_required");
       return {
         booking: { ...booking, state: "RECONCILIATION_REQUIRED", payment_status: "SETTLED", transaction_hash: evidence.transactionHash },
         explorer_url: explorerUrl(evidence.transactionHash),
@@ -82,16 +107,19 @@ export function createOrchestrator({ api, gateway, store, resourceUrl, explorerU
       throw new PaymentError(409, "RECONCILIATION_UNAVAILABLE", false, booking);
     }
 
+    mark(bookingId, "approved");
     let evidence: SettlementEvidence;
     try {
-      evidence = await gateway.pay(resourceUrl(bookingId), booking.idempotency_key);
+      evidence = await gateway.pay(resourceUrl(bookingId), booking.idempotency_key, () => mark(bookingId, "signed"));
     } catch (err) {
       const code = failureCode(err);
+      mark(bookingId, "failed", { error_code: code });
       const failed = await api.markFailed(bookingId, booking.version, code, true).catch(() => booking);
       throw new PaymentError(402, code, true, failed);
     }
 
     store.put({ bookingId, evidence, reconciliationRequired: true });
+    mark(bookingId, "settled", { transaction_hash: evidence.transactionHash });
     return finalize(booking, evidence);
   }
 
@@ -103,6 +131,10 @@ export function createOrchestrator({ api, gateway, store, resourceUrl, explorerU
       const attempt = run(bookingId, callerToken).finally(() => inFlight.delete(bookingId));
       inFlight.set(bookingId, attempt);
       return attempt;
+    },
+    /** Latest checkout step for a booking, or null before any attempt. */
+    progress(bookingId: string): PaymentProgress | null {
+      return progress.get(bookingId) ?? null;
     },
   };
 }

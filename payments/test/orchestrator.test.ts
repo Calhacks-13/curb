@@ -24,7 +24,7 @@ describe("executePayment", () => {
 
     expect(api.getBooking).toHaveBeenCalledWith("booking_1", "demo-token-driver_demo");
     expect(api.markProcessing).toHaveBeenCalledWith("booking_1", 1);
-    expect(gateway.pay).toHaveBeenCalledWith("http://payments.test/v1/x402/bookings/booking_1", "idem_1");
+    expect(gateway.pay).toHaveBeenCalledWith("http://payments.test/v1/x402/bookings/booking_1", "idem_1", expect.any(Function));
     expect(api.finalize).toHaveBeenCalledWith("booking_1", "idem_1", TX, 2);
     expect(result.booking.state).toBe("CONFIRMED");
     expect(result.explorer_url).toBe(`https://sepolia.basescan.org/tx/${TX}`);
@@ -118,5 +118,35 @@ describe("partial failure and retry", () => {
     api.markFailed.mockRejectedValueOnce(new ApiError(503, "down"));
     await expect(orchestrator.executePayment("booking_1")).rejects.toMatchObject({ status: 402, code: "PAYMENT_FAILED" });
     vi.restoreAllMocks();
+  });
+});
+
+describe("checkout progress", () => {
+  it("walks approved, signed, settled, confirmed", async () => {
+    const seen: string[] = [];
+    const api = fakeApi();
+    const gateway = fakeGateway();
+    const { orchestrator } = setup(api, gateway);
+    gateway.pay.mockImplementationOnce(async (_url, _key, onSigned) => {
+      seen.push(orchestrator.progress("booking_1")!.phase);
+      onSigned?.();
+      seen.push(orchestrator.progress("booking_1")!.phase);
+      return { transactionHash: TX, network: "eip155:84532", payer: null, settledAt: "" };
+    });
+    api.api.finalize.mockImplementationOnce(async () => {
+      seen.push(orchestrator.progress("booking_1")!.phase);
+      return { ...api.current(), state: "CONFIRMED", transaction_hash: TX, version: 3 };
+    });
+    await orchestrator.executePayment("booking_1");
+    seen.push(orchestrator.progress("booking_1")!.phase);
+    expect(seen).toEqual(["approved", "signed", "settled", "confirmed"]);
+  });
+
+  it("records the failure code", async () => {
+    const gateway = fakeGateway();
+    gateway.pay.mockRejectedValueOnce(Object.assign(new Error("no funds"), { code: "RECEIPT_402" }));
+    const { orchestrator } = setup(fakeApi(), gateway);
+    await orchestrator.executePayment("booking_1").catch(() => {});
+    expect(orchestrator.progress("booking_1")).toMatchObject({ phase: "failed", error_code: "RECEIPT_402" });
   });
 });

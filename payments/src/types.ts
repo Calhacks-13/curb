@@ -15,8 +15,35 @@ export type SettlementEvidence = {
 };
 
 export interface PaymentGateway {
-  /** Pays for an x402-protected resource and resolves once it has settled. */
-  pay(resourceUrl: string, idempotencyKey: string): Promise<SettlementEvidence>;
+  /**
+   * Pays for an x402-protected resource and resolves once it has settled.
+   * `onSigned` fires when the wallet has signed the payment authorization.
+   */
+  pay(resourceUrl: string, idempotencyKey: string, onSigned?: () => void): Promise<SettlementEvidence>;
+}
+
+/** Where a booking's payment is, for the app's live checkout steps. */
+export type PaymentPhase = "approved" | "signed" | "settled" | "confirmed" | "failed" | "reconciliation_required";
+
+export type PaymentProgress = {
+  booking_id: string;
+  phase: PaymentPhase;
+  transaction_hash: string | null;
+  explorer_url: string | null;
+  error_code: string | null;
+};
+
+export type WalletInfo = {
+  network: "base-sepolia";
+  payer: { name: string; address: string; usdc_balance: string; explorer_url: string };
+  payee: { name: string; address: string };
+};
+
+/** The demo wallets the service pays from and into. */
+export interface WalletApi {
+  info(): Promise<WalletInfo>;
+  /** Requests testnet USDC for the payer; resolves with the faucet transaction. */
+  topUp(): Promise<{ transaction_hash: string; explorer_url: string }>;
 }
 
 /** The booking routes on the FastAPI server (plan Task 8). */

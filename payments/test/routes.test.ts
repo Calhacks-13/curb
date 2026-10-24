@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createOrchestrator } from "../src/orchestrator.js";
 import { createApp } from "../src/routes.js";
 import { MemoryPaymentStore } from "../src/types.js";
-import { fakeApi, fakeGateway, heldBooking, TX } from "./fakes.js";
+import { fakeApi, fakeGateway, fakeWallet, heldBooking, TX } from "./fakes.js";
 
 const SERVICE = "service-secret";
 let server: Server | null = null;
 
-async function start(api = fakeApi(), gateway = fakeGateway()) {
+async function start(api = fakeApi(), gateway = fakeGateway(), wallet = fakeWallet()) {
   const orchestrator = createOrchestrator({
     api: api.api,
     gateway,
@@ -19,12 +19,12 @@ async function start(api = fakeApi(), gateway = fakeGateway()) {
     resourceUrl: (id) => `http://payments.test/v1/x402/bookings/${id}`,
     explorerUrl: (tx) => `https://sepolia.basescan.org/tx/${tx}`,
   });
-  const app = createApp({ orchestrator, api: api.api, serviceToken: SERVICE, payeeAddress: () => "0xowner" });
+  const app = createApp({ orchestrator, api: api.api, wallet, serviceToken: SERVICE, payeeAddress: () => "0xowner" });
   server = await new Promise<Server>((resolve) => {
     const s = app.listen(0, () => resolve(s));
   });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { base, api, gateway };
+  return { base, api, gateway, wallet };
 }
 
 afterEach(() => {
@@ -101,5 +101,37 @@ describe("GET /v1/x402/bookings/:id", () => {
       network: "base-sepolia",
       payee_address: "0xowner",
     });
+  });
+});
+
+describe("wallet and progress", () => {
+  const auth = { Authorization: "Bearer demo-token-driver_demo" };
+
+  it("shows the payer wallet and balance to a signed-in driver only", async () => {
+    const { base } = await start();
+    expect((await fetch(`${base}/v1/wallet`)).status).toBe(401);
+    const res = await fetch(`${base}/v1/wallet`, { headers: auth });
+    expect(await res.json()).toMatchObject({ payer: { address: "0xdriver", usdc_balance: "9.25" }, payee: { address: "0xowner" } });
+  });
+
+  it("tops up from the faucet, and reports a rate limit as 429", async () => {
+    const wallet = fakeWallet();
+    const { base } = await start(fakeApi(), fakeGateway(), wallet);
+    const ok = await fetch(`${base}/v1/wallet/top-up`, { method: "POST", headers: auth });
+    expect(await ok.json()).toMatchObject({ transaction_hash: "0xfaucet" });
+
+    wallet.topUp.mockRejectedValueOnce(new Error("rate limited"));
+    const limited = await fetch(`${base}/v1/wallet/top-up`, { method: "POST", headers: auth });
+    expect(limited.status).toBe(429);
+  });
+
+  it("reports the checkout phase after a payment", async () => {
+    const { base } = await start();
+    const before = await (await fetch(`${base}/v1/payments/booking_1`, { headers: auth })).json();
+    expect(before.phase).toBeNull();
+
+    await post(`${base}/v1/payments/booking_1/execute`, "demo-token-driver_demo");
+    const after = await (await fetch(`${base}/v1/payments/booking_1`, { headers: auth })).json();
+    expect(after).toMatchObject({ phase: "confirmed", transaction_hash: TX, explorer_url: `https://sepolia.basescan.org/tx/${TX}` });
   });
 });

@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 import { ApiError } from "../src/apiClient.js";
-import type { Booking, BookingApi, PaymentGateway, SettlementEvidence } from "../src/types.js";
+import type { Booking, BookingApi, PaymentGateway, SettlementEvidence, WalletApi } from "../src/types.js";
 
 export const TX = "0xabc123";
 
@@ -52,14 +52,28 @@ export function fakeApi(initial: Booking = heldBooking()) {
 export function fakeGateway(evidence: Partial<SettlementEvidence> = {}) {
   const gateway = {
     pay: vi.fn(
-      async (_url: string, _key: string): Promise<SettlementEvidence> => ({
-        transactionHash: TX,
-        network: "eip155:84532",
-        payer: "0xdriver",
-        settledAt: "2026-10-24T18:00:30Z",
-        ...evidence,
-      }),
+      async (_url: string, _key: string, onSigned?: () => void): Promise<SettlementEvidence> => {
+        onSigned?.();
+        return {
+          transactionHash: TX,
+          network: "eip155:84532",
+          payer: "0xdriver",
+          settledAt: "2026-10-24T18:00:30Z",
+          ...evidence,
+        };
+      },
     ),
   } satisfies PaymentGateway;
   return gateway;
+}
+
+export function fakeWallet() {
+  return {
+    info: vi.fn(async () => ({
+      network: "base-sepolia" as const,
+      payer: { name: "curb-demo-driver", address: "0xdriver", usdc_balance: "9.25", explorer_url: "https://sepolia.basescan.org/address/0xdriver" },
+      payee: { name: "curb-demo-owner", address: "0xowner" },
+    })),
+    topUp: vi.fn(async () => ({ transaction_hash: "0xfaucet", explorer_url: "https://sepolia.basescan.org/tx/0xfaucet" })),
+  } satisfies WalletApi;
 }

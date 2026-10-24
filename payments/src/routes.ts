@@ -6,11 +6,12 @@ import express, { type NextFunction, type Request, type RequestHandler, type Res
 import { ApiError } from "./apiClient.js";
 import { RECEIPT_ROUTE } from "./cdp.js";
 import { PaymentError, type Orchestrator } from "./orchestrator.js";
-import type { BookingApi } from "./types.js";
+import type { BookingApi, WalletApi } from "./types.js";
 
 export type AppDeps = {
   orchestrator: Orchestrator;
   api: BookingApi;
+  wallet: WalletApi;
   serviceToken: string;
   /** Owner wallet address shown on the receipt. */
   payeeAddress: () => string;
@@ -20,12 +21,49 @@ export type AppDeps = {
 
 const bearer = (req: Request) => /^Bearer\s+(.+)$/i.exec(req.get("authorization") ?? "")?.[1];
 
-export function createApp({ orchestrator, api, serviceToken, payeeAddress, paywall }: AppDeps) {
+export function createApp({ orchestrator, api, wallet, serviceToken, payeeAddress, paywall }: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Driver-facing reads need a signed-in demo user; the server checks booking ownership.
+  const requireUser: RequestHandler = (req, res, next) => {
+    if (!bearer(req)) {
+      res.status(401).json({ detail: "authentication required" });
+      return;
+    }
+    next();
+  };
+
+  app.get("/v1/wallet", requireUser, async (_req, res, next) => {
+    try {
+      res.json(await wallet.info());
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post("/v1/wallet/top-up", requireUser, async (_req, res) => {
+    try {
+      res.json(await wallet.topUp());
+    } catch (err) {
+      // The faucet is rate limited; say so rather than failing the whole checkout.
+      console.warn("[payments] faucet request failed", err);
+      res.status(429).json({ detail: "faucet unavailable, try again later" });
+    }
+  });
+
+  app.get("/v1/payments/:bookingId", requireUser, async (req, res, next) => {
+    try {
+      const bookingId = String(req.params.bookingId);
+      await api.getBooking(bookingId, bearer(req)); // ownership check
+      res.json(orchestrator.progress(bookingId) ?? { booking_id: bookingId, phase: null });
+    } catch (err) {
+      next(err);
+    }
   });
 
   app.post("/v1/payments/:bookingId/execute", async (req, res, next) => {
