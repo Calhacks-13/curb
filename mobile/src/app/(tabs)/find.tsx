@@ -9,7 +9,6 @@ import { CurbMap } from "@/components/map/CurbMap";
 import { MapErrorCard } from "@/components/map/MapErrorCard";
 import { StatusPill } from "@/components/StatusPill";
 import { MapLegend } from "@/components/MapLegend";
-import { MoodToggle } from "@/components/MoodToggle";
 import { BookingConfirmation } from "@/components/find/BookingConfirmation";
 import { DrivewayDetailSheet } from "@/components/find/DrivewayDetailSheet";
 import { PaymentSheet } from "@/components/find/PaymentSheet";
@@ -19,6 +18,7 @@ import { RouteReplacementPrompt } from "@/components/find/RouteReplacementPrompt
 import { SpaceDetailSheet } from "@/components/find/SpaceDetailSheet";
 import { SHEET_PEEK, SheetFrame } from "@/components/sheet/SheetFrame";
 import { CameraOverlay } from "@/components/CameraOverlay";
+import { DraggablePip } from "@/components/DraggablePip";
 import { font, ink, radius } from "@/config/tokens";
 import { DEMO_DRIVER } from "@/data/mock/marina";
 import { DemoModeBadge } from "@/demo/DemoModeBadge";
@@ -33,7 +33,6 @@ import { useParkingState } from "@/features/find/useParkingState";
 import { useSpaceDetail } from "@/features/find/useSpaceDetail";
 import { useSession } from "@/features/session/SessionContext";
 import { useAppActive } from "@/hooks/useAppActive";
-import { useMood } from "@/hooks/useMood";
 import { useScreenFocused } from "@/hooks/useScreenFocused";
 import { haptics } from "@/lib/haptics";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
@@ -49,7 +48,6 @@ type Sheet =
 export default function FindScreen() {
   const insets = useSafeAreaInsets();
   const reduceMotion = useReduceMotion();
-  const { setting, setSetting, mood } = useMood();
   const mapRef = useRef<MapController>(null);
   const send: MapController["send"] = useCallback((m) => mapRef.current?.send(m), []);
 
@@ -150,6 +148,7 @@ export default function FindScreen() {
 
   const [sheetH, setSheetH] = useState(260);
   const [sheetCollapsed, setSheetCollapsed] = useState(false);
+  const [area, setArea] = useState({ w: 0, h: 0 });
   // Swiped down: the map gets the space back for framing spots and routes.
   const visibleSheetH = sheetCollapsed ? SHEET_PEEK : sheetH;
   const padding = useMemo(() => ({ top: insets.top + 70, bottom: visibleSheetH + 12, left: 0, right: 0 }), [insets.top, visibleSheetH]);
@@ -242,27 +241,35 @@ export default function FindScreen() {
   };
 
   return (
-    <View style={styles.root}>
-      <StatusBar style={mood === "clay" ? "dark" : "light"} />
-      <CurbMap key={mapKey} ref={mapRef} mood={mood} reduceMotion={reduceMotion} onMapMessage={onMapMessage} />
+    <View style={styles.root} onLayout={(e) => setArea({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
+      <StatusBar style="dark" />
+      <CurbMap key={mapKey} ref={mapRef} mood="clay" reduceMotion={reduceMotion} onMapMessage={onMapMessage} />
 
       <View style={[styles.top, { top: insets.top + 8 }]}>
         <View style={styles.leftCol}>
           {mode === "demo" && <DemoModeBadge />}
           {realtime === "reconnecting" && <StatusPill text="Reconnecting · showing last update" />}
-          <CameraOverlay
-            active={focused && appActive}
-            sampling={live && location.status === "granted"}
-            frameContext={frameContext}
-            reduceMotion={reduceMotion}
-          />
         </View>
         <View style={styles.mapButtons}>
           <AccountMenu />
-          <MoodToggle value={setting} onChange={setSetting} />
           <MapLegend />
         </View>
       </View>
+
+      <DraggablePip
+        areaWidth={area.w}
+        areaHeight={area.h}
+        topInset={insets.top + 52}
+        bottomInset={visibleSheetH}
+        reduceMotion={reduceMotion}
+      >
+        <CameraOverlay
+          active={focused && appActive}
+          sampling={live && location.status === "granted"}
+          frameContext={frameContext}
+          reduceMotion={reduceMotion}
+        />
+      </DraggablePip>
 
       {/* The tab bar below already covers the home-indicator inset. */}
       <SheetFrame
@@ -368,7 +375,7 @@ export default function FindScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  top: { position: "absolute", left: 16, right: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  top: { position: "absolute", left: 16, right: 16, zIndex: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   leftCol: { gap: 10, alignItems: "flex-start" },
   mapButtons: { gap: 10, alignItems: "flex-end", zIndex: 10 },
   prompt: { position: "absolute", left: 16, right: 16 },

@@ -31,11 +31,11 @@ src/
   features/find/           Freshness rules, option ranking, parking-state hook, clock
   demo/                    Demo replay adapter, fixture, and the required badge
   lib/laTime.ts            America/Los_Angeles wall-clock helpers
-  components/              Native UI (NearbySheet, MapLegend, MoodToggle, map/CurbMap, ...)
+  components/              Native UI (sheets, MapLegend, CameraOverlay in a DraggablePip, map/CurbMap, ...)
   config/tokens.ts         Design tokens (black/white chrome, status colors, radii, Overpass)
   map/
     messages.ts            Typed app <-> map bridge (AppToMap / MapToApp)
-    moods.ts               Day / dusk / night basemap presets
+    moods.ts               Basemap preset (light day style)
     mapConfig.ts           Style, camera presets, basemap config
     curbLayers.ts          Layer specs for zones, bays and the route (plain data)
     modelLayers.ts         The user's car as a 3D model layer
@@ -114,4 +114,4 @@ after editing it.
 
 `map/webview/mapHtml.ts` builds a standalone HTML page, so the map can be styled in
 a desktop browser. Build it with your token, then call
-`window.__curb.receive({ type: "setMood", mood: "glow", animate: true })` from the console.
+`window.__curb.receive({ type: "flyTo", camera: { center: [-122.4374, 37.8007], zoom: 18 } })` from the console.
