@@ -69,7 +69,8 @@ export default function FindScreen() {
   const focused = useScreenFocused();
   const appActive = useAppActive();
   const live = getApi().mode === "live";
-  const [scanActive, setScanActive] = useState(false);
+  // Scanning starts on its own (plan Task 14); Stop pauses it until Start.
+  const [scanActive, setScanActive] = useState(true);
 
   // Live: the device's location. Demo replay: the fixture driver on the calibrated block.
   const location = useDriverLocation(live && focused);
