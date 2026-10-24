@@ -7,6 +7,9 @@ import { AccountMenu } from "@/components/AccountMenu";
 import { CurbMap } from "@/components/map/CurbMap";
 import { MapLegend } from "@/components/MapLegend";
 import { MoodToggle } from "@/components/MoodToggle";
+import { BookingConfirmation } from "@/components/find/BookingConfirmation";
+import { DrivewayDetailSheet } from "@/components/find/DrivewayDetailSheet";
+import { PaymentSheet } from "@/components/find/PaymentSheet";
 import { NearbyList } from "@/components/find/NearbyList";
 import { RouteCard } from "@/components/find/RouteCard";
 import { RouteReplacementPrompt } from "@/components/find/RouteReplacementPrompt";
@@ -20,8 +23,10 @@ import { ageSeconds } from "@/features/find/freshness";
 import { findOptions, mapPills, mapSignature, mapStalls, mapZones, type FindOption } from "@/features/find/options";
 import { replacementFor, requestRoute, type Route } from "@/features/find/route";
 import { useFreshnessClock } from "@/features/find/useFreshnessClock";
+import { useDrivewayBooking } from "@/features/find/useDrivewayBooking";
 import { useParkingState } from "@/features/find/useParkingState";
 import { useSpaceDetail } from "@/features/find/useSpaceDetail";
+import { useSession } from "@/features/session/SessionContext";
 import { useMood } from "@/hooks/useMood";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { HOME_CAMERA, SPOT_CAMERA } from "@/map/mapConfig";
@@ -32,6 +37,7 @@ const SHARED_SPOTS = 3;
 type Sheet =
   | { mode: "list" }
   | { mode: "detail"; id: string }
+  | { mode: "driveway"; id: string }
   | { mode: "route"; id: string; title: string; position: LngLat; route: Route };
 
 export default function FindScreen() {
@@ -44,8 +50,10 @@ export default function FindScreen() {
   // Demo replay centers on the calibrated block; live mode will use device location.
   const driver = DEMO_DRIVER;
   const { state, load, refresh, mode } = useParkingState(HOME_CAMERA.center);
+  const userId = useSession().session?.user.id ?? null;
   const now = useFreshnessClock();
-  const options = useMemo(() => findOptions(state, now, driver.position), [state, now, driver.position]);
+  const options = useMemo(() => findOptions(state, now, driver.position, userId), [state, now, driver.position, userId]);
+  const { checkout, reserve, pay, cancel, reset } = useDrivewayBooking();
   const signature = mapSignature(options);
 
   const [sheet, setSheet] = useState<Sheet>({ mode: "list" });
@@ -103,7 +111,7 @@ export default function FindScreen() {
     (o: FindOption) => {
       setSelectedId(o.id);
       setRouteError(null);
-      if (sheet.mode !== "route") setSheet(o.kind === "driveway" ? { mode: "list" } : { mode: "detail", id: o.id });
+      if (sheet.mode !== "route") setSheet(o.kind === "driveway" ? { mode: "driveway", id: o.id } : { mode: "detail", id: o.id });
       send({
         type: "flyTo",
         camera: { center: o.position, zoom: SPOT_CAMERA.zoom, pitch: SPOT_CAMERA.pitch, padding, durationMs: SPOT_CAMERA.durationMs },
@@ -161,6 +169,20 @@ export default function FindScreen() {
 
   const detailOption = sheet.mode === "detail" ? optionById(sheet.id) : null;
 
+  // Driveway checkout. The hold outlives the sheet: closing it keeps the hold, and
+  // reopening returns to payment. A driveway this driver already booked shows its receipt.
+  const driveway = sheet.mode === "driveway" ? state.driveways[sheet.id] : undefined;
+  const drivewayOption = sheet.mode === "driveway" ? optionById(sheet.id) : null;
+  const myBooking =
+    driveway &&
+    (checkout.booking?.driveway_id === driveway.id && checkout.phase === "confirmed"
+      ? checkout.booking
+      : Object.values(state.bookings).find((b) => b.driveway_id === driveway.id && b.driver_id === userId && b.state === "CONFIRMED"));
+  const drivewayDone = () => {
+    reset();
+    closeSheet();
+  };
+
   return (
     <View style={styles.root}>
       <StatusBar style={mood === "clay" ? "dark" : "light"} />
@@ -192,6 +214,39 @@ export default function FindScreen() {
               onClose={closeSheet}
               onRetry={detail.retry}
             />
+            {routeError && <Text style={styles.routeError}>{routeError}</Text>}
+          </>
+        )}
+        {sheet.mode === "driveway" && driveway && drivewayOption && (
+          <>
+            {myBooking ? (
+              <BookingConfirmation
+                driveway={driveway}
+                booking={myBooking}
+                routing={routing}
+                onRoute={() => routeTo(drivewayOption)}
+                onDone={drivewayDone}
+              />
+            ) : checkout.booking && (checkout.phase === "review" || checkout.phase === "processing" || checkout.phase === "failed") ? (
+              <PaymentSheet
+                driveway={driveway}
+                booking={checkout.booking}
+                phase={checkout.phase}
+                error={checkout.error}
+                demo={mode === "demo"}
+                onPay={pay}
+                onCancel={() => cancel(driveway)}
+              />
+            ) : (
+              <DrivewayDetailSheet
+                driveway={driveway}
+                distanceM={drivewayOption.distanceM}
+                holding={checkout.phase === "holding"}
+                error={checkout.error}
+                onReserve={() => reserve(driveway)}
+                onClose={closeSheet}
+              />
+            )}
             {routeError && <Text style={styles.routeError}>{routeError}</Text>}
           </>
         )}

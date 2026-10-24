@@ -41,14 +41,19 @@ export function walkMinutes(m: number): number {
   return Math.max(1, Math.round(m / WALK_M_PER_MIN));
 }
 
-/** Driveways a driver can book right now: available and inside their window. */
-export function bookableDriveways(state: ParkingState, now: number): Driveway[] {
+/**
+ * Driveways to show a driver: bookable now (available, inside their window), plus
+ * any this driver is holding or has booked so their own checkout never vanishes.
+ */
+export function visibleDriveways(state: ParkingState, now: number, userId: string | null): Driveway[] {
   return Object.values(state.driveways).filter(
-    (d) => d.state === "AVAILABLE" && inLaWindow(d.availability_start, d.availability_end, new Date(now)),
+    (d) =>
+      (d.state === "AVAILABLE" && inLaWindow(d.availability_start, d.availability_end, new Date(now))) ||
+      (userId != null && d.held_by_user_id === userId && (d.state === "HELD" || d.state === "BOOKED")),
   );
 }
 
-export function findOptions(state: ParkingState, now: number, from: LngLat): FindOption[] {
+export function findOptions(state: ParkingState, now: number, from: LngLat, userId: string | null = null): FindOption[] {
   const curb = visibleSpaces(Object.values(state.spaces), state.zones, now).map(
     ({ space, freshness, ageSeconds }): FindOption => {
       const d = distanceM(from, space.location.coordinates);
@@ -64,12 +69,13 @@ export function findOptions(state: ParkingState, now: number, from: LngLat): Fin
       };
     },
   );
-  const driveways = bookableDriveways(state, now).map((dw): FindOption => {
+  const driveways = visibleDriveways(state, now, userId).map((dw): FindOption => {
     const d = distanceM(from, dw.location.coordinates);
+    const mine = dw.held_by_user_id === userId && dw.state !== "AVAILABLE";
     return {
       id: dw.id,
       kind: "driveway",
-      title: "Guaranteed driveway",
+      title: mine ? (dw.state === "BOOKED" ? "Your driveway" : "Driveway on hold for you") : "Guaranteed driveway",
       detail: `${formatHhmm(dw.availability_start)} to ${formatHhmm(dw.availability_end)} · ${formatDistance(d)}`,
       trailing: formatUsdc(dw.price_usdc),
       position: dw.location.coordinates,

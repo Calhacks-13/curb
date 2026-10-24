@@ -22,6 +22,7 @@ src/
   app/(tabs)/find.tsx      Find: map, nearby list, details, Route here
   app/(tabs)/host.tsx      Host: the owner's driveway
   features/session/        Seeded demo session, remembered in SecureStore
+  features/host/           Owner listing editor, recovery, booking receipt
   api/types.ts             Backend contract (spec sections 11-13); swap for @curb/contracts
   api/client.ts            CurbApi interface + HTTP client; getApi() picks live or demo
   realtime/reducer.ts      Pure versioned event reducer (never rolls an entity back)
@@ -78,6 +79,13 @@ as live.
 Field names in `src/api/types.ts` follow the spec exactly. When
 `packages/contracts` lands, replace that file with re-exports from
 `@curb/contracts`.
+
+Driveway checkout runs Reserve (hold) -> review -> pay -> confirmed, with Retry
+and Cancel hold on failure and no hold countdown. In Demo replay no money moves
+and the receipt says so; against the real services the receipt links the Base
+Sepolia transaction. The contract has no "payment processing" event, so the
+owner's Return to available button relies on the server's 409 while a payment
+is in flight.
 
 Run the tests with `npm test` (freshness boundaries, out-of-order realtime
 events, version conflicts, idempotent payment, DST).

@@ -21,7 +21,9 @@ export function RouteCard({ route, target, targetTitle, ageSeconds, onEnd }: Pro
   const status = !target
     ? "This spot is no longer showing as open."
     : target.kind === "driveway"
-      ? "Guaranteed once your booking is confirmed."
+      ? target.title === "Your driveway"
+        ? "Reserved for you. Nobody else can take it."
+        : "Guaranteed once your booking is confirmed."
       : `Still showing open, seen ${formatAge(ageSeconds ?? 0)}.`;
 
   return (
