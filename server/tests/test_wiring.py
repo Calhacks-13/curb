@@ -138,3 +138,13 @@ async def test_nearby_overlay_reports_the_hold():
     assert overlaid["held_by_user_id"] == "driver_demo"
     assert overlaid["version"] == 2
     assert overlaid["active_booking"]["state"] == "PENDING_PAYMENT"
+
+
+def test_owner_cannot_reserve_their_own_driveway():
+    client, _ = build_client()
+    response = client.post(
+        "/v1/driveways/driveway_demo_1/holds",
+        json={"expected_version": 1},
+        headers=bearer("demo-token-owner_demo"),
+    )
+    assert response.status_code == 403
