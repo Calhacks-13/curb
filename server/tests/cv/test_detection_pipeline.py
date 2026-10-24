@@ -215,6 +215,64 @@ async def test_empty_submissions_expire_all_trackers_and_occupy_confirmed_spot(l
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("visible_indices", [[], [0], [1]], ids=["empty", "right-only", "left-only"])
+async def test_boundary_dropout_preserves_gap_until_timeout_and_recovers(
+    local_services, monkeypatch, visible_indices,
+):
+    from app.cv import pipeline as module
+    from app.cv import tracker
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    pipeline = module.Pipeline()
+    for stamp in [100.0, 101.0, 104.0]:
+        now[0] = stamp
+        await submit(pipeline, make_vehicles())
+    await flush_background_tasks()
+
+    session = pipeline._sessions["drive"]
+    gap = next(iter(session.gap_tracker._gaps.values()))
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    assert gap.last_seen == 104.0
+
+    async def dropout_at(stamp):
+        now[0] = stamp
+        vehicles = make_vehicles()
+        await submit(pipeline, [vehicles[index] for index in visible_indices])
+        await flush_background_tasks()
+
+    await dropout_at(104.1)
+    assert pipeline.spots_in_memory == 1
+    assert cosmos._mem_spots[spot.id]["status"] == "open"
+    assert session.gap_tracker._gaps[gap.gap_key] is gap
+    assert gap.last_seen == 104.0
+
+    now[0] = 105.0
+    recovered = await submit(pipeline, make_vehicles())
+    await flush_background_tasks()
+    assert recovered["confirmed_block"] is None
+    assert session.gap_tracker._gaps[gap.gap_key] is gap
+    assert gap.gap_key in session.gap_tracker._confirmed
+    assert gap.last_seen == 105.0
+    assert pipeline._spot_mgr.find_by_segment(spot.segment_id) is spot
+    assert cosmos._mem_spots[spot.id]["status"] == "open"
+    assert "space.occupied" not in [e["type"] for e in signalr.get_recent_events()]
+
+    for stamp in [105.1, 106.2]:
+        await dropout_at(stamp)
+        assert gap.last_seen == 105.0
+        assert pipeline.spots_in_memory == 1
+        assert gap.gap_key in session.gap_tracker._confirmed
+
+    await dropout_at(106.6)
+    assert session.gap_tracker._gaps == {}
+    assert session.confirmed_gap_segments == {}
+    assert pipeline.spots_in_memory == 0
+    assert cosmos._mem_spots[spot.id]["status"] == "occupied"
+    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+
+
+@pytest.mark.asyncio
 async def test_existing_spot_is_refreshed_on_resighting_and_new_gap_confirmation(local_services, monkeypatch):
     from app.cv import pipeline as module
     from app.cv import tracker

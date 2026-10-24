@@ -259,7 +259,8 @@ class GapTracker:
             self._ingest_measurements(current_gaps, gap_measurements)
 
         # Expire gaps not seen this frame
-        expired_confirmed = self._expire_old(now, active_keys)
+        visible_track_ids = {track.id for track in confirmed_tracks}
+        expired_confirmed = self._expire_old(now, active_keys, visible_track_ids)
 
         # Check for newly confirmed gaps
         all_gaps = list(self._gaps.values())
@@ -291,11 +292,21 @@ class GapTracker:
             if best_key and best_key in self._gaps:
                 self._gaps[best_key].add_width_sample(gm.width_meters)
 
-    def _expire_old(self, now: float, active_keys: set | None = None) -> list[TrackedGap]:
+    def _expire_old(
+        self,
+        now: float,
+        active_keys: set | None = None,
+        visible_track_ids: set[int] | None = None,
+    ) -> list[TrackedGap]:
         """Remove gaps not seen recently. Returns expired gaps that were confirmed."""
         dead = []
         for key, gap in self._gaps.items():
-            if active_keys is not None and key not in active_keys:
+            # Missing boundaries may be a temporary detection dropout. Only
+            # invalidate geometry immediately when both boundaries are visible;
+            # otherwise retain the gap until its last real sighting times out.
+            if (active_keys is not None and key not in active_keys
+                    and visible_track_ids is not None
+                    and set(key) <= visible_track_ids):
                 dead.append(key)
             elif now - gap.last_seen > settings.gap_expire_sec:
                 dead.append(key)
