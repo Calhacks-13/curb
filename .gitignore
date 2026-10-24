@@ -1,1 +1,38 @@
 .worktrees/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# JavaScript
+node_modules/
+*.tsbuildinfo
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Expo and native build output
+.expo/
+dist/
+build/
+ios/
+android/
+
+# Local capture and credentials
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+calibration/**/raw/
+captures/
+
+# Operating systems and editors
+.DS_Store
+.idea/
+.vscode/

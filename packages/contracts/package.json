@@ -1,0 +1,27 @@
+{
+  "name": "@curb/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./domain": "./src/domain.ts",
+    "./events": "./src/events.ts",
+    "./fixtures": "./src/fixtures.ts"
+  },
+  "scripts": {
+    "export-fixture": "node --import tsx scripts/export-fixture.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "5.6.3",
+    "vitest": "5.0.5"
+  }
+}

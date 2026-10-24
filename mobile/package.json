@@ -1,0 +1,12 @@
+{
+  "name": "@curb/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "curb": {
+    "expoSdk": 58,
+    "platform": "ios"
+  },
+  "dependencies": {
+    "@curb/contracts": "*"
+  }
+}
