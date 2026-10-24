@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Curb — Scanner</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Fragment+Mono&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #000;
+  color: #fff;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  height: 100dvh;
+}
+
+#camera-wrap { position: relative; width: 100%; height: 100dvh; }
+#video { width: 100%; height: 100%; object-fit: cover; }
+#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+/* HUD strip */
+#hud {
+  position: absolute; top: 0; left: 0; right: 0;
+  padding: 16px 20px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  z-index: 10;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 100%);
+  pointer-events: none;
+}
+#hud-left, #hud-right { display: flex; flex-direction: column; gap: 6px; }
+#hud-right { align-items: flex-end; }
+
+.hud-row { display: flex; align-items: center; gap: 6px; }
+.hud-label {
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px; color: rgba(255,255,255,0.5);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.hud-value {
+  font-family: 'Fragment Mono', monospace;
+  font-size: 13px; font-weight: 600;
+  color: rgba(255,255,255,0.9);
+}
+
+/* Status dot */
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.connected { background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,0.5); }
+.status-dot.disconnected { background: #ef4444; }
+
+/* Center gap count */
+#gap-count {
+  position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+  font-family: 'Inter', sans-serif;
+  font-size: 80px; font-weight: 700;
+  color: #fff;
+  opacity: 0;
+  z-index: 10;
+  transition: opacity 300ms ease-out;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.6);
+  letter-spacing: -0.02em;
+}
+#gap-count.visible { opacity: 0.85; }
+
+/* Sign rules bar */
+#sign-rules {
+  position: absolute; bottom: 80px; left: 20px; right: 20px;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-size: 13px; line-height: 1.4;
+  z-index: 10;
+  display: none;
+}
+#sign-rules .summary { font-weight: 600; color: #93c5fd; }
+#sign-rules .details { color: rgba(255,255,255,0.6); font-size: 12px; }
+
+/* Confirmed banner */
+#confirmed-banner {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  background: rgba(34,197,94,0.9);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 16px 32px;
+  font-size: 18px; font-weight: 700;
+  z-index: 20;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 300ms ease-out, transform 300ms ease-out;
+}
+#confirmed-banner.visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* Start button */
+#start-btn {
+  position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+  padding: 14px 48px;
+  background: #fff; color: #000;
+  border: none; border-radius: 48px;
+  font-family: 'Inter', sans-serif;
+  font-size: 15px; font-weight: 600;
+  cursor: pointer; z-index: 10;
+  transition: transform 150ms ease-out, background-color 150ms ease-out;
+  -webkit-tap-highlight-color: transparent;
+}
+#start-btn:active { transform: translateX(-50%) scale(0.96); }
+#start-btn.streaming { background: #ef4444; color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  #gap-count, #confirmed-banner, #start-btn { transition: none; }
+}
+</style>
+</head>
+<body>
+<div id="camera-wrap">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+
+  <div id="hud">
+    <div id="hud-left">
+      <div class="hud-row">
+        <span class="status-dot disconnected" id="status-dot"></span>
+        <span class="hud-value" id="conn-status">Disconnected</span>
+      </div>
+      <div class="hud-row">
+        <span class="hud-label">FPS</span>
+        <span class="hud-value" id="fps-display">0</span>
+      </div>
+      <div class="hud-row">
+        <span class="hud-label">Latency</span>
+        <span class="hud-value" id="latency-display">--</span>
+      </div>
+    </div>
+    <div id="hud-right">
+      <div class="hud-row">
+        <span class="hud-label">GPS</span>
+        <span class="hud-value" id="gps-display">--</span>
+      </div>
+      <div class="hud-row">
+        <span class="hud-label">Vehicles</span>
+        <span class="hud-value" id="vehicle-count">0</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="gap-count">--</div>
+  <div id="sign-rules"><span class="summary"></span><br><span class="details"></span></div>
+  <div id="confirmed-banner">Block Confirmed!</div>
+  <button id="start-btn">Start Scanning</button>
+</div>
+
+<canvas id="capture-canvas" style="display:none;"></canvas>
+
+<script>
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const captureCanvas = document.getElementById('capture-canvas');
+const ctx = overlay.getContext('2d');
+const captureCtx = captureCanvas.getContext('2d');
+
+const statusDot = document.getElementById('status-dot');
+const connStatus = document.getElementById('conn-status');
+const fpsDisplay = document.getElementById('fps-display');
+const latencyDisplay = document.getElementById('latency-display');
+const gpsDisplay = document.getElementById('gps-display');
+const vehicleCount = document.getElementById('vehicle-count');
+const gapCountEl = document.getElementById('gap-count');
+const signRulesEl = document.getElementById('sign-rules');
+const confirmedBanner = document.getElementById('confirmed-banner');
+const startBtn = document.getElementById('start-btn');
+
+const CAPTURE_W = 1280, CAPTURE_H = 720;
+const JPEG_QUALITY = 0.7;
+const FRAME_INTERVAL = 150;
+
+let ws = null;
+let streaming = false;
+let frameTimer = null;
+let gpsPos = { lat: 0, lng: 0, heading: 0, speed: 0, camera_pitch: 0 };
+let gpsWatchId = null;
+let wakeLock = null;
+let reconnectDelay = 1000;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let pendingSendTime = null;
+
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: CAPTURE_W }, height: { ideal: CAPTURE_H } },
+    audio: false,
+  });
+  video.srcObject = stream;
+  await video.play();
+  captureCanvas.width = CAPTURE_W;
+  captureCanvas.height = CAPTURE_H;
+  resizeOverlay();
+}
+
+function resizeOverlay() {
+  overlay.width = overlay.clientWidth;
+  overlay.height = overlay.clientHeight;
+}
+window.addEventListener('resize', resizeOverlay);
+
+function startGPS() {
+  if (!navigator.geolocation) return;
+  gpsWatchId = navigator.geolocation.watchPosition(
+    pos => {
+      gpsPos.lat = pos.coords.latitude;
+      gpsPos.lng = pos.coords.longitude;
+      gpsPos.heading = pos.coords.heading || 0;
+      gpsPos.speed = pos.coords.speed || 0;
+      gpsDisplay.textContent = `${gpsPos.lat.toFixed(5)}, ${gpsPos.lng.toFixed(5)}`;
+    },
+    () => { gpsDisplay.textContent = 'No GPS'; },
+    { enableHighAccuracy: true, maximumAge: 2000 }
+  );
+}
+
+function startOrientation() {
+  // Device orientation for camera pitch (used in BEV transform)
+  if (window.DeviceOrientationEvent) {
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(state => {
+        if (state === 'granted') window.addEventListener('deviceorientation', onOrientation);
+      }).catch(() => {});
+    } else {
+      window.addEventListener('deviceorientation', onOrientation);
+    }
+  }
+}
+function onOrientation(e) {
+  // beta = pitch: 0 = flat, 90 = upright. Dashboard mount ~ 60-80 degrees
+  if (e.beta != null) gpsPos.camera_pitch = e.beta;
+}
+
+async function acquireWakeLock() {
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/stream`);
+
+  ws.onopen = () => {
+    statusDot.className = 'status-dot connected';
+    connStatus.textContent = 'Connected';
+    reconnectDelay = 1000;
+  };
+
+  ws.onmessage = (evt) => {
+    const data = JSON.parse(evt.data);
+    if (pendingSendTime) {
+      const latency = Math.round(performance.now() - pendingSendTime);
+      latencyDisplay.textContent = latency + 'ms';
+      pendingSendTime = null;
+    }
+    if (data.status === 'skipped') return;
+    renderResult(data);
+  };
+
+  ws.onclose = () => {
+    statusDot.className = 'status-dot disconnected';
+    connStatus.textContent = 'Disconnected';
+    if (streaming) {
+      setTimeout(connectWS, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 16000);
+    }
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function sendFrame() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (pendingSendTime) return;
+
+  captureCtx.drawImage(video, 0, 0, CAPTURE_W, CAPTURE_H);
+  captureCanvas.toBlob(blob => {
+    if (!blob || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const meta = JSON.stringify({
+      lat: gpsPos.lat,
+      lng: gpsPos.lng,
+      heading: gpsPos.heading,
+      speed: gpsPos.speed,
+      timestamp: new Date().toISOString(),
+      camera_pitch: gpsPos.camera_pitch,
+    });
+
+    pendingSendTime = performance.now();
+    ws.send(meta);
+    ws.send(blob);
+
+    frameCount++;
+    const now = performance.now();
+    if (now - lastFpsTime >= 1000) {
+      fpsDisplay.textContent = frameCount;
+      frameCount = 0;
+      lastFpsTime = now;
+    }
+  }, 'image/jpeg', JPEG_QUALITY);
+}
+
+function renderResult(data) {
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  const scaleX = overlay.width / CAPTURE_W;
+  const scaleY = overlay.height / CAPTURE_H;
+
+  // Vehicles with track IDs
+  if (data.vehicles) {
+    ctx.strokeStyle = 'rgba(52,211,153,0.8)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    data.vehicles.forEach(v => {
+      const [x1, y1, x2, y2] = v.bbox;
+      const sx = x1 * scaleX, sy = y1 * scaleY, sw = (x2 - x1) * scaleX, sh = (y2 - y1) * scaleY;
+      ctx.strokeRect(sx, sy, sw, sh);
+      ctx.fillStyle = 'rgba(52,211,153,0.8)';
+      ctx.font = '600 11px "Fragment Mono", monospace';
+      const trackLabel = v.track_id ? `T${v.track_id} ` : '';
+      ctx.fillText(`${trackLabel}${v.cls} ${(v.confidence * 100).toFixed(0)}%`, sx, sy - 5);
+    });
+    vehicleCount.textContent = data.vehicles.length;
+  }
+
+  // Signs
+  if (data.signs) {
+    ctx.strokeStyle = 'rgba(147,197,253,0.8)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    data.signs.forEach(s => {
+      const [x1, y1, x2, y2] = s.bbox;
+      ctx.strokeRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+    });
+  }
+
+  // Tracked gaps with confirmation progress
+  if (data.tracked_gaps && data.tracked_gaps.length > 0) {
+    data.tracked_gaps.forEach(g => {
+      const [x1, y1, x2, y2] = g.bbox;
+      const sx = x1 * scaleX, sy = y1 * scaleY, sw = (x2 - x1) * scaleX, sh = (y2 - y1) * scaleY;
+      if (g.confirmed) {
+        ctx.strokeStyle = 'rgba(52,211,153,0.8)';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+      } else {
+        ctx.strokeStyle = 'rgba(250,204,21,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+      }
+      ctx.strokeRect(sx, sy, sw, sh);
+      ctx.setLineDash([]);
+      const cx = sx + sw / 2, cy = sy + sh / 2;
+      ctx.textAlign = 'center';
+      ctx.font = '700 14px "Fragment Mono", monospace';
+      if (g.confirmed) {
+        ctx.fillStyle = 'rgba(52,211,153,0.9)';
+        ctx.fillText('SPOT', cx, cy);
+      } else {
+        ctx.fillStyle = 'rgba(250,204,21,0.8)';
+        ctx.fillText(`${g.duration.toFixed(1)}s`, cx, cy);
+      }
+      ctx.textAlign = 'start';
+    });
+  } else if (data.gap_bboxes) {
+    ctx.strokeStyle = 'rgba(250,204,21,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    data.gap_bboxes.forEach(g => {
+      const [x1, y1, x2, y2] = g;
+      ctx.strokeRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+    });
+    ctx.setLineDash([]);
+  }
+
+  // Gap count
+  const hasGaps = data.gap_estimate != null && data.gap_estimate > 0;
+  gapCountEl.textContent = hasGaps ? data.gap_estimate : '--';
+  gapCountEl.classList.toggle('visible', hasGaps);
+
+  // Sign rules
+  if (data.sign_rules && data.sign_rules.summary) {
+    signRulesEl.querySelector('.summary').textContent = data.sign_rules.summary;
+    const details = [data.sign_rules.hours, data.sign_rules.price, data.sign_rules.restrictions?.join(', ')].filter(Boolean).join(' · ');
+    signRulesEl.querySelector('.details').textContent = details;
+    signRulesEl.style.display = 'block';
+  } else {
+    signRulesEl.style.display = 'none';
+  }
+
+  // Confirmed block banner
+  if (data.confirmed_block) {
+    confirmedBanner.textContent = `Confirmed — ${data.confirmed_block.gap_count} gaps`;
+    confirmedBanner.classList.add('visible');
+    setTimeout(() => { confirmedBanner.classList.remove('visible'); }, 3000);
+  }
+}
+
+startBtn.addEventListener('click', async () => {
+  if (!streaming) {
+    streaming = true;
+    startBtn.textContent = 'Stop';
+    startBtn.classList.add('streaming');
+    await startCamera();
+    startGPS();
+    startOrientation();
+    await acquireWakeLock();
+    connectWS();
+    frameTimer = setInterval(sendFrame, FRAME_INTERVAL);
+  } else {
+    streaming = false;
+    startBtn.textContent = 'Start Scanning';
+    startBtn.classList.remove('streaming');
+    clearInterval(frameTimer);
+    if (ws) ws.close();
+    if (gpsWatchId) navigator.geolocation.clearWatch(gpsWatchId);
+    if (wakeLock) { wakeLock.release(); wakeLock = null; }
+    if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    statusDot.className = 'status-dot disconnected';
+    connStatus.textContent = 'Stopped';
+    gapCountEl.classList.remove('visible');
+  }
+});
+</script>
+</body>
+</html>

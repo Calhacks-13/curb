@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curb — Live Viewer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Fragment+Mono&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #fff;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  height: 100vh;
+  display: flex;
+}
+
+/* Left panel: video feed */
+#feed-panel {
+  flex: 7;
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+#feed-panel.full { flex: 1; }
+#canvas-wrap {
+  position: relative; width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+}
+#feed { max-width: 100%; max-height: 100%; display: block; }
+#overlay { position: absolute; pointer-events: none; }
+
+#no-feed {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 15px; color: rgba(255,255,255,0.3);
+  font-family: 'Fragment Mono', monospace;
+  z-index: 5;
+}
+#no-scene-watermark {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 48px; font-weight: 900;
+  color: rgba(244,67,54,0.35);
+  z-index: 15; pointer-events: none;
+  display: none; letter-spacing: 4px;
+  font-family: 'Fragment Mono', monospace;
+}
+#confirmed-banner {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  background: rgba(34,197,94,0.9);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 16px 32px;
+  font-size: 18px; font-weight: 700;
+  z-index: 20; pointer-events: none;
+  opacity: 0;
+  transition: opacity 300ms ease-out, transform 300ms ease-out;
+}
+#confirmed-banner.visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+#sign-rules {
+  position: absolute; bottom: 16px; left: 20px; right: 20px;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-size: 13px; line-height: 1.4;
+  z-index: 10; display: none; pointer-events: none;
+}
+#sign-rules .summary { font-weight: 600; color: #93c5fd; }
+#sign-rules .details { color: rgba(255,255,255,0.6); font-size: 12px; }
+
+/* Right panel: debug */
+#debug-panel {
+  flex: 3;
+  background: #111;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  font-size: 12px;
+}
+#debug-panel.hidden { display: none; }
+
+.debug-section {
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding: 12px 14px;
+}
+.debug-section h3 {
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.1em; color: rgba(255,255,255,0.35);
+  margin-bottom: 8px;
+}
+
+/* Pipeline state grid */
+.state-grid {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 11px;
+}
+.state-grid .label { color: rgba(255,255,255,0.4); }
+.state-grid .value { font-weight: 600; color: rgba(255,255,255,0.85); }
+
+.badge {
+  display: inline-block; padding: 1px 6px;
+  border-radius: 3px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.badge.valid { background: rgba(34,197,94,0.2); color: #34d399; }
+.badge.invalid { background: rgba(239,68,68,0.2); color: #ef4444; }
+.badge.connected { background: rgba(34,197,94,0.2); color: #34d399; }
+.badge.disconnected { background: rgba(239,68,68,0.2); color: #ef4444; }
+.badge.waiting { background: rgba(245,158,11,0.2); color: #f59e0b; }
+
+/* Raw detections list */
+#detections-list { max-height: 200px; overflow-y: auto; }
+.det-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-family: 'Fragment Mono', monospace;
+  font-size: 11px;
+}
+.det-cls {
+  width: 60px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: rgba(255,255,255,0.8);
+}
+.det-conf-bar {
+  flex: 1; height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px; overflow: hidden;
+}
+.det-conf-fill { height: 100%; border-radius: 3px; }
+.det-conf-fill.accepted { background: #34d399; }
+.det-conf-fill.rejected { background: #ef4444; }
+.det-pct { width: 28px; text-align: right; color: rgba(255,255,255,0.5); }
+.det-badge {
+  font-size: 9px; padding: 1px 4px;
+  border-radius: 2px; white-space: nowrap; font-weight: 700;
+}
+.det-badge.accepted { background: rgba(34,197,94,0.15); color: #34d399; }
+.det-badge.rejected { background: rgba(239,68,68,0.15); color: #ef4444; }
+.det-reason { color: rgba(255,255,255,0.35); font-size: 10px; white-space: nowrap; }
+
+/* Event log */
+#log-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#event-log {
+  flex: 1; overflow-y: auto;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px; line-height: 1.6;
+  padding: 0 14px 10px;
+}
+#event-log::-webkit-scrollbar { width: 4px; }
+#event-log::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+.log-entry { color: rgba(255,255,255,0.5); }
+.log-time { color: rgba(255,255,255,0.25); }
+.log-accepted { color: #34d399; }
+.log-rejected { color: #ef4444; }
+.log-gap { color: #facc15; }
+.log-tracker { color: #f59e0b; }
+.log-confirmed { color: #34d399; font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) {
+  #confirmed-banner { transition: none; }
+}
+</style>
+</head>
+<body>
+<div id="feed-panel">
+  <div id="canvas-wrap">
+    <canvas id="feed"></canvas>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="no-feed">Waiting for phone stream...</div>
+  <div id="no-scene-watermark">NO SCENE</div>
+  <div id="confirmed-banner">Block Confirmed!</div>
+  <div id="sign-rules"><span class="summary"></span><br><span class="details"></span></div>
+</div>
+
+<div id="debug-panel">
+  <div class="debug-section">
+    <h3>Pipeline State</h3>
+    <div class="state-grid">
+      <span class="label">Status</span>
+      <span class="value"><span class="badge waiting" id="conn-badge">connecting</span></span>
+      <span class="label">FPS</span>
+      <span class="value" id="fps-display">0</span>
+      <span class="label">Latency</span>
+      <span class="value" id="latency-display">--</span>
+      <span class="label">Scene</span>
+      <span class="value"><span class="badge invalid" id="scene-badge">no scene</span></span>
+      <span class="label">Tracker</span>
+      <span class="value" id="tracker-display">--</span>
+      <span class="label">Vehicles</span>
+      <span class="value" id="vehicle-count">0</span>
+      <span class="label">Gaps</span>
+      <span class="value" id="gap-count">0</span>
+      <span class="label">GPS</span>
+      <span class="value" id="gps-display">--</span>
+    </div>
+  </div>
+
+  <div class="debug-section">
+    <h3>Current Frame</h3>
+    <div id="detections-list"><span style="color:rgba(255,255,255,0.25)">No detections</span></div>
+  </div>
+
+  <div id="log-section" class="debug-section" style="border-bottom:none;">
+    <h3>Event Log</h3>
+    <div id="event-log"></div>
+  </div>
+</div>
+
+<script>
+const feedCanvas = document.getElementById('feed');
+const overlayCanvas = document.getElementById('overlay');
+const feedCtx = feedCanvas.getContext('2d');
+const ctx = overlayCanvas.getContext('2d');
+
+const noFeed = document.getElementById('no-feed');
+const noSceneWatermark = document.getElementById('no-scene-watermark');
+const confirmedBanner = document.getElementById('confirmed-banner');
+const signRulesEl = document.getElementById('sign-rules');
+const debugPanel = document.getElementById('debug-panel');
+const feedPanel = document.getElementById('feed-panel');
+
+const connBadge = document.getElementById('conn-badge');
+const fpsDisplay = document.getElementById('fps-display');
+const latencyDisplay = document.getElementById('latency-display');
+const sceneBadge = document.getElementById('scene-badge');
+const trackerDisplay = document.getElementById('tracker-display');
+const vehicleCountEl = document.getElementById('vehicle-count');
+const gapCountEl = document.getElementById('gap-count');
+const gpsDisplay = document.getElementById('gps-display');
+const detectionsList = document.getElementById('detections-list');
+const eventLog = document.getElementById('event-log');
+
+// ?debug=0 hides debug panel
+const params = new URLSearchParams(location.search);
+if (params.get('debug') === '0') {
+  debugPanel.classList.add('hidden');
+  feedPanel.classList.add('full');
+}
+
+const MAX_LOG = 200;
+let logCount = 0;
+
+let ws = null;
+let reconnectDelay = 1000;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let lastFrameTime = null;
+let canvasReady = false;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/viewer`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    connBadge.className = 'badge connected';
+    connBadge.textContent = 'connected';
+    reconnectDelay = 1000;
+    addLog('Connected to server', 'log-accepted');
+  };
+
+  ws.onmessage = (evt) => {
+    if (evt.data instanceof ArrayBuffer) {
+      lastFrameTime = performance.now();
+      const blob = new Blob([evt.data], { type: 'image/jpeg' });
+      createImageBitmap(blob).then(bmp => drawFrame(bmp));
+    } else {
+      const data = JSON.parse(evt.data);
+      drawOverlay(data);
+      updateHUD(data);
+      updateDetectionsList(data);
+      logFrameEvents(data);
+
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        fpsDisplay.textContent = frameCount;
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+
+      if (lastFrameTime) {
+        latencyDisplay.textContent = Math.round(performance.now() - lastFrameTime) + 'ms';
+      }
+    }
+  };
+
+  ws.onclose = () => {
+    connBadge.className = 'badge disconnected';
+    connBadge.textContent = 'disconnected';
+    addLog('Disconnected', 'log-rejected');
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 16000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function drawFrame(bmp) {
+  if (feedCanvas.width !== bmp.width || feedCanvas.height !== bmp.height) {
+    feedCanvas.width = bmp.width;
+    feedCanvas.height = bmp.height;
+    repositionOverlay();
+  }
+  feedCtx.drawImage(bmp, 0, 0);
+  noFeed.style.display = 'none';
+  canvasReady = true;
+}
+
+function repositionOverlay() {
+  const parentRect = feedCanvas.parentElement.getBoundingClientRect();
+  const feedRect = feedCanvas.getBoundingClientRect();
+  overlayCanvas.style.left = (feedRect.left - parentRect.left) + 'px';
+  overlayCanvas.style.top = (feedRect.top - parentRect.top) + 'px';
+  overlayCanvas.width = feedCanvas.width;
+  overlayCanvas.height = feedCanvas.height;
+  overlayCanvas.style.width = feedRect.width + 'px';
+  overlayCanvas.style.height = feedRect.height + 'px';
+}
+
+function drawOverlay(data) {
+  if (!canvasReady) return;
+  ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+  const sceneValid = data.scene_valid;
+  noSceneWatermark.style.display = sceneValid ? 'none' : 'block';
+
+  // Rejected detections -- thin red dashed
+  if (data.raw_detections) {
+    data.raw_detections.filter(d => !d.accepted).forEach(d => {
+      const [x1, y1, x2, y2] = d.bbox;
+      ctx.strokeStyle = 'rgba(239,68,68,0.6)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(239,68,68,0.7)';
+      ctx.font = '600 11px "Fragment Mono", monospace';
+      ctx.fillText(`${d.cls} (${d.reason})`, x1, y1 - 4);
+    });
+  }
+
+  // Vehicles -- solid green with track ID
+  if (data.vehicles) {
+    data.vehicles.forEach(v => {
+      const [x1, y1, x2, y2] = v.bbox;
+      ctx.strokeStyle = 'rgba(52,211,153,0.8)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.fillStyle = 'rgba(52,211,153,0.8)';
+      ctx.font = '600 12px "Fragment Mono", monospace';
+      const trackLabel = v.track_id ? `T${v.track_id} ` : '';
+      ctx.fillText(`${trackLabel}${v.cls} ${(v.confidence * 100).toFixed(0)}%`, x1, y1 - 5);
+      // Track ID badge inside box
+      if (v.track_id) {
+        ctx.fillStyle = 'rgba(52,211,153,0.9)';
+        const tag = `T${v.track_id}`;
+        const tw = ctx.measureText(tag).width + 8;
+        ctx.fillRect(x1, y1, tw, 16);
+        ctx.fillStyle = '#000';
+        ctx.font = '700 11px "Fragment Mono", monospace';
+        ctx.fillText(tag, x1 + 4, y1 + 12);
+      }
+    });
+  }
+
+  // Signs -- solid blue
+  if (data.signs) {
+    data.signs.forEach(s => {
+      const [x1, y1, x2, y2] = s.bbox;
+      ctx.strokeStyle = 'rgba(147,197,253,0.8)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.fillStyle = 'rgba(147,197,253,0.8)';
+      ctx.font = '600 12px "Fragment Mono", monospace';
+      ctx.fillText(`sign ${(s.confidence * 100).toFixed(0)}%`, x1, y1 - 5);
+    });
+  }
+
+  // Tracked gaps -- yellow (accumulating) or green (confirmed)
+  if (sceneValid && data.tracked_gaps && data.tracked_gaps.length > 0) {
+    data.tracked_gaps.forEach(g => {
+      const [x1, y1, x2, y2] = g.bbox;
+      if (g.confirmed) {
+        ctx.strokeStyle = 'rgba(52,211,153,0.8)';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([]);
+      } else {
+        ctx.strokeStyle = 'rgba(250,204,21,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+      }
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.setLineDash([]);
+      // Label: T3-T7 1.2s/2.0s or CONFIRMED
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      ctx.textAlign = 'center';
+      ctx.font = '700 13px "Fragment Mono", monospace';
+      if (g.confirmed) {
+        ctx.fillStyle = 'rgba(52,211,153,0.9)';
+        ctx.fillText('SPOT', cx, cy - 8);
+        ctx.font = '600 10px "Fragment Mono", monospace';
+        ctx.fillText(`T${g.left_track_id}\u2013T${g.right_track_id}`, cx, cy + 8);
+      } else {
+        ctx.fillStyle = 'rgba(250,204,21,0.8)';
+        ctx.fillText(`${g.duration.toFixed(1)}s`, cx, cy - 4);
+        ctx.font = '600 10px "Fragment Mono", monospace';
+        ctx.fillStyle = 'rgba(250,204,21,0.6)';
+        ctx.fillText(`T${g.left_track_id}\u2013T${g.right_track_id}`, cx, cy + 10);
+      }
+      ctx.textAlign = 'start';
+    });
+  } else if (sceneValid && data.gap_bboxes) {
+    // Fallback: raw gap bboxes without tracking
+    ctx.strokeStyle = 'rgba(250,204,21,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    data.gap_bboxes.forEach(g => {
+      const [x1, y1, x2, y2] = g;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    });
+    ctx.setLineDash([]);
+  }
+
+  // Confirmed banner
+  if (data.confirmed_block) {
+    confirmedBanner.textContent = `Confirmed \u2014 ${data.confirmed_block.gap_count} gaps`;
+    confirmedBanner.classList.add('visible');
+    setTimeout(() => { confirmedBanner.classList.remove('visible'); }, 3000);
+  }
+}
+
+function updateHUD(data) {
+  vehicleCountEl.textContent = data.vehicles ? data.vehicles.length : 0;
+  gapCountEl.textContent = data.gap_estimate != null ? data.gap_estimate : 0;
+
+  if (data.scene_valid) {
+    sceneBadge.className = 'badge valid';
+    sceneBadge.textContent = 'valid';
+  } else {
+    sceneBadge.className = 'badge invalid';
+    sceneBadge.textContent = 'no scene';
+  }
+
+  trackerDisplay.textContent = data.pipeline_state || '--';
+
+  if (data.lat && data.lng) {
+    gpsDisplay.textContent = `${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}`;
+  }
+
+  if (data.sign_rules && data.sign_rules.summary) {
+    signRulesEl.querySelector('.summary').textContent = data.sign_rules.summary;
+    const details = [data.sign_rules.hours, data.sign_rules.price, data.sign_rules.restrictions?.join(', ')].filter(Boolean).join(' \u00b7 ');
+    signRulesEl.querySelector('.details').textContent = details;
+    signRulesEl.style.display = 'block';
+  } else {
+    signRulesEl.style.display = 'none';
+  }
+}
+
+function updateDetectionsList(data) {
+  if (!data.raw_detections || data.raw_detections.length === 0) {
+    detectionsList.innerHTML = '<span style="color:rgba(255,255,255,0.25)">No detections</span>';
+    return;
+  }
+
+  let html = '';
+  for (const d of data.raw_detections) {
+    const pct = (d.confidence * 100).toFixed(0);
+    const accCls = d.accepted ? 'accepted' : 'rejected';
+    html += `<div class="det-row">
+      <span class="det-cls">${d.cls}</span>
+      <div class="det-conf-bar"><div class="det-conf-fill ${accCls}" style="width:${pct}%"></div></div>
+      <span class="det-pct">${pct}%</span>
+      <span class="det-badge ${accCls}">${d.accepted ? 'OK' : 'REJ'}</span>
+      <span class="det-reason">${d.reason}</span>
+    </div>`;
+  }
+  detectionsList.innerHTML = html;
+}
+
+function logFrameEvents(data) {
+  if (!data.raw_detections) return;
+
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+
+  for (const d of data.raw_detections) {
+    const pct = (d.confidence * 100).toFixed(0);
+    if (d.accepted) {
+      addLog(`[${ts}] ${d.cls} ${pct}% (accepted)`, 'log-accepted');
+    } else {
+      addLog(`[${ts}] ${d.cls} ${pct}% (rejected: ${d.reason})`, 'log-rejected');
+    }
+  }
+
+  const sceneStr = data.scene_valid ? 'valid' : 'no scene';
+
+  // Log tracked gaps
+  if (data.tracked_gaps && data.tracked_gaps.length > 0) {
+    for (const g of data.tracked_gaps) {
+      const status = g.confirmed ? 'CONFIRMED' : `${g.duration.toFixed(1)}s`;
+      const cls = g.confirmed ? 'log-confirmed' : 'log-gap';
+      addLog(`[${ts}] Gap T${g.left_track_id}-T${g.right_track_id}: ${status}`, cls);
+    }
+  }
+
+  if (data.pipeline_state && data.pipeline_state !== 'no_scene') {
+    addLog(`[${ts}] ${data.pipeline_state} | Scene: ${sceneStr}`, 'log-tracker');
+  }
+
+  if (data.confirmed_block) {
+    const cb = data.confirmed_block;
+    addLog(`[${ts}] CONFIRMED SPOT: ${cb.gap_count} gap(s) at ${cb.segment_id}`, 'log-confirmed');
+  }
+}
+
+function addLog(text, cls) {
+  const div = document.createElement('div');
+  div.className = 'log-entry ' + (cls || '');
+  div.textContent = text;
+  eventLog.appendChild(div);
+  logCount++;
+  while (logCount > MAX_LOG) {
+    eventLog.removeChild(eventLog.firstChild);
+    logCount--;
+  }
+  eventLog.scrollTop = eventLog.scrollHeight;
+}
+
+window.addEventListener('resize', () => {
+  if (canvasReady) repositionOverlay();
+});
+
+connect();
+</script>
+</body>
+</html>
