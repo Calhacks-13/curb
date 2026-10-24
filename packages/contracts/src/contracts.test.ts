@@ -5,6 +5,7 @@ import {
   DemoSessionResponseSchema,
   DrivewayUpdateRequestSchema,
   NearbyParkingQuerySchema,
+  PaymentFailedRequestSchema,
   RealtimeNegotiateResponseSchema,
 } from "./api.js";
 import { NearbyParkingResponseSchema, PublicSeedFixtureSchema } from "./domain.js";
@@ -137,6 +138,26 @@ describe("shared contracts", () => {
         user: PUBLIC_SEED_FIXTURE.driver,
         token: "driver-demo-token",
         unexpected: true,
+      }),
+    ).toThrow();
+  });
+
+  it("versions payment-failure callbacks so stale attempts cannot win", () => {
+    expect(
+      PaymentFailedRequestSchema.parse({
+        expected_booking_version: 2,
+        code: "FACILITATOR_UNAVAILABLE",
+        retryable: true,
+      }),
+    ).toEqual({
+      expected_booking_version: 2,
+      code: "FACILITATOR_UNAVAILABLE",
+      retryable: true,
+    });
+    expect(() =>
+      PaymentFailedRequestSchema.parse({
+        code: "FACILITATOR_UNAVAILABLE",
+        retryable: true,
       }),
     ).toThrow();
   });

@@ -7,6 +7,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.azure import cosmos, signalr
+from app.routes.bookings import router as bookings_router
+from app.routes.driveways import router as driveways_router
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -49,6 +51,8 @@ from app.routes.v1 import router as v1_router
 app.include_router(v1_router)
 app.include_router(ws_router)
 app.include_router(signs_router)
+app.include_router(driveways_router)
+app.include_router(bookings_router)
 
 # Serve static files
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

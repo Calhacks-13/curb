@@ -102,6 +102,7 @@ class FinalizeBookingRequest(ContractModel):
 
 
 class PaymentFailedRequest(ContractModel):
+    expected_booking_version: int = Field(gt=0, strict=True)
     code: str = Field(min_length=1)
     retryable: bool
 
