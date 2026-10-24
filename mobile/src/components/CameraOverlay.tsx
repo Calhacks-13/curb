@@ -1,6 +1,6 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { font, ink, radius, shadow } from "@/config/tokens";
@@ -49,7 +49,6 @@ function LiveDot({ on, reduceMotion }: { on: boolean; reduceMotion: boolean }) {
 type LiveCameraProps = {
   sampling: boolean;
   frameContext: () => FrameContext | null;
-  onFrameSent: () => void;
   onCapturing: (capturing: boolean) => void;
   onSpotConfirmed?: (result: FrameAccepted) => void;
 };
@@ -58,7 +57,7 @@ type LiveCameraProps = {
  * The preview itself. Mounted only while Find is active, so camera readiness and
  * the sampler start fresh every time the screen comes back.
  */
-function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing, onSpotConfirmed }: LiveCameraProps) {
+function LiveCamera({ sampling, frameContext, onCapturing, onSpotConfirmed }: LiveCameraProps) {
   const camera = useRef<CameraView>(null);
   const [ready, setReady] = useState(false);
   const [pictureSize, setPictureSize] = useState<string | undefined>();
@@ -82,7 +81,6 @@ function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing, onSpotCo
         if (!ctx) throw new Error("no location yet");
         const result = await uploadFrame(uri, ctx);
         if (result.space) onSpotConfirmed?.(result);
-        onFrameSent();
       },
       discard: discardFrame,
     });
@@ -91,7 +89,7 @@ function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing, onSpotCo
       controller.stop();
       onCapturing(false);
     };
-  }, [capturing, onCapturing, onFrameSent, onSpotConfirmed]);
+  }, [capturing, onCapturing, onSpotConfirmed]);
 
   const onReady = async () => {
     setReady(true);
@@ -118,9 +116,7 @@ function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing, onSpotCo
 /** Floating live camera card on Find: preview, scanning indicator, frame sampling. */
 export function CameraOverlay({ active, sampling, frameContext, reduceMotion, onSpotConfirmed, onStartScan, onStopScan }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
-  const [sent, setSent] = useState(0);
   const [capturing, setCapturing] = useState(false);
-  const onFrameSent = useCallback(() => setSent((n) => n + 1), []);
 
   // Ask once when Find first needs the camera.
   useEffect(() => {
@@ -152,10 +148,10 @@ export function CameraOverlay({ active, sampling, frameContext, reduceMotion, on
     <View
       style={styles.card}
       accessible
-      accessibilityLabel={sampling ? `Scanning the curb. ${sent} frames shared.` : "Camera preview. Tap Start Scanning to begin."}
+      accessibilityLabel={sampling ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
     >
       <View style={styles.preview}>
-        {active && <LiveCamera sampling={sampling} frameContext={frameContext} onFrameSent={onFrameSent} onCapturing={setCapturing} onSpotConfirmed={onSpotConfirmed} />}
+        {active && <LiveCamera sampling={sampling} frameContext={frameContext} onCapturing={setCapturing} onSpotConfirmed={onSpotConfirmed} />}
         <View style={styles.liveTag}>
           <LiveDot on={live} reduceMotion={reduceMotion} />
           <Text style={styles.liveText}>{live ? "Live" : "Preview"}</Text>
@@ -164,7 +160,6 @@ export function CameraOverlay({ active, sampling, frameContext, reduceMotion, on
       {sampling ? (
         <>
           <Text style={styles.caption}>Scanning curb</Text>
-          <Text style={styles.sub}>{sent} frames shared</Text>
           <Pressable
             onPress={onStopScan}
             accessibilityRole="button"
