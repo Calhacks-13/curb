@@ -1,76 +1,152 @@
-import { CaptureController, DEFAULT_INTERVAL_MS as I } from "@/features/capture/CaptureController";
-
-jest.useFakeTimers();
+import type { DetectionSubmission, FrameAccepted, OnDeviceInference } from "@/api/types";
+import { DetectionUploadController } from "@/features/capture/DetectionUploadController";
+import type { FrameContext } from "@/features/capture/detectionUpload";
 
 function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+const inference: OnDeviceInference = {
+  vehicles: [{ bbox: [10, 20, 100, 200], cls: "car", confidence: 0.9 }],
+  signs: [{ bbox: [200, 20, 230, 80], confidence: 0.8, cropBase64: "c2lnbg==" }],
+  frameWidth: 1280, frameHeight: 720,
+};
+const context: FrameContext = {
+  lat: 37.8, lng: -122.4, accuracy_m: null, heading: 180, device_id: "phone", session_id: "capture",
+};
+const accepted: FrameAccepted = {
+  frame_id: "frame-1", accepted: true,
+  space: {
+    id: "spot", zone_id: "zone", location: { type: "Point", coordinates: [-122.4, 37.8] },
+    stall_geometry: { type: "Polygon", coordinates: [] }, internal_state: "OPEN",
+    last_observed_at: "2026-10-24T21:00:00.000Z", base_confidence: 0.9, version: 1,
+  },
+};
+beforeEach(() => jest.useFakeTimers({ now: new Date("2026-10-24T21:00:00.000Z") }));
+afterEach(() => jest.useRealTimers());
 
-const flush = () => Promise.resolve().then(() => Promise.resolve());
-
-describe("CaptureController", () => {
-  it("samples no faster than its interval", async () => {
-    const capture = jest.fn(async () => "file://frame.jpg");
-    const c = new CaptureController({ capture, upload: async () => {}, discard: () => {} });
-    c.start();
-    for (let i = 0; i < 4; i++) {
-      jest.advanceTimersByTime(I);
-      await flush();
-    }
-    expect(capture).toHaveBeenCalledTimes(4); // four intervals, four frames
-    c.stop();
-  });
-
-  it("keeps one upload in flight and drops samples instead of queueing", async () => {
-    const pending = deferred<void>();
-    const capture = jest.fn(async () => "file://frame.jpg");
+describe("DetectionUploadController", () => {
+  it("returns immediately, permits one request, and drops arrivals without replay", async () => {
+    const pending = deferred<FrameAccepted>();
     const upload = jest.fn(() => pending.promise);
-    const c = new CaptureController({ capture, upload, discard: () => {} });
-    c.start();
-    jest.advanceTimersByTime(I);
+    const controller = new DetectionUploadController({ context: () => context, upload });
+    controller.start();
+    controller.start();
+    expect(controller.submit(inference)).toBeUndefined();
+    controller.submit(inference);
+    controller.submit(inference);
+    controller.submit(inference);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(controller.stats).toEqual({ sent: 0, dropped: 3, failed: 0 });
+    pending.resolve(accepted);
     await flush();
-    jest.advanceTimersByTime(3 * I); // three more ticks while the first upload hangs
+    jest.advanceTimersByTime(60_000);
     await flush();
     expect(upload).toHaveBeenCalledTimes(1);
-    expect(c.stats.dropped).toBe(3);
-    pending.resolve();
+    expect(controller.stats).toEqual({ sent: 1, dropped: 3, failed: 0 });
+    controller.submit(inference);
+    expect(upload).toHaveBeenCalledTimes(2);
     await flush();
-    c.stop();
   });
 
-  it("drops a failed upload, keeps going, and always deletes the frame", async () => {
-    const discard = jest.fn();
-    const upload = jest.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
-    const c = new CaptureController({ capture: async () => "file://f.jpg", upload, discard });
-    c.start();
-    jest.advanceTimersByTime(I);
+  it("snapshots fresh context and capture time for each accepted result", async () => {
+    const payloads: DetectionSubmission[] = [];
+    let latest = { ...context };
+    const controller = new DetectionUploadController({
+      context: () => latest, upload: async (payload) => { payloads.push(payload); return accepted; },
+    });
+    controller.start();
+    controller.submit(inference);
+    latest.lat = 38;
     await flush();
-    jest.advanceTimersByTime(I);
+    latest = { ...context, lat: 39, session_id: "next-session" };
+    jest.setSystemTime(new Date("2026-10-24T21:00:01.000Z"));
+    controller.submit(inference);
     await flush();
-    expect(c.stats).toMatchObject({ failed: 1, sent: 1 });
-    expect(discard).toHaveBeenCalledTimes(2);
-    c.stop();
+    expect(payloads).toEqual([
+      expect.objectContaining({ lat: 37.8, session_id: "capture", captured_at: "2026-10-24T21:00:00.000Z" }),
+      expect.objectContaining({ lat: 39, session_id: "next-session", captured_at: "2026-10-24T21:00:01.000Z" }),
+    ]);
   });
 
-  it("stops sampling and never uploads a frame captured after stop", async () => {
-    const shot = deferred<string>();
-    const upload = jest.fn(async () => {});
-    const discard = jest.fn();
-    const c = new CaptureController({ capture: () => shot.promise, upload, discard });
-    c.start();
-    jest.advanceTimersByTime(I);
-    c.stop(); // e.g. app went to background mid-capture
-    shot.resolve("file://late.jpg");
+  it("counts failures and accepts a fresh result after rejection", async () => {
+    const pending = deferred<FrameAccepted>();
+    const upload = jest.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(accepted);
+    const onSpotConfirmed = jest.fn();
+    const controller = new DetectionUploadController({ context: () => context, upload, onSpotConfirmed });
+    controller.start();
+    controller.submit(inference);
+    pending.reject(new Error("offline"));
     await flush();
+    expect(controller.stats).toEqual({ sent: 0, dropped: 0, failed: 1 });
+    expect(onSpotConfirmed).not.toHaveBeenCalled();
+    controller.submit(inference);
+    await flush();
+    expect(controller.stats).toEqual({ sent: 1, dropped: 0, failed: 1 });
+    expect(onSpotConfirmed).toHaveBeenCalledWith(accepted);
+  });
+
+  it("does not upload before start or after idempotent stop", () => {
+    const upload = jest.fn(async () => accepted);
+    const controller = new DetectionUploadController({ context: () => context, upload });
+    controller.submit(inference);
+    controller.start();
+    controller.stop();
+    controller.stop();
+    controller.submit(inference);
     expect(upload).not.toHaveBeenCalled();
-    expect(discard).toHaveBeenCalledWith("file://late.jpg");
-    jest.advanceTimersByTime(10 * I);
-    expect(c.running).toBe(false);
+    expect(controller.running).toBe(false);
+  });
+
+  it("drops missing context without blocking the next valid result", async () => {
+    let latest: FrameContext | null = null;
+    const upload = jest.fn(async () => accepted);
+    const controller = new DetectionUploadController({ context: () => latest, upload });
+    controller.start();
+    controller.submit(inference);
+    expect(upload).not.toHaveBeenCalled();
+    expect(controller.stats).toEqual({ sent: 0, dropped: 1, failed: 0 });
+    latest = context;
+    controller.submit(inference);
+    await flush();
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("suppresses pending confirmation after stop (restart=%s)", async (restart) => {
+    const pending = deferred<FrameAccepted>();
+    const upload = jest.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(accepted);
+    const onSpotConfirmed = jest.fn();
+    const controller = new DetectionUploadController({ context: () => context, upload, onSpotConfirmed });
+    controller.start();
+    controller.submit(inference);
+    controller.stop();
+    if (restart) {
+      controller.start();
+      controller.submit(inference);
+      expect(upload).toHaveBeenCalledTimes(1);
+    }
+    pending.resolve(accepted);
+    await flush();
+    expect(onSpotConfirmed).not.toHaveBeenCalled();
+    if (restart) {
+      controller.submit(inference);
+      await flush();
+      expect(onSpotConfirmed).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("does not announce a response without a confirmed space", async () => {
+    const onSpotConfirmed = jest.fn();
+    const controller = new DetectionUploadController({
+      context: () => context, upload: async () => ({ frame_id: "pending", accepted: true }), onSpotConfirmed,
+    });
+    controller.start();
+    controller.submit(inference);
+    await flush();
+    expect(controller.stats.sent).toBe(1);
+    expect(onSpotConfirmed).not.toHaveBeenCalled();
   });
 });

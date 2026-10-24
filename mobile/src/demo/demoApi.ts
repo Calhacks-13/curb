@@ -252,8 +252,8 @@ export function createDemoApi(): CurbApi {
       return b;
     },
 
-    async uploadFrame() {
-      // Demo replay doesn't run vision; frames are dropped immediately.
+    async uploadDetections() {
+      // Demo replay doesn't run vision; detections are dropped immediately.
       return { frame_id: `frame_demo_${Date.now()}`, accepted: false };
     },
 

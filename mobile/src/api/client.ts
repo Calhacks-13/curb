@@ -2,8 +2,6 @@
 // Contracts"). getApi() returns the live HTTP client when EXPO_PUBLIC_API_URL is
 // set, otherwise the in-memory demo replay adapter.
 
-import * as FileSystem from "expo-file-system/legacy";
-
 import { createDemoApi } from "@/demo/demoApi";
 import { laWindowToUtc } from "@/lib/laTime";
 import { ApiError } from "./errors";
@@ -14,10 +12,10 @@ import {
   FIND_RADIUS_M,
   type Booking,
   type DemoProfile,
+  type DetectionSubmission,
   type Driveway,
   type DrivewayUpdate,
   type FrameAccepted,
-  type FrameMetadata,
   type NearbyParkingResponse,
   type PaymentProgress,
   type RealtimeEvent,
@@ -50,7 +48,7 @@ export interface CurbApi {
   /** Requests testnet USDC for the checkout wallet. */
   topUpWallet(): Promise<{ transaction_hash: string; explorer_url: string }>;
   booking(bookingId: string): Promise<Booking>;
-  uploadFrame(jpegUri: string, meta: FrameMetadata): Promise<FrameAccepted>;
+  uploadDetections(payload: DetectionSubmission): Promise<FrameAccepted>;
   connectRealtime(onEvent: (e: RealtimeEvent) => void, onStatus?: (s: RealtimeStatus) => void): RealtimeConnection;
 }
 
@@ -111,25 +109,7 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
     wallet: () => call("GET", "/v1/wallet", undefined, paymentsUrl),
     topUpWallet: () => call("POST", "/v1/wallet/top-up", undefined, paymentsUrl),
     booking: (id) => call("GET", `/v1/bookings/${encodeURIComponent(id)}`),
-    async uploadFrame(jpegUri, meta) {
-      // Use native FileSystem upload — React Native's fetch+FormData is unreliable for file uploads.
-      const result = await FileSystem.uploadAsync(
-        `${baseUrl}/v1/vision/frames`,
-        jpegUri,
-        {
-          httpMethod: "POST",
-          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-          fieldName: "frame",
-          mimeType: "image/jpeg",
-          parameters: { metadata: JSON.stringify(meta) },
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        },
-      );
-      if (result.status < 200 || result.status >= 300) {
-        throw new ApiError(result.status, `POST /v1/vision/frames failed (${result.status})`);
-      }
-      return JSON.parse(result.body) as FrameAccepted;
-    },
+    uploadDetections: (payload) => call("POST", "/v1/vision/detections", payload),
     connectRealtime(onEvent, onStatus) {
       return connectWebPubSub(
         async () => (await call<{ url: string }>("POST", "/v1/realtime/negotiate")).url,

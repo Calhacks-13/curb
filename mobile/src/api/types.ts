@@ -142,6 +142,24 @@ export type FrameMetadata = {
   session_id: string;
 };
 
+export type DetectionBox = [number, number, number, number];
+export type VehicleDetectionPayload = { bbox: DetectionBox; cls: string; confidence: number };
+export type SignDetectionPayload = { bbox: DetectionBox; confidence: number; crop_b64: string };
+export type DetectionSubmission = FrameMetadata & {
+  vehicles: VehicleDetectionPayload[];
+  signs: SignDetectionPayload[];
+  frame_width: number;
+  frame_height: number;
+};
+
+/** Native inference uses camelCase; convert names once at the HTTP boundary. */
+export type OnDeviceInference = {
+  vehicles: { bbox: DetectionBox; cls: string; confidence: number }[];
+  signs: { bbox: DetectionBox; confidence: number; cropBase64: string }[];
+  frameWidth: number;
+  frameHeight: number;
+};
+
 export type FrameAccepted = {
   frame_id: string;
   accepted: boolean;
