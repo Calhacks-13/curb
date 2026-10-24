@@ -10,7 +10,7 @@ function laHhmm(iso: string): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
-function normalizeDriveway(wire: DrivewayView | Driveway): Driveway {
+export function normalizeDriveway(wire: DrivewayView | Driveway): Driveway {
   // Legacy/replay-shaped responses already have LA wall-clock display values.
   if (!wire.availability_start.includes("T")) return wire;
   return {

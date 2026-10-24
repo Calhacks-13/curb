@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.domain.parking import ParkingService
-from app.models.domain import GeoPoint, NearbyParkingResponse, SpaceDetail
+from app.models.domain import GeoPoint, NearbyParkingResponse, SpaceDetail, UserView
 from app.repositories.protocols import ParkingRepository
 from app.routes.sessions import get_repository, require_user
 
@@ -21,13 +21,14 @@ async def nearby_parking(
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
     radius_m: float = Query(804.672, ge=804.672, le=804.672),
+    user: UserView = Depends(require_user),
     repository: ParkingRepository = Depends(get_repository),
     now: datetime = Depends(get_clock),
 ):
     return await ParkingService(
         repository, driveway_service=getattr(request.app.state, "driveway_service", None)
     ).nearby(
-        GeoPoint(type="Point", coordinates=(lng, lat)), radius_m, now
+        GeoPoint(type="Point", coordinates=(lng, lat)), radius_m, now, viewer_id=user.id
     )
 
 

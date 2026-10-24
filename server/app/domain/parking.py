@@ -23,7 +23,9 @@ class ParkingService:
             freshness, label = None, "Availability unknown"
         return space.model_copy(update={"freshness": freshness, "status_label": label, "distance_m": distance})
 
-    async def nearby(self, origin: GeoPoint, radius_m: float, now: datetime) -> NearbyParkingResponse:
+    async def nearby(
+        self, origin: GeoPoint, radius_m: float, now: datetime, viewer_id: str | None = None
+    ) -> NearbyParkingResponse:
         zones = [zone for zone in await self.repository.list_zones()
                  if distance_to_line_m(origin, zone.geometry) <= radius_m]
         by_id = {zone.id: zone for zone in zones}
@@ -48,11 +50,21 @@ class ParkingService:
                 except NotFoundError:
                     continue
             listings.append(view)
-        driveways = [view for view in listings
-                     if view.state == DrivewayState.AVAILABLE
-                     and view.availability_start <= now < view.availability_end
-                     and distance_m(origin, view.location) <= radius_m]
-        driveways = [view.model_copy(update={"available_now": True}) for view in driveways]
+        driveways = []
+        for view in listings:
+            in_window = view.availability_start <= now < view.availability_end
+            personal = viewer_id is not None and (
+                view.owner_id == viewer_id or view.held_by_user_id == viewer_id
+            )
+            available_nearby = (
+                view.state == DrivewayState.AVAILABLE
+                and in_window
+                and distance_m(origin, view.location) <= radius_m
+            )
+            if personal or available_nearby:
+                driveways.append(view.model_copy(update={
+                    "available_now": view.state == DrivewayState.AVAILABLE and in_window,
+                }))
         ranked = rank_options(origin, [*driveways, *spaces])
         return NearbyParkingResponse(
             generated_at=now, zones=zones,

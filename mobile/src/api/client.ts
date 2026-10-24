@@ -5,9 +5,9 @@
 import * as FileSystem from "expo-file-system/legacy";
 
 import { createDemoApi } from "@/demo/demoApi";
-import { laWindowToUtc, toLaHhmm } from "@/lib/laTime";
+import { laWindowToUtc } from "@/lib/laTime";
 import { ApiError } from "./errors";
-import { normalizeNearby, normalizeSpaceDetail } from "./normalize";
+import { normalizeDriveway, normalizeNearby, normalizeSpaceDetail } from "./normalize";
 import { connectWebPubSub } from "@/realtime/webPubSub";
 
 import {
@@ -52,11 +52,6 @@ export interface CurbApi {
   booking(bookingId: string): Promise<Booking>;
   uploadFrame(jpegUri: string, meta: FrameMetadata): Promise<FrameAccepted>;
   connectRealtime(onEvent: (e: RealtimeEvent) => void, onStatus?: (s: RealtimeStatus) => void): RealtimeConnection;
-}
-
-/** The server sends availability as UTC timestamps; the app works in LA "HH:MM". */
-export function normalizeDriveway(d: Driveway): Driveway {
-  return { ...d, availability_start: toLaHhmm(d.availability_start), availability_end: toLaHhmm(d.availability_end) };
 }
 
 function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {

@@ -1,4 +1,5 @@
 import type { ParkingSpace, RealtimeEvent } from "@/api/types";
+import { visibleDriveways } from "@/features/find/options";
 import { applyRealtimeEvent, emptyParkingState, fromNearby } from "@/realtime/reducer";
 
 const space: ParkingSpace = {
@@ -99,5 +100,26 @@ describe("contract-shaped driveway events", () => {
     });
     expect(confirmed.bookings.booking_1).toMatchObject({ state: "CONFIRMED", transaction_hash: "0xabc" });
     expect(confirmed.driveways[driveway.id]).toMatchObject({ state: "BOOKED", version: 3, availability_end: "23:59" });
+  });
+
+  it("replaces the dated availability window when a realtime owner edit changes it", () => {
+    const dated = {
+      ...driveway,
+      availability_window: { start: "2026-10-24T07:00:00Z", end: "2026-10-24T08:00:00Z" },
+    };
+    const datedBase = fromNearby(emptyParkingState, { generated_at: "", zones: [], spaces: [], driveways: [dated] });
+    const updated = applyRealtimeEvent(datedBase, {
+      type: "driveway.updated",
+      entity_id: driveway.id,
+      entity_version: 2,
+      occurred_at: "",
+      payload: { driveway: { ...view("AVAILABLE", 2), availability_end: "2026-10-24T02:00:00Z" } },
+    });
+
+    expect(updated.driveways[driveway.id].availability_window).toEqual({
+      start: "2026-10-24T07:00:00Z",
+      end: "2026-10-24T02:00:00Z",
+    });
+    expect(visibleDriveways(updated, Date.parse("2026-10-24T03:00:00Z"), "driver_demo")).toEqual([]);
   });
 });

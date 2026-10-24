@@ -18,7 +18,17 @@ const wireDetail: WireDetail = {
   current_rules: "Metered parking allowed for two hours.", max_minutes: 120, next_change_at: "2026-10-25T01:00:00Z",
 };
 const session = { user: { id: "driver", display_name: "Driver", demo_profile: "driver" }, token: "seeded-bearer-token" };
-const mockFetch = jest.fn(async (url: string) => ({ ok: true, status: 200, json: async () => url.includes("/sessions") ? session : url.includes("/spaces/") ? wireDetail : wireNearby }));
+const mockFetch = jest.fn(async (url: string) => ({
+  ok: true,
+  status: 200,
+  json: async () => url.includes("/sessions")
+    ? session
+    : url.includes("/spaces/")
+      ? wireDetail
+      : url.includes("/driveways/")
+        ? wireNearby.driveways[0]
+        : wireNearby,
+}));
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
@@ -68,4 +78,23 @@ it("sends the selected session's bearer token on nearby/detail requests and remo
   api.setToken(null);
   await api.nearby(37.79932, -122.43597);
   expect(mockFetch).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ headers: { "Content-Type": "application/json" } }));
+});
+
+it("normalizes direct driveway mutation responses with their dated availability window", async () => {
+  const updated = await getApi().updateDriveway("driveway-1", {
+    expected_version: 3,
+    available: true,
+    price_usdc: "8.50",
+    availability_start: "08:00",
+    availability_end: "22:00",
+  });
+
+  expect(updated).toMatchObject({
+    availability_start: "08:00",
+    availability_end: "22:00",
+    availability_window: {
+      start: "2026-10-24T15:00:00Z",
+      end: "2026-10-25T05:00:00Z",
+    },
+  });
 });

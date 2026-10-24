@@ -14,6 +14,7 @@ from app.models.api import NearbyParkingResponse, PublicSeedFixture, SpaceDetail
 NOW = datetime(2026, 10, 24, 1, tzinfo=UTC)
 ORIGIN = {"lat": 37.775, "lng": -122.419, "radius_m": 804.672}
 AUTH = {"Authorization": "Bearer demo-token-driver_demo"}
+OWNER_AUTH = {"Authorization": "Bearer demo-token-owner_demo"}
 
 
 @pytest.fixture
@@ -41,8 +42,8 @@ def build_client(seed, now=NOW):
     return TestClient(app), repository
 
 
-def nearby(client, **overrides):
-    return client.get("/v1/parking/nearby", params={**ORIGIN, **overrides}, headers=AUTH)
+def nearby(client, headers=AUTH, **overrides):
+    return client.get("/v1/parking/nearby", params={**ORIGIN, **overrides}, headers=headers)
 
 
 @pytest.mark.parametrize("age,expected", [
@@ -132,7 +133,7 @@ def test_non_available_driveway_state_is_omitted_inside_window(seed, state):
     driveway = seed["nearby"]["driveways"][0]
     driveway["state"] = state
     if state in {"HELD", "BOOKED"}:
-        driveway["held_by_user_id"] = "driver_demo"
+        driveway["held_by_user_id"] = "another_driver"
         driveway["active_booking"] = {
             "id": "booking_demo_1", "state": "PENDING_PAYMENT" if state == "HELD" else "CONFIRMED",
             "payment_status": "NOT_STARTED" if state == "HELD" else "SETTLED",
@@ -220,7 +221,22 @@ def test_nearby_uses_committed_marketplace_state(seed):
 
     asyncio.run(service.start_hold("driveway_demo_1", "driver_demo", 1, NOW))
 
-    assert nearby(client).json()["driveways"] == []
+    held = nearby(client).json()["driveways"]
+    assert [view["id"] for view in held] == ["driveway_demo_1"]
+    assert held[0]["state"] == "HELD"
+    assert held[0]["available_now"] is False
+
+
+def test_owner_nearby_keeps_unavailable_listing_outside_radius_and_window(seed):
+    driveway = seed["nearby"]["driveways"][0]
+    driveway["state"] = "UNAVAILABLE"
+    driveway["location"]["coordinates"] = [-122.5, 37.775]
+    client, _ = build_client(seed, NOW + timedelta(days=1))
+
+    response = nearby(client, headers=OWNER_AUTH).json()
+
+    assert [view["id"] for view in response["driveways"]] == ["driveway_demo_1"]
+    assert response["driveways"][0]["available_now"] is False
 
 
 def test_zone_crossing_search_circle_is_retained_when_endpoints_are_outside(seed):
