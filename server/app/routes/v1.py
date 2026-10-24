@@ -6,17 +6,15 @@ This router translates between the server's BlockObservation/SignRules models
 and the mobile's ParkingSpace/CurbZone/NearbyParkingResponse contract.
 """
 
-import asyncio
-import json
 import uuid
 import logging
 from datetime import UTC, datetime, timezone
 
-from fastapi import APIRouter, Form, Query, Request, UploadFile, File
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from app.azure import cosmos, signalr
-from app.cv.frame_selector import FrameSelector
+from app.domain.detections import DetectionSubmission
 from app.models.cv import BlockObservation
 from app.models.domain import (
     CurbZoneView as CanonicalCurbZone,
@@ -34,13 +32,10 @@ from app.models.domain import (
     WeeklyRuleWindow,
 )
 from app.repositories.protocols import ParkingRepository
-from app.routes.ws import viewers as ws_viewers
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["v1"])
-
-_frame_selector = FrameSelector()
 
 
 def get_pipeline():
@@ -357,51 +352,20 @@ def _driveway_to_view(dw: dict) -> dict:
 
 # ---------- endpoints ----------
 
-@router.post("/vision/frames")
-async def upload_frame(
-    request: Request,
-    frame: UploadFile = File(...),
-    metadata: str = Form(...),
-):
-    """Accept FormData (jpeg + metadata JSON), run through CV pipeline."""
-    meta = json.loads(metadata)
-    image_bytes = await frame.read()
-
-    lat = meta.get("lat", 0.0)
-    lng = meta.get("lng", 0.0)
-    heading = meta.get("heading", 0.0) or 0.0
-    session_id = meta.get("session_id", str(uuid.uuid4()))
-
-    # Simple rate limiting
-    if not _frame_selector.should_process(session_id, image_bytes):
-        return {"frame_id": str(uuid.uuid4()), "accepted": False}
-
-    pipeline = get_pipeline()
-    result = await pipeline.process_frame(
-        image_bytes=image_bytes,
-        lat=lat,
-        lng=lng,
-        session_id=session_id,
-        heading=heading,
+@router.post("/vision/detections")
+async def upload_detections(request: Request, submission: DetectionSubmission):
+    """Accept validated on-device detections and return confirmed-space feedback."""
+    vehicles, signs = submission.to_pipeline_input()
+    result = await get_pipeline().process_detections(
+        vehicles=vehicles,
+        signs=signs,
+        frame_width=submission.frame_width,
+        frame_height=submission.frame_height,
+        lat=submission.lat,
+        lng=submission.lng,
+        session_id=submission.session_id,
+        heading=submission.heading,
     )
-
-    # Relay to WS viewers (frame JPEG + JSON)
-    if ws_viewers:
-        viewer_json = json.dumps(result["frame_result"].model_dump(mode="json"))
-        async def _relay():
-            dead = []
-            for v in ws_viewers:
-                try:
-                    await v.send_bytes(image_bytes)
-                    await v.send_text(viewer_json)
-                except Exception:
-                    dead.append(v)
-            for v in dead:
-                ws_viewers.discard(v)
-        asyncio.create_task(_relay())
-
-    # Realtime events (space.opened/refreshed/occupied) are now
-    # broadcast directly by the pipeline's SpotManager.
 
     # Self-feedback: include confirmed spot in the response so the scanning
     # phone sees its OWN spots immediately, without waiting for Web PubSub.

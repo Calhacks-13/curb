@@ -218,7 +218,6 @@ def test_nearby_and_detail_require_seeded_bearer_token(seed):
 
 
 def test_main_registers_canonical_routes_once_without_loading_vision(seed):
-    pytest.importorskip("multipart", reason="full-app registration requires the declared python-multipart dependency")
     from app.main import app
     from app.routes.parking import get_clock
 
@@ -230,7 +229,8 @@ def test_main_registers_canonical_routes_once_without_loading_vision(seed):
         assert paths.count("/v1/demo/sessions") == 1
         assert paths.count("/v1/parking/nearby") == 1
         assert paths.count("/v1/spaces/{space_id}") == 1
-        assert "/v1/vision/frames" in paths
+        assert paths.count("/v1/vision/detections") == 1
+        assert "/v1/vision/frames" not in paths
         assert "/v1/realtime/negotiate" in paths
         response = nearby(TestClient(app))
         assert response.status_code == 200
