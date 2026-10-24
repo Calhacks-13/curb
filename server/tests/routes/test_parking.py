@@ -153,6 +153,21 @@ def test_detail_returns_canonical_rule_and_404_for_unknown_space(seed):
     assert client.get("/v1/spaces/missing", headers=AUTH).status_code == 404
 
 
+def test_local_demo_seed_refreshes_observations_without_changing_fixture_data(seed):
+    from app.repositories.memory import InMemoryParkingRepository
+    from app.seed.loader import load_seed
+
+    fixture = PublicSeedFixture.model_validate(seed)
+    reference = datetime(2026, 10, 24, 2, tzinfo=UTC)
+    repository = InMemoryParkingRepository()
+
+    asyncio.run(load_seed(repository, fixture, refresh_observations=True, now=reference))
+
+    refreshed = asyncio.run(repository.get_space("space_demo_1"))
+    assert refreshed.last_observed_at == reference - timedelta(seconds=20)
+    assert fixture.nearby.spaces[0].last_observed_at == datetime(2026, 10, 24, 0, 59, 40, tzinfo=UTC)
+
+
 def test_sessions_are_idempotent_validate_profiles_and_do_not_refresh_seed(seed):
     from app.seed.loader import load_seed
 

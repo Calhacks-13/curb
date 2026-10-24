@@ -31,7 +31,9 @@ async def lifespan(app: FastAPI):
             ) if cosmos._is_configured() else InMemoryParkingRepository()
         )
         app.state.parking_repository = repository
-    await load_seed(repository)
+    # Local in-memory startup uses a clearly demo-only, fresh observation window
+    # so the seeded curb spaces remain visible while developing on a phone.
+    await load_seed(repository, refresh_observations=isinstance(repository, InMemoryParkingRepository))
     # Startup: preload models, init Azure clients
     from app.cv.detector import get_vehicle_model, get_sign_model, get_seg_model
     from app.cv.depth import load_depth_model
