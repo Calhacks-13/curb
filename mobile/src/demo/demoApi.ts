@@ -14,11 +14,13 @@ import {
   type Driveway,
   type NearbyParkingResponse,
   type ParkingSpace,
+  type PaymentPhase,
   type RealtimeEvent,
   type RealtimeEventType,
   type Session,
   type SignRuleView,
   type User,
+  type WalletInfo,
 } from "@/api/types";
 
 import { buildDemoFixture, REPLAY_TARGETS, spaceIdFor } from "./fixtures";
@@ -88,6 +90,9 @@ export function createDemoApi(): CurbApi {
   const state = createState((e) => listeners.forEach((fn) => fn(e)));
   let timers: ReturnType<typeof setTimeout>[] = [];
   let user: User = { id: DEMO_IDS.driver, display_name: "Demo driver", demo_profile: "driver" };
+  // Demo replay wallet: a balance on screen only; nothing is on-chain.
+  let demoBalance = 25;
+  const paymentStarted = new Map<string, number>();
 
   function startScript() {
     if (timers.length) return;
@@ -206,13 +211,39 @@ export function createDemoApi(): CurbApi {
       if (b.state === "CONFIRMED" || b.state === "PROCESSING") return b;
       const processing: Booking = { ...b, state: "PROCESSING", version: b.version + 1 };
       state.putBooking(processing);
+      paymentStarted.set(bookingId, Date.now());
       await new Promise((r) => setTimeout(r, PAYMENT_MS));
       // Demo replay: no chain transaction exists, so there is no hash to show.
       const confirmed: Booking = { ...processing, state: "CONFIRMED", confirmed_at: new Date().toISOString(), version: processing.version + 1 };
       state.putBooking(confirmed, "booking.confirmed");
+      demoBalance = Math.max(0, demoBalance - Number(b.amount_usdc));
       const d = driveway(b.driveway_id);
       state.putDriveway({ ...d, state: "BOOKED", version: d.version + 1 }, "driveway.updated");
       return confirmed;
+    },
+
+    async paymentProgress(bookingId) {
+      const b = state.bookings.get(bookingId);
+      const started = paymentStarted.get(bookingId);
+      if (!b || started === undefined) return { booking_id: bookingId, phase: null };
+      if (b.state === "CONFIRMED") return { booking_id: bookingId, phase: "confirmed" };
+      // Walk the same steps as the live service across the simulated settlement.
+      const t = (Date.now() - started) / PAYMENT_MS;
+      const phase: PaymentPhase = t < 0.25 ? "approved" : t < 0.6 ? "signed" : "settled";
+      return { booking_id: bookingId, phase };
+    },
+
+    async wallet(): Promise<WalletInfo> {
+      return {
+        network: "base-sepolia",
+        payer: { name: "Demo wallet", address: "0xDe0000000000000000000000000000000000Demo", usdc_balance: String(demoBalance), explorer_url: "" },
+        payee: { name: "Driveway owner", address: "0x0000000000000000000000000000000000Owner" },
+      };
+    },
+
+    async topUpWallet() {
+      demoBalance += 10;
+      return { transaction_hash: "", explorer_url: "" };
     },
 
     async booking(id) {

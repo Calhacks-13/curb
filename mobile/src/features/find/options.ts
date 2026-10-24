@@ -24,6 +24,10 @@ export type FindOption = {
   distanceM: number;
   /** A driveway this driver holds or has booked. */
   mine?: boolean;
+  /** Held or booked by someone else: shown muted on the map, not offered. */
+  booked?: boolean;
+  /** The signed-in user's own listing: never reservable by them. */
+  own?: boolean;
 };
 
 const RANK: Record<StallKind, number> = { fresh: 0, driveway: 1, aging: 2, stale: 3 };
@@ -49,11 +53,17 @@ export function walkMinutes(m: number): number {
  * any this driver is holding or has booked so their own checkout never vanishes.
  */
 export function visibleDriveways(state: ParkingState, now: number, userId: string | null): Driveway[] {
-  return Object.values(state.driveways).filter(
-    (d) =>
-      (d.state === "AVAILABLE" && inLaWindow(d.availability_start, d.availability_end, new Date(now))) ||
-      (userId != null && d.held_by_user_id === userId && (d.state === "HELD" || d.state === "BOOKED")),
-  );
+  return Object.values(state.driveways).filter((d) => {
+    const inWindow = inLaWindow(d.availability_start, d.availability_end, new Date(now));
+    if (userId != null && d.held_by_user_id === userId && (d.state === "HELD" || d.state === "BOOKED")) return true;
+    // Someone else's hold or booking stays on the map as a muted "Booked" pin.
+    return inWindow && d.state !== "UNAVAILABLE";
+  });
+}
+
+/** The driveway this driver has booked, if any, so Find can keep it in view. */
+export function myReservation(options: FindOption[]): FindOption | null {
+  return options.find((o) => o.kind === "driveway" && o.mine && o.title === "Your driveway") ?? null;
 }
 
 /** The Find search area: the spec's fixed 0.5-mile radius around the search center. */
@@ -102,19 +112,34 @@ export function findOptions(
     .map((dw): FindOption => {
     const d = distanceM(from, dw.location.coordinates);
     const mine = dw.held_by_user_id === userId && dw.state !== "AVAILABLE";
+    const booked = !mine && dw.state !== "AVAILABLE";
+    const own = userId != null && dw.owner_id === userId;
     return {
       id: dw.id,
       kind: "driveway",
-      title: mine ? (dw.state === "BOOKED" ? "Your driveway" : "Driveway on hold for you") : "Guaranteed driveway",
+      title: mine
+        ? dw.state === "BOOKED"
+          ? "Your driveway"
+          : "Driveway on hold for you"
+        : booked
+          ? "Booked driveway"
+          : own
+            ? "Your listing"
+            : "Guaranteed driveway",
       detail: `${formatHhmm(dw.availability_start)} to ${formatHhmm(dw.availability_end)}${SEP}${formatDistance(d)}`,
       trailing: formatUsdc(dw.price_usdc),
       position: dw.location.coordinates,
       ring: drivewayRing(dw.location.coordinates),
       distanceM: d,
       mine,
+      booked,
+      own,
     };
   });
-  return [...curb, ...driveways].sort((a, b) => RANK[a.kind] - RANK[b.kind] || a.distanceM - b.distanceM);
+  // Booked driveways sort last: they're context on the map, not options.
+  return [...curb, ...driveways].sort(
+    (a, b) => Number(!!a.booked) - Number(!!b.booked) || RANK[a.kind] - RANK[b.kind] || a.distanceM - b.distanceM,
+  );
 }
 
 /** Small square bay drawn at a driveway's point. */
@@ -151,13 +176,23 @@ export function mapPills(options: FindOption[]): MapPill[] {
   return options.map((o) => ({
     id: o.id,
     kind: o.kind,
-    label: o.kind !== "driveway" ? PILL_LABEL[o.kind] : o.mine ? "Your driveway" : `${o.trailing}${SEP}Reserve`,
+    label:
+      o.kind !== "driveway"
+        ? PILL_LABEL[o.kind]
+        : o.mine
+          ? "Your driveway"
+          : o.booked
+            ? "Booked"
+            : o.own
+              ? "Your listing"
+              : `${o.trailing}${SEP}Reserve`,
     position: o.position,
     mine: o.mine,
+    muted: o.booked,
   }));
 }
 
 /** Changes only when what the map draws changes (not every clock tick). */
 export function mapSignature(options: FindOption[]): string {
-  return options.map((o) => `${o.id}:${o.kind}${o.mine ? ":mine" : ""}`).join("|");
+  return options.map((o) => `${o.id}:${o.kind}${o.mine ? ":mine" : ""}${o.booked ? ":booked" : ""}${o.own ? ":own" : ""}`).join("|");
 }

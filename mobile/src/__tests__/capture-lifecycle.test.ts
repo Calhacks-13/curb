@@ -1,4 +1,4 @@
-import { CaptureController } from "@/features/capture/CaptureController";
+import { CaptureController, DEFAULT_INTERVAL_MS as I } from "@/features/capture/CaptureController";
 
 jest.useFakeTimers();
 
@@ -15,15 +15,15 @@ function deferred<T>() {
 const flush = () => Promise.resolve().then(() => Promise.resolve());
 
 describe("CaptureController", () => {
-  it("samples no faster than five times a second", async () => {
+  it("samples no faster than its interval", async () => {
     const capture = jest.fn(async () => "file://frame.jpg");
     const c = new CaptureController({ capture, upload: async () => {}, discard: () => {} });
     c.start();
     for (let i = 0; i < 4; i++) {
-      jest.advanceTimersByTime(200);
+      jest.advanceTimersByTime(I);
       await flush();
     }
-    expect(capture).toHaveBeenCalledTimes(4); // 800 ms at 5 fps
+    expect(capture).toHaveBeenCalledTimes(4); // four intervals, four frames
     c.stop();
   });
 
@@ -33,12 +33,12 @@ describe("CaptureController", () => {
     const upload = jest.fn(() => pending.promise);
     const c = new CaptureController({ capture, upload, discard: () => {} });
     c.start();
-    jest.advanceTimersByTime(200);
+    jest.advanceTimersByTime(I);
     await flush();
-    jest.advanceTimersByTime(1800); // nine more ticks while the first upload hangs
+    jest.advanceTimersByTime(3 * I); // three more ticks while the first upload hangs
     await flush();
     expect(upload).toHaveBeenCalledTimes(1);
-    expect(c.stats.dropped).toBe(9);
+    expect(c.stats.dropped).toBe(3);
     pending.resolve();
     await flush();
     c.stop();
@@ -49,9 +49,9 @@ describe("CaptureController", () => {
     const upload = jest.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
     const c = new CaptureController({ capture: async () => "file://f.jpg", upload, discard });
     c.start();
-    jest.advanceTimersByTime(500);
+    jest.advanceTimersByTime(I);
     await flush();
-    jest.advanceTimersByTime(500);
+    jest.advanceTimersByTime(I);
     await flush();
     expect(c.stats).toMatchObject({ failed: 1, sent: 1 });
     expect(discard).toHaveBeenCalledTimes(2);
@@ -64,13 +64,13 @@ describe("CaptureController", () => {
     const discard = jest.fn();
     const c = new CaptureController({ capture: () => shot.promise, upload, discard });
     c.start();
-    jest.advanceTimersByTime(500);
+    jest.advanceTimersByTime(I);
     c.stop(); // e.g. app went to background mid-capture
     shot.resolve("file://late.jpg");
     await flush();
     expect(upload).not.toHaveBeenCalled();
     expect(discard).toHaveBeenCalledWith("file://late.jpg");
-    jest.advanceTimersByTime(5000);
+    jest.advanceTimersByTime(10 * I);
     expect(c.running).toBe(false);
   });
 });

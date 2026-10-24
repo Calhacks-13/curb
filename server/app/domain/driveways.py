@@ -331,6 +331,8 @@ class DrivewayService:
         now: datetime,
     ) -> Booking:
         current = await self._driveway(driveway_id)
+        if current.owner_id == driver_id:
+            raise PermissionDeniedError("owners cannot reserve their own driveway")
         if current.version != expected_version:
             raise VersionConflictError("driveway version is stale")
         if not is_available_now(current, now):

@@ -1,5 +1,5 @@
 import { buildDemoFixture } from "@/demo/fixtures";
-import { findOptions, mapZones } from "@/features/find/options";
+import { findOptions, mapPills, mapZones, myReservation } from "@/features/find/options";
 import { emptyParkingState, fromNearby } from "@/realtime/reducer";
 
 // 2 PM PDT: inside the demo driveway's 7 AM to 3 AM window.
@@ -50,5 +50,39 @@ describe("findOptions", () => {
     const ids = mapZones(stateAt(NOW).zones).map((z) => z.id);
     expect(ids).not.toContain("zone_demo_6");
     expect(ids).toContain("zone_demo_1");
+  });
+
+  describe("driveway ownership", () => {
+    const withDriveway = (patch: object) => {
+      const s = stateAt(NOW);
+      const [id, dw] = Object.entries(s.driveways)[0];
+      return { ...s, driveways: { ...s.driveways, [id]: { ...dw, ...patch } } };
+    };
+    const driveway = (state: ReturnType<typeof stateAt>, userId: string) =>
+      findOptions(state, NOW, from, userId).find((o) => o.kind === "driveway");
+
+    it("keeps someone else's booking on the map as a muted Booked pin, ranked last", () => {
+      const state = withDriveway({ state: "BOOKED", held_by_user_id: "driver_other" });
+      const options = findOptions(state, NOW, from, "driver_demo");
+      const o = options.find((x) => x.kind === "driveway")!;
+      expect(o).toMatchObject({ booked: true, title: "Booked driveway" });
+      expect(options[options.length - 1].id).toBe(o.id);
+      expect(mapPills([o])[0]).toMatchObject({ label: "Booked", muted: true });
+    });
+
+    it("pins the driver's own booking as their reservation", () => {
+      const state = withDriveway({ state: "BOOKED", held_by_user_id: "driver_demo" });
+      const options = findOptions(state, NOW, from, "driver_demo");
+      expect(myReservation(options)?.title).toBe("Your driveway");
+      expect(driveway(state, "driver_demo")?.booked).toBe(false);
+    });
+
+    it("marks the owner's listing as theirs, not reservable", () => {
+      const state = stateAt(NOW);
+      const owner = Object.values(state.driveways)[0].owner_id;
+      const o = driveway(state, owner)!;
+      expect(o).toMatchObject({ own: true, title: "Your listing" });
+      expect(mapPills([o])[0].label).toBe("Your listing");
+    });
   });
 });

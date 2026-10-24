@@ -58,6 +58,8 @@ export type Driveway = {
   availability_timezone: "America/Los_Angeles";
   state: DrivewayState;
   held_by_user_id: string | null;
+  /** The live server's summary of the hold or booking, when there is one. */
+  active_booking?: { id: string; state: BookingState; payment_status: string } | null;
   version: number;
 };
 
@@ -175,3 +177,20 @@ export const DEMO_IDS = {
   owner: "owner_demo",
   driveway: "driveway_demo_1",
 } as const;
+
+/** The checkout wallet the payment service pays from (spec 7.8). */
+export type WalletInfo = {
+  network: "base-sepolia";
+  payer: { name: string; address: string; usdc_balance: string; explorer_url: string };
+  payee: { name: string; address: string };
+};
+
+export type PaymentPhase = "approved" | "signed" | "settled" | "confirmed" | "failed" | "reconciliation_required";
+
+export type PaymentProgress = {
+  booking_id: string;
+  phase: PaymentPhase | null;
+  transaction_hash?: string | null;
+  explorer_url?: string | null;
+  error_code?: string | null;
+};

@@ -13,6 +13,8 @@ type Props = {
   driveway: Driveway;
   distanceM: number;
   holding: boolean;
+  /** The signed-in user owns this listing, so they can't reserve it. */
+  own?: boolean;
   error: string | null;
   onReserve: () => void;
   onClose: () => void;
@@ -30,8 +32,15 @@ export function DrivewayPhoto({ uri }: { uri: string | null }) {
 }
 
 /** Price, photo, distance and window first; Reserve only places a hold. */
-export function DrivewayDetailSheet({ driveway, distanceM, holding, error, onReserve, onClose }: Props) {
-  const available = driveway.state === "AVAILABLE";
+export function DrivewayDetailSheet({ driveway, distanceM, holding, own = false, error, onReserve, onClose }: Props) {
+  const available = driveway.state === "AVAILABLE" && !own;
+  const blockedLabel = own
+    ? "Your listing. Manage it in Host"
+    : driveway.state === "BOOKED"
+      ? "Booked by another driver"
+      : driveway.state === "HELD"
+        ? "On hold for another driver"
+        : "Not available right now";
   return (
     <View>
       <View style={styles.header}>
@@ -81,7 +90,7 @@ export function DrivewayDetailSheet({ driveway, distanceM, holding, error, onRes
         {holding ? (
           <ActivityIndicator color={ink.white} />
         ) : (
-          <Text style={styles.ctaText}>{available ? `Reserve for ${formatUsdc(driveway.price_usdc)}` : "On hold for another driver"}</Text>
+          <Text style={styles.ctaText}>{available ? `Reserve for ${formatUsdc(driveway.price_usdc)}` : blockedLabel}</Text>
         )}
       </Pressable>
     </View>

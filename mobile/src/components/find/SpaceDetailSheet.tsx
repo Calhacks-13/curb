@@ -38,9 +38,21 @@ function Stat({ value, label }: { value: string; label: string }) {
   );
 }
 
+/** True when the backend sent a rule object with nothing read off the sign yet. */
+export function isBlankRule(rule: SpaceDetail["rule"]): boolean {
+  if (!rule) return true;
+  return !rule.summary?.trim() && !rule.max_minutes && !rule.next_change_at && !rule.payment_text && !rule.permit_text;
+}
+
 function RuleCard({ detail }: { detail: SpaceDetail }) {
   const rule = detail.rule;
-  if (!rule) return <Text style={styles.muted}>No validated rule for this curb.</Text>;
+  if (!rule || isBlankRule(rule))
+    return (
+      <View style={styles.ruleCard}>
+        <Text style={styles.ruleSummary}>No sign read for this curb yet</Text>
+        <Text style={styles.muted}>Check the posted signs before you park.</Text>
+      </View>
+    );
   const rows: [string, string][] = [];
   if (rule.max_minutes) rows.push(["Max stay", formatMinutes(rule.max_minutes)]);
   if (rule.next_change_at) {
@@ -51,7 +63,7 @@ function RuleCard({ detail }: { detail: SpaceDetail }) {
   if (rule.permit_text) rows.push(["Permit", rule.permit_text]);
   return (
     <View style={styles.ruleCard}>
-      <Text style={styles.ruleSummary}>{rule.summary}</Text>
+      {!!rule.summary?.trim() && <Text style={styles.ruleSummary}>{rule.summary}</Text>}
       {rows.length > 0 && <View style={styles.divider} />}
       {rows.map(([k, v]) => (
         <View key={k} style={styles.ruleRow}>

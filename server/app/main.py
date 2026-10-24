@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +11,7 @@ from app.azure import cosmos, signalr
 from app.config import settings
 from app.routes.bookings import router as bookings_router
 from app.routes.driveways import router as driveways_router
+from app.wiring import build_driveway_service, resolve_actor
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -26,6 +28,7 @@ async def lifespan(app: FastAPI):
     load_depth_model()
     await cosmos.init()
     await signalr.init()
+    app.state.driveway_service = build_driveway_service(cosmos._mem_driveways, datetime.now(UTC))
     yield
     # Shutdown
     from app.cv.sign_reader import close_client
@@ -43,6 +46,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def attach_actor(request: Request, call_next):
+    actor = resolve_actor(request.headers.get("authorization"), settings.payment_service_token)
+    if actor is not None:
+        request.state.actor = actor
+    return await call_next(request)
+
 
 # Wire routers
 from app.routes.ws import router as ws_router

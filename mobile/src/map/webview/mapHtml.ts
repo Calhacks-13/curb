@@ -45,6 +45,8 @@ const MARKER_CSS = `
   .chip-driveway { background: ${status.driveway}; color: ${ink.white}; }
   .chip-badge { position: absolute; right: -4px; bottom: -4px; width: 11px; height: 11px; border-radius: 50%;
     background: ${ink.white}; color: ${status.driveway}; display: grid; place-items: center; box-shadow: 0 0 0 1.5px ${status.driveway}; }
+  .pin.is-muted .callout { background: ${ink.grey100}; color: ${ink.grey500}; box-shadow: none; }
+  .pin.is-muted .chip-driveway { background: ${ink.grey300}; }
   .pin.is-selected .callout { background: ${ink.black}; color: ${ink.white}; }
   .pin.is-selected .tail { border-top-color: ${ink.black}; }
   /* Night: callouts invert so the selected one is the brightest thing on the map. */

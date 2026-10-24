@@ -15,11 +15,11 @@ jest.mock("expo-secure-store", () => {
 // Expo Router keeps its in-memory URL per module registry, so each flow gets its own file.
 const { mockStore } = jest.requireMock("expo-secure-store") as { mockStore: Map<string, string> };
 
-describe("demo profile picker: restore", () => {
-  it("shows the picker on cold launch even when a profile was saved", async () => {
+describe("demo profile picker: every launch", () => {
+  it("shows the picker even when a profile was saved on this device", async () => {
     mockStore.set("curb.demo-profile", "owner");
     await renderRouter(sessionRoutes, { initialUrl: "/" });
-    expect(await screen.findByText("Continue as Driver")).toBeTruthy();
-    expect(screen.getByText("Continue as Driveway Owner")).toBeTruthy();
+    expect(await screen.findByLabelText("Continue as Driver")).toBeTruthy();
+    expect(screen.queryByText("Host screen")).toBeNull();
   });
 });
