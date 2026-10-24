@@ -21,6 +21,8 @@ export type FindOption = {
   position: LngLat;
   ring: LngLat[];
   distanceM: number;
+  /** A driveway this driver holds or has booked. */
+  mine?: boolean;
 };
 
 const RANK: Record<StallKind, number> = { fresh: 0, driveway: 1, aging: 2, stale: 3 };
@@ -81,6 +83,7 @@ export function findOptions(state: ParkingState, now: number, from: LngLat, user
       position: dw.location.coordinates,
       ring: drivewayRing(dw.location.coordinates),
       distanceM: d,
+      mine,
     };
   });
   return [...curb, ...driveways].sort((a, b) => RANK[a.kind] - RANK[b.kind] || a.distanceM - b.distanceM);
@@ -120,13 +123,13 @@ export function mapPills(options: FindOption[]): MapPill[] {
   return options.map((o) => ({
     id: o.id,
     kind: o.kind,
-    // Non-breaking spaces keep the separator from collapsing in the callout.
-    label: o.kind === "driveway" ? `${o.trailing}\u00a0·\u00a0Reserve` : PILL_LABEL[o.kind],
+    label: o.kind !== "driveway" ? PILL_LABEL[o.kind] : o.mine ? "Your driveway" : `${o.trailing} · Reserve`,
     position: o.position,
+    mine: o.mine,
   }));
 }
 
 /** Changes only when what the map draws changes (not every clock tick). */
 export function mapSignature(options: FindOption[]): string {
-  return options.map((o) => `${o.id}:${o.kind}`).join("|");
+  return options.map((o) => `${o.id}:${o.kind}${o.mine ? ":mine" : ""}`).join("|");
 }

@@ -64,7 +64,7 @@ export function NearbyList({ options, load, locating = false, onOpen, onRetry }:
             accessibilityHint="Opens details"
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
           >
-            <OptionIcon kind={o.kind} />
+            <OptionIcon kind={o.kind} mine={o.mine} />
             <View style={styles.rowText}>
               <Text style={styles.rowTitle}>{o.title}</Text>
               <Text style={styles.rowDetail} numberOfLines={1}>

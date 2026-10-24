@@ -201,12 +201,23 @@ export const MAP_RUNTIME_JS = String.raw`
 
   // --- callouts ---------------------------------------------------------------------
 
-  var LOCK = '<svg width="9" height="10" viewBox="0 0 11 12" aria-hidden="true"><rect x="1" y="5" width="9" height="7" rx="1.6" fill="currentColor"/><path d="M3 5V3.6a2.5 2.5 0 0 1 5 0V5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
+  var HOUSE = '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.1 11.2 5.5V11.2H7.6V8H4.4V11.2H0.8V5.5Z" fill="currentColor"/></svg>';
+  var CHECK = '<svg width="7" height="7" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5.2 4.2 7.4 8.2 2.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-  /** Shape per meaning: solid dot, ringed dot, hollow ring, locked square. */
-  function chipHtml(kind) {
-    if (kind === "driveway") return '<span class="chip chip-driveway">' + LOCK + "</span>";
-    return '<span class="chip chip-' + kind + '"></span>';
+  /** Parking-sign chips: solid P, outlined P, dashed P; driveways get a house (with a check once it's yours). */
+  function chipHtml(kind, mine) {
+    if (kind === "driveway") {
+      return '<span class="chip chip-driveway">' + HOUSE + (mine ? '<span class="chip-badge">' + CHECK + "</span>" : "") + "</span>";
+    }
+    return '<span class="chip chip-p chip-' + kind + '">P</span>';
+  }
+
+  function escapeHtml(t) {
+    return String(t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
+  }
+  /** " · " becomes a spaced separator element; the font's middle dot eats a plain space. */
+  function labelHtml(label) {
+    return escapeHtml(label).split(" · ").join('<span class="sep">·</span>');
   }
 
   var pills = {}; // id -> { marker, el }
@@ -226,15 +237,16 @@ export const MAP_RUNTIME_JS = String.raw`
           post({ type: "spotTapped", id: p.id });
         });
         var marker = new mapboxgl.Marker({ element: el, anchor: "bottom" }).setLngLat(p.position).addTo(map);
-        entry = pills[p.id] = { marker: marker, el: el, kind: null, label: null };
+        entry = pills[p.id] = { marker: marker, el: el, kind: null, label: null, mine: null };
       }
       entry.marker.setLngLat(p.position);
-      if (entry.kind !== p.kind || entry.label !== p.label) {
+      if (entry.kind !== p.kind || entry.label !== p.label || entry.mine !== !!p.mine) {
         entry.kind = p.kind;
         entry.label = p.label;
+        entry.mine = !!p.mine;
         entry.el.dataset.kind = p.kind;
         entry.el.setAttribute("aria-label", p.label);
-        entry.el.querySelector(".callout").innerHTML = chipHtml(p.kind) + "<span>" + p.label + "</span>";
+        entry.el.querySelector(".callout").innerHTML = chipHtml(p.kind, p.mine) + "<span>" + labelHtml(p.label) + "</span>";
       }
       entry.el.classList.toggle("is-selected", p.id === selected);
     });

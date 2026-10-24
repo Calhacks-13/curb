@@ -30,26 +30,30 @@ const MARKER_CSS = `
     background: ${ink.white}; color: ${ink.black}; font: 700 14px/1 Overpass, -apple-system, sans-serif;
     white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
   .callout span:last-child { padding-top: 2px; }
+  .callout .sep { margin: 0 5px; color: inherit; opacity: 0.6; }
   .tail { width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
     border-top: 6px solid ${ink.white}; margin-top: -1px; filter: drop-shadow(0 2px 1px rgba(0,0,0,.08)); }
   .pin:focus-visible .callout { outline: 2px solid ${ink.black}; outline-offset: 2px; }
-  .chip { display: inline-grid; place-items: center; width: 16px; height: 16px; box-sizing: border-box; flex: none; }
-  /* Shapes carry meaning alongside color: solid dot, ringed dot, hollow dashed ring, locked square. */
-  .chip-fresh { border-radius: 50%; background: ${status.fresh}; }
-  .chip-aging { border-radius: 50%; border: 2.5px solid ${status.aging}; }
-  .chip-aging::after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: ${status.aging}; }
-  .chip-stale { border-radius: 50%; border: 2px dashed ${status.stale}; }
-  .chip-driveway { border-radius: 4px; background: ${status.driveway}; color: ${ink.white}; width: 18px; height: 18px; }
+  .chip { position: relative; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 5px;
+    box-sizing: border-box; flex: none; }
+  /* Parking-sign family: same P, told apart by fill treatment, color and the label text. */
+  .chip-p { font: 800 12px/1 Overpass, -apple-system, sans-serif; padding-top: 2px; }
+  .chip-fresh { background: ${status.fresh}; color: ${ink.white}; }
+  .chip-aging { border: 2px solid ${status.aging}; color: ${status.aging}; }
+  .chip-stale { border: 1.5px dashed ${status.stale}; color: ${status.stale}; }
+  .chip-driveway { background: ${status.driveway}; color: ${ink.white}; }
+  .chip-badge { position: absolute; right: -4px; bottom: -4px; width: 11px; height: 11px; border-radius: 50%;
+    background: ${ink.white}; color: ${status.driveway}; display: grid; place-items: center; box-shadow: 0 0 0 1.5px ${status.driveway}; }
   .pin.is-selected .callout { background: ${ink.black}; color: ${ink.white}; }
   .pin.is-selected .tail { border-top-color: ${ink.black}; }
   /* Night: callouts invert so the selected one is the brightest thing on the map. */
   .night .callout { background: ${ink.grey900}; color: ${ink.white}; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
   .night .tail { border-top-color: ${ink.grey900}; }
-  .night .chip-fresh { background: ${status.freshNight}; }
-  .night .chip-aging { border-color: ${status.agingNight}; }
-  .night .chip-aging::after { background: ${status.agingNight}; }
-  .night .chip-stale { border-color: ${status.staleNight}; }
+  .night .chip-fresh { background: ${status.freshNight}; color: ${ink.black}; }
+  .night .chip-aging { border-color: ${status.agingNight}; color: ${status.agingNight}; }
+  .night .chip-stale { border-color: ${status.staleNight}; color: ${status.staleNight}; }
   .night .chip-driveway { background: ${status.drivewayNight}; }
+  .night .chip-badge { color: ${status.drivewayNight}; box-shadow: 0 0 0 1.5px ${status.drivewayNight}; }
   .night .pin.is-selected .callout { background: ${ink.white}; color: ${ink.black}; }
   .night .pin.is-selected .tail { border-top-color: ${ink.white}; }
 `;

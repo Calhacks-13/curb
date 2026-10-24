@@ -54,7 +54,7 @@ export function SpaceDetailSheet({ option, ageSeconds, load, routing, onRoute, o
   return (
     <View>
       <View style={styles.header}>
-        <OptionChip kind={option.kind} size={18} />
+        <OptionChip kind={option.kind} size={20} />
         <Text style={styles.title} accessibilityRole="header">
           {option.title}
         </Text>

@@ -26,7 +26,7 @@ export function RouteReplacementPrompt({ replacement, onAccept, onKeep }: Props)
       {alternative ? (
         <>
           <View style={styles.alt}>
-            <OptionChip kind={alternative.kind} size={16} />
+            <OptionChip kind={alternative.kind} size={18} />
             <View style={styles.altText}>
               <Text style={styles.altTitle}>{alternative.title}</Text>
               <Text style={styles.altDetail}>{alternative.detail}</Text>

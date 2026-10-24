@@ -49,7 +49,7 @@ export function MapLegend() {
           {ROWS.map((r) => (
             <View key={r.kind} style={styles.row}>
               <View style={styles.glyph}>
-                <OptionChip kind={r.kind} size={14} />
+                <OptionChip kind={r.kind} size={16} />
               </View>
               <View style={styles.text}>
                 <Text style={styles.label}>{r.label}</Text>
@@ -57,6 +57,15 @@ export function MapLegend() {
               </View>
             </View>
           ))}
+          <View style={styles.row}>
+            <View style={styles.glyph}>
+              <OptionChip kind="driveway" size={16} mine />
+            </View>
+            <View style={styles.text}>
+              <Text style={styles.label}>Your driveway</Text>
+              <Text style={styles.note}>on hold or booked for you</Text>
+            </View>
+          </View>
           <Text style={styles.footer}>Curb spots aren&apos;t reserved. Only driveways are guaranteed.</Text>
         </View>
       )}

@@ -35,7 +35,7 @@ export function DrivewayDetailSheet({ driveway, distanceM, holding, error, onRes
   return (
     <View>
       <View style={styles.header}>
-        <OptionChip kind="driveway" size={16} />
+        <OptionChip kind="driveway" size={20} />
         <Text style={styles.title} accessibilityRole="header">
           Private driveway
         </Text>

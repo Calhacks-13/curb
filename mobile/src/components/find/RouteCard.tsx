@@ -29,7 +29,7 @@ export function RouteCard({ route, target, targetTitle, ageSeconds, onEnd }: Pro
   return (
     <View>
       <View style={styles.header}>
-        {target && <OptionChip kind={target.kind} size={16} />}
+        {target && <OptionChip kind={target.kind} size={18} mine={target.mine} />}
         <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
           Route to {targetTitle.toLowerCase()}
         </Text>

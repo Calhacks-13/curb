@@ -4,40 +4,63 @@ import { StyleSheet, Text, View } from "react-native";
 import { font, ink, status } from "@/config/tokens";
 import type { StallKind } from "@/map/curbLayers";
 
-/** Native twin of the map callout chips: same shape and color per meaning. */
-export function OptionChip({ kind, size = 16 }: { kind: StallKind; size?: number }) {
+type ChipProps = { kind: StallKind; size?: number; mine?: boolean };
+
+/**
+ * Native twin of the map callout chips. Curb states share a parking-sign "P",
+ * told apart by fill treatment, color and label; driveways get a house, with a
+ * check badge once it's yours.
+ */
+export function OptionChip({ kind, size = 18, mine = false }: ChipProps) {
+  const box = { width: size, height: size, borderRadius: Math.round(size * 0.28) };
+
   if (kind === "driveway") {
+    const badge = Math.round(size * 0.62);
     return (
-      <View style={[styles.square, { width: size + 4, height: size + 4 }]}>
-        <SymbolView name="lock.fill" size={size * 0.62} tintColor={ink.white} fallback={<Text style={styles.lock}>$</Text>} />
+      <View style={[box, styles.center, { backgroundColor: status.driveway }]}>
+        <SymbolView name="house.fill" size={size * 0.6} tintColor={ink.white} fallback={<Text style={[styles.p, { fontSize: size * 0.6 }]}>H</Text>} />
+        {mine && (
+          <View style={[styles.badge, { width: badge, height: badge, borderRadius: badge / 2, right: -badge / 3, bottom: -badge / 3 }]}>
+            <SymbolView name="checkmark" size={badge * 0.6} weight="heavy" tintColor={status.driveway} fallback={null} />
+          </View>
+        )}
       </View>
     );
   }
-  const r = { width: size, height: size, borderRadius: size / 2 };
-  if (kind === "fresh") return <View style={[r, { backgroundColor: status.fresh }]} />;
-  if (kind === "aging") {
-    return (
-      <View style={[r, styles.ring, { borderColor: status.aging }]}>
-        <View style={[styles.dot, { backgroundColor: status.aging }]} />
-      </View>
-    );
-  }
-  return <View style={[r, styles.ring, { borderColor: status.stale, borderStyle: "dashed", borderWidth: 2 }]} />;
+
+  const look =
+    kind === "fresh"
+      ? { backgroundColor: status.fresh, color: ink.white }
+      : kind === "aging"
+        ? { borderWidth: 2, borderColor: status.aging, color: status.aging }
+        : { borderWidth: 1.5, borderColor: status.stale, borderStyle: "dashed" as const, color: status.stale };
+  const { color, ...frame } = look;
+  return (
+    <View style={[box, styles.center, frame]}>
+      <Text style={[styles.p, { color, fontSize: size * 0.66 }]}>P</Text>
+    </View>
+  );
 }
 
 /** Row icon: a light tile holding the chip. */
-export function OptionIcon({ kind }: { kind: StallKind }) {
+export function OptionIcon({ kind, mine }: { kind: StallKind; mine?: boolean }) {
   return (
     <View style={styles.tile}>
-      <OptionChip kind={kind} size={18} />
+      <OptionChip kind={kind} size={22} mine={mine} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   tile: { width: 40, height: 40, borderRadius: 10, backgroundColor: ink.grey100, alignItems: "center", justifyContent: "center" },
-  square: { borderRadius: 5, backgroundColor: status.driveway, alignItems: "center", justifyContent: "center" },
-  ring: { borderWidth: 2.5, alignItems: "center", justifyContent: "center" },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  lock: { fontFamily: font.bold, fontSize: 11, color: ink.white },
+  center: { alignItems: "center", justifyContent: "center" },
+  p: { fontFamily: font.extrabold, color: ink.white, marginTop: 2 },
+  badge: {
+    position: "absolute",
+    backgroundColor: ink.white,
+    borderWidth: 1.5,
+    borderColor: status.driveway,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
