@@ -4,6 +4,9 @@ param location string
 @description('Resource ID of the existing Container Apps managed environment.')
 param managedEnvironmentId string
 
+@description('Default DNS domain of the existing Container Apps managed environment.')
+param managedEnvironmentDefaultDomain string
+
 @description('User-assigned identity used to pull images from ACR.')
 param registryIdentityId string
 
@@ -71,7 +74,6 @@ param cdpOwnerWalletAddress string
 @secure()
 param baseSepoliaRpcUrl string
 
-var managedEnvironmentDefaultDomain = reference(managedEnvironmentId, '2024-03-01').properties.defaultDomain
 var apiBaseUrl = 'https://${apiAppName}.${managedEnvironmentDefaultDomain}'
 var paymentBaseUrl = 'https://${paymentAppName}.${managedEnvironmentDefaultDomain}'
 
@@ -253,7 +255,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       scale: {
         minReplicas: 1
-        maxReplicas: 2
+        maxReplicas: 1
       }
     }
   }

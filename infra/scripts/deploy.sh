@@ -118,6 +118,51 @@ deployment_output() {
     --only-show-errors
 }
 
+restart_active_revision() {
+  local app_name="$1"
+  local revision_name
+
+  revision_name="$(az containerapp revision list \
+    --name "$app_name" \
+    --resource-group "$resource_group" \
+    --query '[?properties.active].name | [0]' \
+    --output tsv \
+    --only-show-errors)"
+
+  if [[ -z "$revision_name" ]]; then
+    echo "deploy: no active revision found for $app_name" >&2
+    exit 1
+  fi
+
+  az containerapp revision restart \
+    --name "$app_name" \
+    --resource-group "$resource_group" \
+    --revision "$revision_name" \
+    --only-show-errors \
+    --output none
+}
+
+wait_for_health() {
+  local service_name="$1"
+  local base_url="$2"
+  local attempt
+
+  for attempt in {1..60}; do
+    if curl --fail --silent --show-error \
+      --connect-timeout 5 \
+      --max-time 10 \
+      "$base_url/health" >/dev/null; then
+      return
+    fi
+    if [[ "$attempt" -lt 60 ]]; then
+      sleep 10
+    fi
+  done
+
+  echo "deploy: $service_name did not become healthy after revision restart" >&2
+  exit 1
+}
+
 registry_name="$(deployment_output registryName)"
 registry_login_server="$(deployment_output registryLoginServer)"
 image_tag="${CURB_IMAGE_TAG:-$(git -C "$repo_root" rev-parse --short=12 HEAD)}"
@@ -161,15 +206,23 @@ az deployment group create \
 
 api_url="$(deployment_output apiUrl)"
 payment_url="$(deployment_output paymentUrl)"
+api_app_name="$(deployment_output apiAppName)"
+payment_app_name="$(deployment_output paymentAppName)"
 cosmos_endpoint="$(deployment_output cosmosEndpoint)"
 cosmos_database="$(deployment_output cosmosDatabase)"
 cosmos_container="$(deployment_output cosmosContainer)"
 web_pubsub_hub="$(deployment_output webPubSubHub)"
 
-if [[ -z "$api_url" || -z "$payment_url" ]]; then
+if [[ -z "$api_url" || -z "$payment_url" || -z "$api_app_name" || -z "$payment_app_name" ]]; then
   echo "deploy: Container App URLs were not produced" >&2
   exit 1
 fi
+
+echo "deploy: restarting active revisions so updated secrets take effect"
+restart_active_revision "$api_app_name"
+restart_active_revision "$payment_app_name"
+wait_for_health "API" "$api_url"
+wait_for_health "payment service" "$payment_url"
 
 mkdir -p "$(dirname "$output_file")"
 umask 077

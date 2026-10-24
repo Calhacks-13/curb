@@ -30,6 +30,14 @@ if [[ "$*" == *"deployment group show"* ]]; then
     *) printf '%s\n' 'unexpected deployment output query' >&2; exit 1 ;;
   esac
 fi
+
+if [[ "$*" == *"containerapp revision list"* ]]; then
+  case "$*" in
+    *"--name curb-demo-api"*) printf '%s\n' 'curb-demo-api--active' ;;
+    *"--name curb-demo-pay"*) printf '%s\n' 'curb-demo-pay--active' ;;
+    *) printf '%s\n' 'unexpected Container App revision query' >&2; exit 1 ;;
+  esac
+fi
 FAKE_AZ
 
 cat >"$fake_bin/curl" <<'FAKE_CURL'
@@ -77,6 +85,14 @@ grep -q '^PAYMENT_SERVICE_BASE_URL=https://payments.example.test$' "$CURB_DEPLOY
 grep -q '^EXPO_PUBLIC_WEB_PUBSUB_HUB=curb$' "$CURB_DEPLOY_OUTPUT_FILE"
 grep -q 'acr build.*--image curb-api:test-sha.*--file Dockerfile.* \.$' "$FAKE_AZ_LOG"
 grep -q 'acr build.*--image curb-payments:test-sha.*--file payments/Dockerfile.* \.$' "$FAKE_AZ_LOG"
+grep -q 'containerapp revision restart.*--name curb-demo-api.*--revision curb-demo-api--active' "$FAKE_AZ_LOG"
+grep -q 'containerapp revision restart.*--name curb-demo-pay.*--revision curb-demo-pay--active' "$FAKE_AZ_LOG"
+
+api_restart_line="$(grep -n 'containerapp revision restart.*--name curb-demo-api' "$FAKE_AZ_LOG" | cut -d: -f1)"
+payment_restart_line="$(grep -n 'containerapp revision restart.*--name curb-demo-pay' "$FAKE_AZ_LOG" | cut -d: -f1)"
+last_deploy_line="$(grep -n 'deployment group create.*provisionApps=true' "$FAKE_AZ_LOG" | tail -1 | cut -d: -f1)"
+test "$api_restart_line" -gt "$last_deploy_line"
+test "$payment_restart_line" -gt "$last_deploy_line"
 
 if grep -E -q 'test-anthropic-value|test-payment-value|test-api-value|test-agentverse-value|test-cdp-key-value|test-wallet-value|rpc\.example\.test/test-token' "$run_log" "$CURB_DEPLOY_OUTPUT_FILE" "$FAKE_AZ_LOG"; then
   echo 'test: deploy exposed a secret' >&2

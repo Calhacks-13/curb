@@ -139,6 +139,7 @@ module containerApps 'modules/container-apps.bicep' = if (provisionApps) {
     corsAllowedOrigins: corsAllowedOrigins
     curbApiServiceToken: curbApiServiceToken
     location: location
+    managedEnvironmentDefaultDomain: managedEnvironment.properties.defaultDomain
     managedEnvironmentId: managedEnvironment.id
     paymentAppName: paymentAppName
     paymentImage: paymentImage
