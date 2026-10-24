@@ -2,6 +2,8 @@
 // applied only when its entity_version is newer than what we already hold, so
 // duplicate or out-of-order delivery can never roll an entity back.
 
+import { toLaHhmm } from "@/lib/laTime";
+
 import type { Booking, CurbZone, Driveway, Garage, NearbyParkingResponse, ParkingSpace, RealtimeEvent } from "@/api/types";
 
 export type ParkingState = {
@@ -44,17 +46,22 @@ export function fromNearby(prev: ParkingState, res: NearbyParkingResponse): Park
 
 /**
  * Server events carry the contract's `{ driveway: DrivewayView }`, whose
- * availability is full timestamps; the app keeps its own HH:MM window, so only
- * the hold state is taken from it.
+ * availability is full timestamps; the app keeps LA "HH:MM", so those are
+ * converted on the way in.
  */
 function contractDriveway(payload: object): Partial<Driveway> | null {
   const view = (payload as { driveway?: Record<string, unknown> }).driveway;
   if (!view || typeof view !== "object") return null;
-  return {
+  const out: Partial<Driveway> = {
     state: view.state as Driveway["state"],
     held_by_user_id: (view.held_by_user_id as string | null) ?? null,
     version: view.version as number,
   };
+  // Owner edits change price and window; convert the window to LA "HH:MM".
+  if (typeof view.price_usdc === "string") out.price_usdc = view.price_usdc;
+  if (typeof view.availability_start === "string") out.availability_start = toLaHhmm(view.availability_start);
+  if (typeof view.availability_end === "string") out.availability_end = toLaHhmm(view.availability_end);
+  return out;
 }
 
 export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): ParkingState {
