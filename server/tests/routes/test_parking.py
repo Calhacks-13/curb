@@ -168,22 +168,6 @@ def test_local_demo_seed_refreshes_observations_without_changing_fixture_data(se
     assert fixture.nearby.spaces[0].last_observed_at == datetime(2026, 10, 24, 0, 59, 40, tzinfo=UTC)
 
 
-def test_local_demo_can_follow_the_search_origin(seed):
-    from app.domain.parking import ParkingService
-    from app.models.domain import GeoPoint
-    from app.repositories.memory import InMemoryParkingRepository
-    from app.seed.loader import load_seed
-
-    repository = InMemoryParkingRepository()
-    asyncio.run(load_seed(repository, PublicSeedFixture.model_validate(seed), refresh_observations=True, now=NOW))
-    origin = GeoPoint(type="Point", coordinates=(-122.44935, 37.80279))
-
-    nearby = asyncio.run(ParkingService(repository, demo_follow_origin=True).nearby(origin, 804.672, NOW))
-
-    assert {space.id for space in nearby.spaces} == {"space_demo_1", "space_demo_2", "space_demo_3"}
-    assert all(space.distance_m <= 804.672 for space in nearby.spaces)
-
-
 def test_sessions_are_idempotent_validate_profiles_and_do_not_refresh_seed(seed):
     from app.seed.loader import load_seed
 

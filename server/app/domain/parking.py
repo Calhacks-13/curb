@@ -4,55 +4,17 @@ from app.domain.driveways import DrivewayService, NotFoundError
 from app.domain.freshness import freshness_for
 from app.domain.ranking import distance_m, distance_to_line_m, rank_options
 from app.models.domain import (
-    CurbZoneView, DrivewayState, GeoPoint, NearbyParkingResponse, ParkingSpaceView, SpaceDetail,
+    DrivewayState, GeoPoint, NearbyParkingResponse, ParkingSpaceView, SpaceDetail,
 )
 from app.repositories.protocols import ParkingRepository
 
 
 class ParkingService:
     def __init__(self, repository: ParkingRepository, minimum_confidence: float = 0.8,
-                 driveway_service: DrivewayService | None = None, demo_follow_origin: bool = False):
+                 driveway_service: DrivewayService | None = None):
         self.repository = repository
         self.minimum_confidence = minimum_confidence
         self.driveway_service = driveway_service
-        self.demo_follow_origin = demo_follow_origin
-
-    @staticmethod
-    def _recenter_demo(
-        zones: list[CurbZoneView], spaces: list[ParkingSpaceView], origin: GeoPoint
-    ) -> tuple[list[CurbZoneView], list[ParkingSpaceView]]:
-        """Translate local-only seed geometry to the active device search area."""
-        if not zones:
-            return zones, spaces
-        anchor_lng, anchor_lat = zones[0].geometry.coordinates[0]
-        target_lng, target_lat = origin.coordinates
-        delta_lng, delta_lat = target_lng - anchor_lng, target_lat - anchor_lat
-
-        def point(point: GeoPoint) -> GeoPoint:
-            lng, lat = point.coordinates
-            return point.model_copy(update={"coordinates": (lng + delta_lng, lat + delta_lat)})
-
-        shifted_zones = [
-            zone.model_copy(update={
-                "geometry": zone.geometry.model_copy(update={
-                    "coordinates": [(lng + delta_lng, lat + delta_lat) for lng, lat in zone.geometry.coordinates]
-                })
-            })
-            for zone in zones
-        ]
-        shifted_spaces = [
-            space.model_copy(update={
-                "location": point(space.location),
-                "stall_geometry": space.stall_geometry.model_copy(update={
-                    "coordinates": [
-                        [(lng + delta_lng, lat + delta_lat) for lng, lat in ring]
-                        for ring in space.stall_geometry.coordinates
-                    ]
-                }),
-            })
-            for space in spaces
-        ]
-        return shifted_zones, shifted_spaces
 
     def _space_view(self, space: ParkingSpaceView, now: datetime, distance: float = 0):
         freshness = freshness_for(space.last_observed_at, now) if space.last_observed_at else None
@@ -64,15 +26,11 @@ class ParkingService:
     async def nearby(
         self, origin: GeoPoint, radius_m: float, now: datetime, viewer_id: str | None = None
     ) -> NearbyParkingResponse:
-        all_zones = await self.repository.list_zones()
-        all_spaces = await self.repository.list_spaces()
-        if self.demo_follow_origin:
-            all_zones, all_spaces = self._recenter_demo(all_zones, all_spaces, origin)
-        zones = [zone for zone in all_zones
+        zones = [zone for zone in await self.repository.list_zones()
                  if distance_to_line_m(origin, zone.geometry) <= radius_m]
         by_id = {zone.id: zone for zone in zones}
         spaces = []
-        for space in all_spaces:
+        for space in await self.repository.list_spaces():
             zone = by_id.get(space.zone_id)
             if zone is None or zone.legal_status_now != "LEGAL" or zone.sign_rule_id is None:
                 continue

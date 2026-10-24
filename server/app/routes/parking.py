@@ -26,9 +26,7 @@ async def nearby_parking(
     now: datetime = Depends(get_clock),
 ):
     return await ParkingService(
-        repository,
-        driveway_service=getattr(request.app.state, "driveway_service", None),
-        demo_follow_origin=getattr(request.app.state, "local_demo", False),
+        repository, driveway_service=getattr(request.app.state, "driveway_service", None)
     ).nearby(
         GeoPoint(type="Point", coordinates=(lng, lat)), radius_m, now, viewer_id=user.id
     )
