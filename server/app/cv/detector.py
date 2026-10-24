@@ -19,11 +19,12 @@ import torch
 _orig_load = torch.load
 torch.load = lambda *a, **kw: _orig_load(*a, **{**kw, "weights_only": False})
 
-from ultralytics import YOLO
+import logging
+from ultralytics import YOLO, YOLOWorld
 
 from app.config import settings
 from app.models import VehicleDetection, SignDetection, RawDetection, GapMeasurement
-from app.cv.depth import estimate_depth, measure_gap_width_meters, is_available as depth_is_available
+from app.cv.depth import estimate_depth, measure_gap_width_meters, is_available as depth_is_available, is_metric as depth_is_metric
 
 # Vehicle class IDs in COCO: car=2, motorcycle=3, bus=5, truck=7
 VEHICLE_CLASSES = {2, 3, 5, 7}
@@ -55,15 +56,39 @@ def get_vehicle_model() -> YOLO:
     return _vehicle_model
 
 
+logger = logging.getLogger(__name__)
+
+
 def get_sign_model() -> YOLO | None:
+    """Load sign model: fine-tuned first, then YOLO-World open-vocabulary fallback."""
     global _sign_model, _sign_model_available
-    if _sign_model_available is None:
-        _sign_model_available = os.path.exists(settings.sign_model_path)
-    if not _sign_model_available:
-        return None
-    if _sign_model is None:
-        _sign_model = YOLO(settings.sign_model_path)
-    return _sign_model
+    if _sign_model_available is not None:
+        return _sign_model if _sign_model_available else None
+
+    # Try fine-tuned sign model first
+    if os.path.exists(settings.sign_model_path):
+        try:
+            _sign_model = YOLO(settings.sign_model_path)
+            _sign_model_available = True
+            logger.info("Loaded fine-tuned sign model: %s", settings.sign_model_path)
+            return _sign_model
+        except Exception as e:
+            logger.warning("Failed to load fine-tuned sign model: %s", e)
+
+    # Fallback: YOLO-World open-vocabulary
+    if os.path.exists(settings.sign_world_model_path):
+        try:
+            _sign_model = YOLOWorld(settings.sign_world_model_path)
+            _sign_model.set_classes(settings.sign_world_classes)
+            _sign_model_available = True
+            logger.info("Loaded YOLO-World sign model: %s with classes %s",
+                        settings.sign_world_model_path, settings.sign_world_classes)
+            return _sign_model
+        except Exception as e:
+            logger.warning("Failed to load YOLO-World sign model: %s", e)
+
+    _sign_model_available = False
+    return None
 
 
 def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float | None = None) -> dict:
@@ -198,37 +223,44 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float
     else:
         gap_bboxes = _gaps_from_bboxes(vehicles, img_w, img_h)
 
-    # Depth estimation for gap sizing
+    # Depth estimation for gap sizing + viewer visualization
     depth_map = None
+    bev = None  # reused for both gap measurement and viz
     gap_measurements: list[GapMeasurement] = []
-    if depth_is_available() and gap_bboxes:
+    if depth_is_available():
         depth_map = estimate_depth(image)
-        if depth_map is not None:
-            used_depth = True
-            # Apply BEV if we have camera pitch — re-find gaps in top-down view
-            bev_masks = None
-            if used_segmentation and vehicle_masks is not None and abs(camera_pitch) > 1.0:
-                bev_masks = _perspective_to_bev(vehicle_masks, camera_pitch, img_w, img_h)
+    if depth_map is not None:
+        used_depth = True
 
-            # Use BEV-based gap bboxes when available (more accurate top-down geometry)
-            measure_bboxes = gap_bboxes
-            measure_width = img_w
-            if bev_masks is not None and bev_masks.any():
-                bev_size = settings.bev_output_size
-                bev_gap_bboxes = _gaps_from_segmentation(bev_masks, bev_size, bev_size)
-                if bev_gap_bboxes:
-                    measure_bboxes = bev_gap_bboxes
-                    measure_width = bev_size
+    # Compute BEV once — used for gap measurement and viz panel
+    if used_segmentation and vehicle_masks is not None and vehicle_masks.any():
+        bev = _perspective_to_bev(vehicle_masks, camera_pitch, img_w, img_h)
 
-            for gbbox in measure_bboxes:
-                width_m = measure_gap_width_meters(depth_map, gbbox, measure_width, camera_hfov_deg=hfov)
-                is_valid = width_m is not None and width_m >= settings.min_gap_meters
-                gap_measurements.append(GapMeasurement(
-                    bbox=gbbox,
-                    width_meters=width_m,
-                    width_pixels=int(gbbox[2] - gbbox[0]),
-                    is_valid_spot=is_valid,
-                ))
+    if depth_map is not None and gap_bboxes:
+        # Apply BEV if we have camera pitch — re-find gaps in top-down view
+        bev_masks = None
+        if bev is not None and abs(camera_pitch) > 1.0:
+            bev_masks = bev
+
+        # Use BEV-based gap bboxes when available (more accurate top-down geometry)
+        measure_bboxes = gap_bboxes
+        measure_width = img_w
+        if bev_masks is not None and bev_masks.any():
+            bev_size = settings.bev_output_size
+            bev_gap_bboxes = _gaps_from_segmentation(bev_masks, bev_size, bev_size)
+            if bev_gap_bboxes:
+                measure_bboxes = bev_gap_bboxes
+                measure_width = bev_size
+
+        for gbbox in measure_bboxes:
+            width_m = measure_gap_width_meters(depth_map, gbbox, measure_width, camera_hfov_deg=hfov)
+            is_valid = width_m is not None and width_m >= settings.min_gap_meters
+            gap_measurements.append(GapMeasurement(
+                bbox=gbbox,
+                width_meters=width_m,
+                width_pixels=int(gbbox[2] - gbbox[0]),
+                is_valid_spot=is_valid,
+            ))
 
     if not gap_measurements:
         # No depth — fall back to pixel heuristic for validity
@@ -247,6 +279,37 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float
 
     scene_valid = len(vehicles) > 0 or len(signs) > 0
 
+    # --- Visualization data (for viewer panel, not overlaid on camera) ---
+
+    # Per-vehicle depth sampling
+    if depth_map is not None:
+        _metric = depth_is_metric()
+        for v in vehicles:
+            cx = int((v.bbox[0] + v.bbox[2]) / 2)
+            cy = int((v.bbox[1] + v.bbox[3]) / 2)
+            cy = max(0, min(cy, depth_map.shape[0] - 1))
+            cx = max(0, min(cx, depth_map.shape[1] - 1))
+            r = 3
+            patch = depth_map[
+                max(0, cy - r):min(depth_map.shape[0], cy + r),
+                max(0, cx - r):min(depth_map.shape[1], cx + r),
+            ]
+            sampled = float(np.median(patch)) if patch.size > 0 else 0.0
+            if _metric:
+                v.depth_m = round(sampled, 1) if sampled > 0.1 else None
+            else:
+                v.depth_m = round(3.0 / (sampled + 0.05), 1) if sampled > 0.01 else None
+
+    # Encode depth map as small colorized JPEG for viewer side-panel
+    depth_jpeg: bytes | None = None
+    if depth_map is not None:
+        depth_jpeg = _encode_depth_viz(depth_map)
+
+    # Encode BEV mask as small JPEG for viewer side-panel
+    bev_jpeg: bytes | None = None
+    if bev is not None and bev.any():
+        bev_jpeg = _encode_bev_viz(bev)
+
     return {
         "vehicles": vehicles,
         "signs": signs,
@@ -259,6 +322,8 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float
         "used_depth": used_depth,
         "frame_width": img_w,
         "frame_height": img_h,
+        "depth_jpeg": depth_jpeg,
+        "bev_jpeg": bev_jpeg,
     }
 
 
@@ -371,3 +436,87 @@ def _perspective_to_bev(
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
     bev = cv2.warpPerspective(mask, M, (bev_size, bev_size), flags=cv2.INTER_NEAREST)
     return bev
+
+
+# --- Visualization encoders (small images for viewer side-panel) ---
+
+# Turbo-like colormap: close=red/orange, mid=green/cyan, far=blue/purple
+_DEPTH_CMAP = None
+
+def _get_depth_colormap() -> np.ndarray:
+    """Build a 256-entry RGB colormap (close=warm, far=cool)."""
+    global _DEPTH_CMAP
+    if _DEPTH_CMAP is not None:
+        return _DEPTH_CMAP
+    cmap = np.zeros((256, 3), dtype=np.uint8)
+    for i in range(256):
+        t = i / 255.0
+        # Warm-to-cool: red -> orange -> yellow -> cyan -> blue -> purple
+        if t < 0.25:
+            s = t / 0.25
+            cmap[i] = [255, int(60 * s), int(20 * s)]
+        elif t < 0.5:
+            s = (t - 0.25) / 0.25
+            cmap[i] = [int(255 * (1 - s)), int(60 + 180 * s), int(20 + 60 * s)]
+        elif t < 0.75:
+            s = (t - 0.5) / 0.25
+            cmap[i] = [0, int(240 - 100 * s), int(80 + 175 * s)]
+        else:
+            s = (t - 0.75) / 0.25
+            cmap[i] = [int(80 * s), int(140 - 100 * s), 255]
+    _DEPTH_CMAP = cmap
+    return _DEPTH_CMAP
+
+
+def _encode_depth_viz(depth_map: np.ndarray) -> bytes:
+    """Colorize depth map and encode as small JPEG for viewer."""
+    h, w = depth_map.shape[:2]
+    # Resize to small thumbnail (160px wide, keep aspect)
+    viz_w = 160
+    viz_h = max(1, int(h * viz_w / w))
+    small = cv2.resize(depth_map, (viz_w, viz_h), interpolation=cv2.INTER_AREA)
+
+    # Normalize to 0-255
+    d_min, d_max = float(small.min()), float(small.max())
+    if d_max - d_min > 1e-6:
+        norm = ((small - d_min) / (d_max - d_min) * 255).astype(np.uint8)
+    else:
+        norm = np.zeros((viz_h, viz_w), dtype=np.uint8)
+
+    # Apply colormap
+    cmap = _get_depth_colormap()
+    colored = cmap[norm]  # (H, W, 3)
+
+    _, buf = cv2.imencode(".jpg", colored[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 75])
+    return buf.tobytes()
+
+
+def _encode_bev_viz(bev_mask: np.ndarray) -> bytes:
+    """Colorize BEV vehicle mask and encode as small JPEG for viewer."""
+    bev_size = bev_mask.shape[0]
+    # Resize to 200px for viewer
+    viz_size = 200
+    small = cv2.resize(bev_mask, (viz_size, viz_size), interpolation=cv2.INTER_NEAREST)
+
+    # Create dark background with green vehicle silhouettes
+    viz = np.zeros((viz_size, viz_size, 3), dtype=np.uint8)
+    viz[:] = [12, 12, 14]  # near-black background
+
+    # Draw faint grid lines
+    for r in [50, 100, 150]:
+        cv2.circle(viz, (viz_size // 2, viz_size), r, (30, 30, 35), 1)
+
+    # Vehicle silhouettes in green
+    viz[small > 0] = [52, 211, 153]
+
+    # "You" triangle at bottom center
+    tri_cx, tri_cy = viz_size // 2, viz_size - 8
+    pts = np.array([
+        [tri_cx, tri_cy - 10],
+        [tri_cx - 6, tri_cy + 4],
+        [tri_cx + 6, tri_cy + 4],
+    ], dtype=np.int32)
+    cv2.fillPoly(viz, [pts], (96, 165, 250))
+
+    _, buf = cv2.imencode(".jpg", viz, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return buf.tobytes()

@@ -125,26 +125,29 @@ def _parse_and_score(raw_text: str) -> SignRules:
 
 
 SIGN_POLE_PROMPT = (
-    "This image shows one or more parking/traffic signs, possibly stacked on a single pole. "
+    "This image shows one or more parking/traffic signs. "
+    "It may be a street parking sign, a parking garage/lot directional sign, or a sign on a pole.\n\n"
     "For EACH individual sign visible, extract a JSON object with these fields:\n"
     '- "sign_type": one of "parking", "no_parking", "street_cleaning", "meter", '
-    '"time_limit", "permit", "loading_zone", "other"\n'
+    '"time_limit", "permit", "loading_zone", "garage", "lot", "directional", "other"\n'
     '- "raw_text": exact text on this sign\n'
     '- "hours": when this sign\'s rules apply (e.g. "Mon-Sat 8am-6pm") or null\n'
     '- "max_duration_min": max parking minutes or null\n'
     '- "price_per_hour": hourly price string or null\n'
     '- "permit_zone": permit zone identifier or null\n'
     '- "restrictions": array of special restrictions\n'
-    '- "arrow_direction": "left", "right", "both", or null\n\n'
-    "Then synthesize ALL signs into a combined rule set. Return a JSON object:\n"
+    '- "arrow_direction": "left", "right", "up", "down", "both", or null\n\n'
+    "Then synthesize ALL signs into a combined result. Return a JSON object:\n"
     "{\n"
     '  "signs": [<array of individual sign objects above>],\n'
-    '  "combined_summary": "<plain English one-liner of the combined parking rules>",\n'
-    '  "combined_hours": "<when rules apply overall>",\n'
+    '  "sign_category": "street" if curb/street parking rules, "garage" if parking garage/structure, "lot" if parking lot,\n'
+    '  "garage_name": name of the garage/lot if visible, or null,\n'
+    '  "combined_summary": "<plain English one-liner of the rules or directions>",\n'
+    '  "combined_hours": "<when rules apply overall or null>",\n'
     '  "combined_max_duration_min": <int or null>,\n'
     '  "combined_price": "<price string or null>",\n'
     '  "combined_restrictions": [<merged restrictions>],\n'
-    '  "arrow_direction": "<left/right/both/null>"\n'
+    '  "arrow_direction": "<left/right/up/down/both/null>"\n'
     "}\n"
     "Return ONLY the JSON, no markdown."
 )
@@ -227,6 +230,8 @@ def _parse_pole_reading(raw_text: str) -> SignPoleReading:
         combined_price=data.get("combined_price"),
         combined_restrictions=data.get("combined_restrictions", []),
         arrow_direction=data.get("arrow_direction"),
+        sign_category=data.get("sign_category", "street"),
+        garage_name=data.get("garage_name"),
     )
 
     # Confidence scoring

@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     # YOLO models
     vehicle_model_path: str = "yolov8m.pt"
     sign_model_path: str = "yolov8m-signs.pt"
+    sign_world_model_path: str = "yolov8m-worldv2.pt"
+    sign_world_classes: list[str] = [
+        "parking sign", "no parking sign", "traffic sign", "parking meter",
+        "parking garage sign", "parking lot sign", "parking arrow sign",
+    ]
     vehicle_confidence: float = 0.5
     sign_confidence: float = 0.4
     min_gap_fraction: float = 0.15
@@ -21,7 +26,7 @@ class Settings(BaseSettings):
     seg_model_path: str = "yolov8m-seg.pt"
 
     # Depth estimation (ZoeDepth-NK preferred, DA2 fallback)
-    depth_model_id: str = "depth-anything/Depth-Anything-V2-Small"  # DA2 fallback only
+    depth_model_id: str = "depth-anything/Depth-Anything-V2-Small-hf"
     default_camera_hfov_deg: float = 70.0  # horizontal FOV for phone camera
 
     # Bird's Eye View

@@ -12,6 +12,7 @@ class VehicleDetection(BaseModel):
     cls: str
     confidence: float
     track_id: int | None = None
+    depth_m: float | None = None
 
 
 class SignDetection(BaseModel):
@@ -52,6 +53,8 @@ class SignPoleReading(BaseModel):
     combined_price: str | None = None
     combined_restrictions: list[str] = []
     arrow_direction: str | None = None
+    sign_category: str = "street"  # street | garage | lot
+    garage_name: str | None = None
     confidence_score: float = 0.0
     flagged: bool = False
 

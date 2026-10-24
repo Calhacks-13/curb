@@ -2,18 +2,19 @@
 // applied only when its entity_version is newer than what we already hold, so
 // duplicate or out-of-order delivery can never roll an entity back.
 
-import type { Booking, CurbZone, Driveway, NearbyParkingResponse, ParkingSpace, RealtimeEvent } from "@/api/types";
+import type { Booking, CurbZone, Driveway, Garage, NearbyParkingResponse, ParkingSpace, RealtimeEvent } from "@/api/types";
 
 export type ParkingState = {
   zones: Record<string, CurbZone>;
   spaces: Record<string, ParkingSpace>;
   driveways: Record<string, Driveway>;
   bookings: Record<string, Booking>;
+  garages: Record<string, Garage>;
   /** Highest version seen per entity id. */
   versions: Record<string, number>;
 };
 
-export const emptyParkingState: ParkingState = { zones: {}, spaces: {}, driveways: {}, bookings: {}, versions: {} };
+export const emptyParkingState: ParkingState = { zones: {}, spaces: {}, driveways: {}, bookings: {}, garages: {}, versions: {} };
 
 function byId<T extends { id: string; version: number }>(items: T[]): Record<string, T> {
   return Object.fromEntries(items.map((i) => [i.id, i]));
@@ -36,6 +37,7 @@ export function fromNearby(prev: ParkingState, res: NearbyParkingResponse): Park
     spaces: keepNewer(byId(res.spaces), prev.spaces),
     driveways: keepNewer(byId(res.driveways), prev.driveways),
     bookings: prev.bookings,
+    garages: prev.garages,
     versions,
   };
 }
@@ -79,6 +81,12 @@ export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): P
       if (!("geometry" in event.payload)) return { ...state, versions };
       const zone = { ...(prev ?? {}), ...patch } as CurbZone;
       return { ...state, versions, zones: { ...state.zones, [event.entity_id]: zone } };
+    }
+    case "garage.detected": {
+      const prev = state.garages[event.entity_id];
+      if (!("location" in event.payload)) return { ...state, versions };
+      const garage = { ...(prev ?? {}), ...patch } as Garage;
+      return { ...state, versions, garages: { ...state.garages, [event.entity_id]: garage } };
     }
     default:
       return state;

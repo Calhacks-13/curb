@@ -18,29 +18,18 @@ _metric_depth: bool = False  # True when model outputs meters directly
 
 
 def load_depth_model():
-    """Load depth model. Prefers ZoeDepth-NK (metric), falls back to DA2 (relative)."""
+    """Load Depth Anything V2 via transformers pipeline (~98MB)."""
     global _depth_pipeline, _depth_available, _metric_depth
     if _depth_available is not None:
         return _depth_available
 
-    # Try ZoeDepth-NK first (metric depth)
-    for device in ("cuda", "cpu"):
-        try:
-            import torch
-            _depth_pipeline = torch.hub.load(
-                "isl-org/ZoeDepth", "ZoeD_NK", pretrained=True
-            )
-            _depth_pipeline = _depth_pipeline.to(device).eval()
-            _metric_depth = True
-            _depth_available = True
-            return True
-        except Exception:
-            continue
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # Fall back to DA2 via transformers pipeline
     for device in ("cuda", "cpu"):
         try:
             from transformers import pipeline
+            logger.info("Loading depth model %s on %s...", settings.depth_model_id, device)
             _depth_pipeline = pipeline(
                 "depth-estimation",
                 model=settings.depth_model_id,
@@ -48,10 +37,13 @@ def load_depth_model():
             )
             _metric_depth = False
             _depth_available = True
+            logger.info("Depth model loaded on %s", device)
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning("Depth model failed on %s: %s", device, e)
             continue
 
+    logger.error("Depth model unavailable — no working device")
     _depth_available = False
     return False
 
@@ -74,20 +66,14 @@ def estimate_depth(image: Image.Image) -> np.ndarray | None:
     if not is_available() or _depth_pipeline is None:
         return None
 
-    if _metric_depth:
-        import torch
-        with torch.no_grad():
-            depth_map = _depth_pipeline.infer_pil(image)
-        return depth_map.astype(np.float32)
+    result = _depth_pipeline(image)
+    depth_map = np.array(result["depth"], dtype=np.float32)
+    d_min, d_max = depth_map.min(), depth_map.max()
+    if d_max - d_min > 0:
+        depth_map = (depth_map - d_min) / (d_max - d_min)
     else:
-        result = _depth_pipeline(image)
-        depth_map = np.array(result["depth"])
-        d_min, d_max = depth_map.min(), depth_map.max()
-        if d_max - d_min > 0:
-            depth_map = (depth_map - d_min) / (d_max - d_min)
-        else:
-            depth_map = np.zeros_like(depth_map, dtype=np.float32)
-        return depth_map.astype(np.float32)
+        depth_map = np.zeros_like(depth_map, dtype=np.float32)
+    return depth_map
 
 
 def measure_gap_width_meters(
@@ -125,16 +111,10 @@ def measure_gap_width_meters(
     x_hi = min(depth_map.shape[1], cx + r)
     sampled_depth = float(np.median(depth_map[y_lo:y_hi, x_lo:x_hi]))
 
-    if _metric_depth:
-        # ZoeDepth: sampled_depth is already in meters
-        if sampled_depth < 0.1:
-            return None
-        estimated_distance_m = sampled_depth
-    else:
-        # DA2: relative depth 0-1, needs manual calibration
-        if sampled_depth < 0.01:
-            return None
-        estimated_distance_m = 3.0 / (sampled_depth + 0.05)
+    # DA2: relative depth 0-1, needs manual calibration
+    if sampled_depth < 0.01:
+        return None
+    estimated_distance_m = 3.0 / (sampled_depth + 0.05)
 
     # Angular width of gap in radians
     hfov_rad = math.radians(hfov)

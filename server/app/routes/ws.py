@@ -1,10 +1,16 @@
 """
 WebSocket endpoint for dashcam frame streaming.
 
-Protocol (interleaved text + binary):
+Protocol — scanner (interleaved text + binary):
   1. Client sends text JSON (WSMetadata: lat, lng, heading, speed, timestamp)
   2. Client sends binary (JPEG frame bytes)
   3. Server responds text JSON (FrameResult or {"status": "skipped"})
+
+Protocol — viewer relay (server -> viewer):
+  1. binary: frame JPEG
+  2. binary: depth viz JPEG (1 byte b'\\x00' if unavailable)
+  3. binary: BEV viz JPEG (1 byte b'\\x00' if unavailable)
+  4. text: JSON (FrameResult)
 """
 
 import uuid
@@ -60,12 +66,16 @@ async def stream(ws: WebSocket):
             response_json = json.dumps(response)
             await ws.send_text(response_json)
 
-            # 6. Relay to viewers
+            # 6. Relay to viewers (frame + depth + BEV + JSON)
             if viewers:
+                depth_jpeg = result.get("depth_jpeg") or b"\x00"
+                bev_jpeg = result.get("bev_jpeg") or b"\x00"
                 dead = []
                 for v in viewers:
                     try:
                         await v.send_bytes(frame_bytes)
+                        await v.send_bytes(depth_jpeg)
+                        await v.send_bytes(bev_jpeg)
                         await v.send_text(response_json)
                     except Exception:
                         dead.append(v)

@@ -462,6 +462,8 @@ class Pipeline:
         return {
             "frame_result": frame_result,
             "confirmed_block": confirmed,
+            "depth_jpeg": detections.get("depth_jpeg"),
+            "bev_jpeg": detections.get("bev_jpeg"),
         }
 
     async def _process_sign_tracks(
@@ -532,17 +534,39 @@ class Pipeline:
             self._sign_dedup.register(sign_doc)
             asyncio.create_task(_safe(cosmos.upsert_sign_document(sign_doc)))
 
-            # Broadcast sign.read so mobile gets decoded rules in real-time
-            asyncio.create_task(_safe(signalr.broadcast_realtime_event(
-                event_type="sign_rule.updated",
-                entity_id=road_seg_id,
-                payload=_zone_payload(road_seg_id, est_lat, est_lng, pole_reading),
-            )))
-
-            logger.info(
-                "New sign at (%.5f, %.5f) uncertainty=%.1fm, %d signs on pole, segment=%s",
-                est_lat, est_lng, uncertainty, len(pole_reading.signs), road_seg_id,
-            )
+            # Broadcast: street signs update zones, garage signs are POIs
+            if pole_reading.sign_category in ("garage", "lot"):
+                asyncio.create_task(_safe(signalr.broadcast_realtime_event(
+                    event_type="garage.detected",
+                    entity_id=sign_doc.id,
+                    payload={
+                        "id": sign_doc.id,
+                        "location": sign_doc.location,
+                        "lat": est_lat,
+                        "lng": est_lng,
+                        "name": pole_reading.garage_name,
+                        "summary": pole_reading.combined_summary,
+                        "price": pole_reading.combined_price,
+                        "arrow_direction": pole_reading.arrow_direction,
+                        "sign_category": pole_reading.sign_category,
+                        "version": 1,
+                    },
+                )))
+                logger.info(
+                    "GARAGE sign at (%.5f, %.5f) — %s, arrow=%s, segment=%s",
+                    est_lat, est_lng, pole_reading.garage_name or pole_reading.combined_summary,
+                    pole_reading.arrow_direction, road_seg_id,
+                )
+            else:
+                asyncio.create_task(_safe(signalr.broadcast_realtime_event(
+                    event_type="sign_rule.updated",
+                    entity_id=road_seg_id,
+                    payload=_zone_payload(road_seg_id, est_lat, est_lng, pole_reading),
+                )))
+                logger.info(
+                    "STREET sign at (%.5f, %.5f) uncertainty=%.1fm, %d signs on pole, segment=%s",
+                    est_lat, est_lng, uncertainty, len(pole_reading.signs), road_seg_id,
+                )
 
             if result is None:
                 result = pole_reading

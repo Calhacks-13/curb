@@ -3,51 +3,54 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Curb — Pipeline Monitor</title>
+<title>Curb Vision</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fragment+Mono:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Fragment+Mono:wght@400&display=swap');
 
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --bg: #0a0a0a;
-  --surface: #111113;
+  --bg: #0C0C0E;
+  --surface: #141416;
   --border: rgba(255,255,255,0.06);
-  --text: rgba(255,255,255,0.85);
-  --dim: rgba(255,255,255,0.35);
-  --faint: rgba(255,255,255,0.15);
-  --green: #34d399;
-  --yellow: #fbbf24;
-  --blue: #60a5fa;
-  --purple: #a78bfa;
-  --red: #f87171;
-  --cyan: #22d3ee;
+  --border-subtle: rgba(255,255,255,0.08);
+  --carbon: rgba(255,255,255,0.9);
+  --graphite: rgba(255,255,255,0.7);
+  --pewter: rgba(255,255,255,0.45);
+  --silver: rgba(255,255,255,0.25);
+  --cloud: rgba(255,255,255,0.06);
+  --blue: #3E6AE1;
+  --green: #2D9F6F;
+  --yellow: #C4880D;
+  --red: #C23B3B;
+  --orange: #C06520;
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: 'Fragment Mono', 'SF Mono', 'Fira Code', monospace;
+  background: #000;
+  color: var(--graphite);
+  font-family: 'Inter', -apple-system, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   height: 100dvh; overflow: hidden;
   display: flex;
 }
 
-/* ── Layout: feed left, data right ── */
+/* ---- Layout: feed left, data right ---- */
 .feed-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .data-col {
-  width: 38%; min-width: 320px; max-width: 520px;
+  width: 38%; min-width: 340px; max-width: 540px;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--border);
   overflow: hidden;
+  background: var(--bg);
 }
-@media (max-width: 960px) { .data-col { width: 44%; min-width: 260px; } }
+@media (max-width: 960px) { .data-col { width: 44%; min-width: 280px; } }
 
-/* ── Feed ── */
+/* ---- Feed ---- */
 .feed {
   flex: 1; position: relative;
   display: flex; align-items: center; justify-content: center;
-  background: #000;
+  background: #0C0C0E;
 }
 .feed canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
 #frame-canvas { z-index: 1; }
@@ -55,120 +58,154 @@ body {
 .feed-empty {
   position: absolute; inset: 0; z-index: 0;
   display: flex; align-items: center; justify-content: center;
-  color: var(--faint); font-size: 12px;
-  letter-spacing: 0.05em;
+  color: rgba(255,255,255,0.2); font-size: 13px; font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
-/* HUD overlays on feed */
+/* HUD overlays on feed — minimal, no background */
 .hud-tl, .hud-tr, .hud-bl {
   position: absolute; z-index: 10;
-  font-size: 10px; color: var(--dim);
-  background: rgba(0,0,0,0.5);
-  backdrop-filter: blur(4px);
-  padding: 3px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.7);
+  font-family: 'Fragment Mono', monospace;
 }
-.hud-tl { top: 10px; left: 10px; display: flex; align-items: center; gap: 6px; }
-.hud-tr { top: 10px; right: 10px; }
-.hud-bl { bottom: 10px; left: 10px; }
-.hud-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--red); }
-.hud-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(52,211,153,0.4); }
+.hud-tl { top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; }
+.hud-tr { top: 12px; right: 12px; }
+.hud-bl { bottom: 12px; left: 12px; }
+.hud-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
+.hud-dot.on { background: var(--green); }
 
 /* Sign overlay */
 .sign-hud {
-  position: absolute; bottom: 10px; left: 10px; right: 10px;
+  position: absolute; bottom: 12px; left: 12px; right: 12px;
   z-index: 10; display: none;
-  background: rgba(0,0,0,0.6); backdrop-filter: blur(8px);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 6px; padding: 6px 10px;
-  font-size: 11px; color: var(--cyan); line-height: 1.4;
+  background: rgba(0,0,0,0.7); backdrop-filter: blur(12px);
+  border-radius: 4px; padding: 8px 12px;
+  font-size: 12px; font-weight: 500; color: #fff; line-height: 1.5;
 }
-.sign-hud .dim { color: var(--dim); }
+.sign-hud .dim { color: rgba(255,255,255,0.5); font-weight: 400; }
 
-/* ── Data column ── */
+/* ---- Data column ---- */
+
+/* Viz panels row: depth + BEV side by side */
+.viz-row {
+  display: flex; gap: 1px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--cloud);
+}
+.viz-panel {
+  flex: 1; position: relative;
+  background: #0C0C0E;
+  display: flex; flex-direction: column;
+  align-items: center;
+}
+.viz-label {
+  position: absolute; top: 6px; left: 8px;
+  font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.4);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  z-index: 2;
+}
+.viz-panel canvas, .viz-panel img {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.viz-panel .placeholder {
+  color: rgba(255,255,255,0.15); font-size: 11px; font-weight: 500;
+  padding: 40px 0; text-align: center;
+}
 
 /* Stats bar */
 .stats-bar {
   display: flex; border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  background: var(--bg);
 }
 .stat-cell {
-  flex: 1; padding: 10px 8px;
+  flex: 1; padding: 12px 8px;
   border-right: 1px solid var(--border);
   text-align: center;
 }
 .stat-cell:last-child { border-right: none; }
-.stat-num { font-size: 20px; color: var(--text); letter-spacing: -0.02em; line-height: 1; }
-.stat-num.green { color: var(--green); }
+.stat-num {
+  font-family: 'Inter', sans-serif; font-size: 22px; font-weight: 500;
+  color: var(--carbon); letter-spacing: -0.02em; line-height: 1;
+}
 .stat-num.blue { color: var(--blue); }
-.stat-num.purple { color: var(--purple); }
-.stat-lbl { font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+.stat-num.green { color: var(--green); }
+.stat-lbl {
+  font-size: 9px; font-weight: 500; color: var(--silver);
+  text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px;
+}
 
 /* Detections strip */
 .det-strip {
   border-bottom: 1px solid var(--border);
-  padding: 6px 10px;
+  padding: 6px 12px;
   flex-shrink: 0;
-  display: flex; flex-wrap: wrap; gap: 3px 6px;
-  min-height: 28px; max-height: 72px; overflow: hidden;
+  display: flex; flex-wrap: wrap; gap: 4px 6px;
+  min-height: 28px; max-height: 60px; overflow: hidden;
   align-items: center;
+  background: var(--bg);
 }
 .det-chip {
-  font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px; padding: 2px 8px; border-radius: 4px;
   display: inline-flex; align-items: center; gap: 4px;
 }
-.det-chip.ok { background: rgba(52,211,153,0.1); color: var(--green); }
-.det-chip.rej { background: rgba(248,113,113,0.08); color: var(--red); }
-.det-chip .pct { opacity: 0.6; }
+.det-chip.ok { background: rgba(45,159,111,0.12); color: var(--green); }
+.det-chip.rej { background: rgba(194,59,59,0.1); color: var(--red); }
+.det-chip .pct { opacity: 0.5; }
 
-/* ── Terminal Log ── */
+/* ---- Terminal Log ---- */
 .term {
   flex: 1; overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain;
-  padding: 6px 0;
+  padding: 4px 0;
+  background: var(--bg);
 }
 .term::-webkit-scrollbar { width: 3px; }
 .term::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
 
 .line {
-  display: flex; gap: 0; padding: 1px 14px;
-  font-size: 11px; line-height: 1.5;
+  display: flex; gap: 0; padding: 2px 14px;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 11px; line-height: 1.6;
   animation: lineIn 150ms ease-out;
   align-items: baseline;
 }
-.line:hover { background: rgba(255,255,255,0.02); }
-.ts { color: var(--faint); width: 64px; flex-shrink: 0; font-size: 10px; }
-.tag { width: 52px; flex-shrink: 0; font-size: 10px; }
+@media (hover: hover) { .line:hover { background: rgba(255,255,255,0.02); } }
+.ts { color: var(--silver); width: 64px; flex-shrink: 0; font-size: 10px; }
+.tag { width: 52px; flex-shrink: 0; font-size: 10px; font-weight: 500; }
 .tag.vehicle { color: var(--green); }
 .tag.gap { color: var(--yellow); }
-.tag.sign { color: var(--purple); }
-.tag.spot { color: var(--cyan); }
-.tag.sys { color: var(--dim); }
+.tag.sign { color: var(--blue); }
+.tag.spot { color: var(--blue); }
+.tag.sys { color: var(--silver); }
 .tag.rej { color: var(--red); }
-.tag.scene { color: var(--blue); }
-.msg { color: var(--dim); flex: 1; min-width: 0; word-break: break-all; }
-.msg em { font-style: normal; color: var(--text); }
+.tag.scene { color: var(--pewter); }
+.tag.depth { color: var(--orange); }
+.msg { color: var(--pewter); flex: 1; min-width: 0; word-break: break-all; }
+.msg em { font-style: normal; color: var(--carbon); }
 .msg .hi { color: var(--green); }
 .msg .warn { color: var(--yellow); }
 .msg .err { color: var(--red); }
 
 /* Confirmed flash */
-.line.confirmed {
-  background: rgba(52,211,153,0.06);
-}
-.line.confirmed .msg { color: var(--green); }
-.line.confirmed .msg em { color: #fff; }
+.line.confirmed { background: rgba(62,106,225,0.08); }
+.line.confirmed .msg { color: var(--blue); }
+.line.confirmed .msg em { color: var(--carbon); }
 
-/* ── Toast ── */
+/* ---- Toast ---- */
 .toast {
   position: fixed; top: 16px; left: 50%;
   transform: translateX(-50%) translateY(-4px);
-  background: rgba(52,211,153,0.12);
-  border: 1px solid rgba(52,211,153,0.2);
-  border-radius: 6px;
-  padding: 8px 16px;
-  font-size: 12px; color: var(--green);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 10px 20px;
+  font-size: 13px; font-weight: 500; color: var(--carbon);
   z-index: 200; opacity: 0; pointer-events: none;
-  transition: opacity 200ms ease, transform 200ms ease;
+  transition: opacity 0.33s ease, transform 0.33s ease;
 }
 .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 
@@ -180,10 +217,10 @@ body {
 
 <div class="feed-col">
   <div class="feed">
-    <div class="feed-empty" id="feed-empty">waiting for stream...</div>
+    <div class="feed-empty" id="feed-empty">waiting for stream</div>
     <canvas id="frame-canvas"></canvas>
     <canvas id="overlay-canvas"></canvas>
-    <div class="hud-tl"><div class="hud-dot" id="conn-dot"></div><span id="conn-label">connecting</span></div>
+    <div class="hud-tl"><div class="hud-dot" id="conn-dot"></div></div>
     <div class="hud-tr" id="fps-hud">0 fps</div>
     <div class="hud-bl" id="pipeline-hud"></div>
     <div class="sign-hud" id="sign-hud"><span id="sign-text"></span> <span class="dim" id="sign-detail"></span></div>
@@ -191,22 +228,36 @@ body {
 </div>
 
 <div class="data-col">
+  <!-- Visualization panels -->
+  <div class="viz-row" style="height:200px;">
+    <div class="viz-panel" id="depth-panel">
+      <span class="viz-label">Depth</span>
+      <canvas id="depth-canvas"></canvas>
+      <div class="placeholder" id="depth-empty">no depth data</div>
+    </div>
+    <div class="viz-panel" id="bev-panel" style="position:relative;">
+      <span class="viz-label">BEV</span>
+      <canvas id="bev-canvas"></canvas>
+      <div class="placeholder" id="bev-empty">no BEV data</div>
+    </div>
+  </div>
+
   <div class="stats-bar">
     <div class="stat-cell"><div class="stat-num" id="s-vehicles">0</div><div class="stat-lbl">Vehicles</div></div>
     <div class="stat-cell"><div class="stat-num green" id="s-gaps">0</div><div class="stat-lbl">Gaps</div></div>
     <div class="stat-cell"><div class="stat-num blue" id="s-signs">0</div><div class="stat-lbl">Signs</div></div>
-    <div class="stat-cell"><div class="stat-num green" id="s-spots">0</div><div class="stat-lbl">Spots</div></div>
+    <div class="stat-cell"><div class="stat-num blue" id="s-spots">0</div><div class="stat-lbl">Spots</div></div>
     <div class="stat-cell"><div class="stat-num" id="s-frames">0</div><div class="stat-lbl">Frames</div></div>
   </div>
 
   <div class="det-strip" id="det-strip">
-    <span style="color:var(--faint);font-size:10px;">no detections</span>
+    <span style="color:var(--silver);font-size:10px;">no detections</span>
   </div>
 
   <div class="term" id="term"></div>
 </div>
 
-<div class="toast" id="toast" id="toast-msg"></div>
+<div class="toast" id="toast"></div>
 
 <script>
 const frameC = document.getElementById('frame-canvas');
@@ -214,8 +265,12 @@ const overC = document.getElementById('overlay-canvas');
 const fCtx = frameC.getContext('2d');
 const oCtx = overC.getContext('2d');
 
+const depthC = document.getElementById('depth-canvas');
+const bevC = document.getElementById('bev-canvas');
+const depthCtx = depthC.getContext('2d');
+const bevCtx = bevC.getContext('2d');
+
 const connDot = document.getElementById('conn-dot');
-const connLabel = document.getElementById('conn-label');
 const feedEmpty = document.getElementById('feed-empty');
 const pipeHud = document.getElementById('pipeline-hud');
 const fpsHud = document.getElementById('fps-hud');
@@ -223,18 +278,22 @@ const signHud = document.getElementById('sign-hud');
 const detStrip = document.getElementById('det-strip');
 const term = document.getElementById('term');
 const toast = document.getElementById('toast');
+const depthEmpty = document.getElementById('depth-empty');
+const bevEmpty = document.getElementById('bev-empty');
 
 let ws, reconnect = 1000, frameCount = 0, totalFrames = 0, confirmedCount = 0;
-let lastFpsTime = performance.now(), lastFrameTime = null, ready = false;
+let lastFpsTime = performance.now(), ready = false;
 const MAX_LINES = 500;
 let lineCount = 0;
 let signHudTimer = null;
 
-// Queued frame pair: bitmap decode is async, so we hold the pending
-// bitmap promise and render overlay only AFTER the frame is on-canvas.
-let pendingBitmap = null; // Promise<ImageBitmap>
+// --- Multi-binary protocol state ---
+// Expect: binary(frame) -> binary(depth) -> binary(bev) -> text(json)
+let pendingFrame = null;
+let pendingDepth = null;
+let pendingBev = null;
+let binaryIndex = 0;
 
-// ── Connection ──
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws/viewer`);
@@ -242,33 +301,69 @@ function connect() {
 
   ws.onopen = () => {
     connDot.classList.add('on');
-    connLabel.textContent = 'live';
     reconnect = 1000;
+    binaryIndex = 0;
     emit('sys', 'connected to pipeline server');
   };
+
   ws.onmessage = (e) => {
     if (e.data instanceof ArrayBuffer) {
-      lastFrameTime = performance.now();
-      const blob = new Blob([e.data], { type: 'image/jpeg' });
-      pendingBitmap = createImageBitmap(blob);
+      const bytes = new Uint8Array(e.data);
+      const isPlaceholder = bytes.length <= 1;
+
+      if (binaryIndex === 0) {
+        if (!isPlaceholder) {
+          const blob = new Blob([e.data], { type: 'image/jpeg' });
+          pendingFrame = createImageBitmap(blob);
+        } else {
+          pendingFrame = null;
+        }
+        binaryIndex = 1;
+      } else if (binaryIndex === 1) {
+        if (!isPlaceholder) {
+          const blob = new Blob([e.data], { type: 'image/jpeg' });
+          pendingDepth = createImageBitmap(blob);
+        } else {
+          pendingDepth = null;
+        }
+        binaryIndex = 2;
+      } else {
+        if (!isPlaceholder) {
+          const blob = new Blob([e.data], { type: 'image/jpeg' });
+          pendingBev = createImageBitmap(blob);
+        } else {
+          pendingBev = null;
+        }
+        binaryIndex = 0;
+      }
     } else {
-      // JSON metadata — wait for the bitmap, then draw both together
       try {
         const d = JSON.parse(e.data);
-        const bmpPromise = pendingBitmap;
-        pendingBitmap = null;
-        if (bmpPromise) {
-          bmpPromise.then(bmp => { showFrame(bmp); render(d); });
-        } else if (ready) {
-          render(d);
-        }
+        const fp = pendingFrame;
+        const dp = pendingDepth;
+        const bp = pendingBev;
+        pendingFrame = null;
+        pendingDepth = null;
+        pendingBev = null;
+        binaryIndex = 0;
+
+        Promise.all([
+          fp ? fp : Promise.resolve(null),
+          dp ? dp : Promise.resolve(null),
+          bp ? bp : Promise.resolve(null),
+        ]).then(([frameBmp, depthBmp, bevBmp]) => {
+          if (frameBmp) showFrame(frameBmp);
+          showDepth(depthBmp);
+          showBev(bevBmp);
+          if (ready) render(d);
+        });
       } catch (err) { console.error('render error:', err); }
     }
   };
+
   ws.onclose = () => {
     connDot.classList.remove('on');
-    connLabel.textContent = 'reconnecting';
-    emit('sys', 'disconnected, retrying...');
+    emit('sys', 'disconnected, retrying');
     setTimeout(connect, reconnect);
     reconnect = Math.min(reconnect * 2, 16000);
   };
@@ -292,74 +387,105 @@ function showFrame(bmp) {
   }
 }
 
-// ── Render ──
+function showDepth(bmp) {
+  if (bmp) {
+    depthEmpty.style.display = 'none';
+    depthC.style.display = 'block';
+    if (depthC.width !== bmp.width || depthC.height !== bmp.height) {
+      depthC.width = bmp.width; depthC.height = bmp.height;
+    }
+    depthCtx.drawImage(bmp, 0, 0);
+  } else {
+    if (!depthC.width) {
+      depthEmpty.style.display = 'block';
+      depthC.style.display = 'none';
+    }
+  }
+}
+
+function showBev(bmp) {
+  if (bmp) {
+    bevEmpty.style.display = 'none';
+    bevC.style.display = 'block';
+    if (bevC.width !== bmp.width || bevC.height !== bmp.height) {
+      bevC.width = bmp.width; bevC.height = bmp.height;
+    }
+    bevCtx.drawImage(bmp, 0, 0);
+  } else {
+    if (!bevC.width) {
+      bevEmpty.style.display = 'block';
+      bevC.style.display = 'none';
+    }
+  }
+}
+
+// ---- Render overlays on camera feed ----
 function render(d) {
   if (!ready) return;
   const W = overC.width, H = overC.height;
   oCtx.clearRect(0, 0, W, H);
 
-  // Raw detections — draw ALL objects YOLO sees (accepted + rejected)
+  // Raw detections
   if (d.raw_detections && d.raw_detections.length > 0) {
     for (const r of d.raw_detections) {
       const [x1,y1,x2,y2] = r.bbox;
       const w = x2-x1, h = y2-y1;
       if (r.accepted) {
-        // Accepted vehicle — solid green
-        oCtx.fillStyle = 'rgba(52,211,153,0.06)';
+        oCtx.fillStyle = 'rgba(255,255,255,0.03)';
         oCtx.fillRect(x1,y1,w,h);
-        oCtx.strokeStyle = 'rgba(52,211,153,0.6)';
-        oCtx.lineWidth = 1.5; oCtx.setLineDash([]);
+        oCtx.strokeStyle = 'rgba(255,255,255,0.5)';
+        oCtx.lineWidth = 1; oCtx.setLineDash([]);
       } else {
-        // Rejected — dim dashed outline
-        oCtx.strokeStyle = 'rgba(248,113,113,0.25)';
+        oCtx.strokeStyle = 'rgba(255,255,255,0.12)';
         oCtx.lineWidth = 1; oCtx.setLineDash([3,3]);
       }
       oCtx.strokeRect(x1,y1,w,h);
       oCtx.setLineDash([]);
-      // Label
       const conf = ((r.confidence*100)|0)+'%';
       const lbl = r.cls + ' ' + conf;
-      oCtx.font = '400 9px "Fragment Mono", monospace';
+      oCtx.font = '500 9px Inter, sans-serif';
       const tw = oCtx.measureText(lbl).width;
-      const ly = y1 > 14 ? y1 - 2 : y1 + 11;
-      const lx = x1;
-      oCtx.fillStyle = 'rgba(0,0,0,0.55)';
-      rr(oCtx, lx, ly - 10, tw + 6, 12, 2); oCtx.fill();
-      oCtx.fillStyle = r.accepted ? 'rgba(52,211,153,0.9)' : 'rgba(248,113,113,0.55)';
-      oCtx.fillText(lbl, lx + 3, ly);
+      const ly = y1 > 14 ? y1 - 3 : y1 + 11;
+      oCtx.fillStyle = 'rgba(0,0,0,0.6)';
+      rr(oCtx, x1, ly - 10, tw + 8, 13, 2); oCtx.fill();
+      oCtx.fillStyle = r.accepted ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.35)';
+      oCtx.fillText(lbl, x1 + 4, ly);
     }
   }
 
-  // Tracked vehicles — overlay track IDs on accepted vehicles
+  // Tracked vehicles — track ID + depth
   if (d.vehicles) {
     document.getElementById('s-vehicles').textContent = d.vehicles.length;
     d.vehicles.forEach(v => {
-      if (v.track_id) {
-        const [x1,y1,x2,y2] = v.bbox;
-        const lbl = '#' + v.track_id;
-        oCtx.font = '400 10px "Fragment Mono", monospace';
-        const tw = oCtx.measureText(lbl).width;
-        oCtx.fillStyle = 'rgba(0,0,0,0.6)';
-        rr(oCtx, x2-tw-8, y1, tw+8, 14, 3); oCtx.fill();
-        oCtx.fillStyle = 'rgba(52,211,153,0.9)';
-        oCtx.fillText(lbl, x2-tw-4, y1+11);
-      }
+      const [x1,y1,x2,y2] = v.bbox;
+      let parts = [];
+      if (v.track_id) parts.push('#' + v.track_id);
+      if (v.depth_m != null) parts.push(v.depth_m.toFixed(1) + 'm');
+      const lbl = parts.join(' ');
+      if (!lbl) return;
+
+      oCtx.font = '500 10px Inter, sans-serif';
+      const tw = oCtx.measureText(lbl).width;
+      oCtx.fillStyle = 'rgba(0,0,0,0.65)';
+      rr(oCtx, x2-tw-10, y1, tw+10, 16, 2); oCtx.fill();
+      oCtx.fillStyle = v.depth_m != null ? '#F0A050' : 'rgba(255,255,255,0.8)';
+      oCtx.fillText(lbl, x2-tw-5, y1+12);
     });
   }
 
-  // Signs — blue overlay
+  // Signs — blue accent overlay
   if (d.signs) {
     document.getElementById('s-signs').textContent = d.signs.length;
     d.signs.forEach(s => {
       const [x1,y1,x2,y2] = s.bbox;
-      oCtx.strokeStyle = 'rgba(96,165,250,0.6)';
-      oCtx.lineWidth = 2; oCtx.setLineDash([]);
+      oCtx.strokeStyle = 'rgba(62,106,225,0.6)';
+      oCtx.lineWidth = 1.5; oCtx.setLineDash([]);
       oCtx.strokeRect(x1,y1,x2-x1,y2-y1);
-      oCtx.font = '400 9px "Fragment Mono", monospace';
-      oCtx.fillStyle = 'rgba(0,0,0,0.55)';
-      rr(oCtx, x1, y1-12, 32, 12, 2); oCtx.fill();
-      oCtx.fillStyle = 'rgba(96,165,250,0.9)';
-      oCtx.fillText('sign', x1+3, y1-2);
+      oCtx.font = '500 9px Inter, sans-serif';
+      oCtx.fillStyle = 'rgba(0,0,0,0.6)';
+      rr(oCtx, x1, y1-13, 30, 13, 2); oCtx.fill();
+      oCtx.fillStyle = 'rgba(62,106,225,0.9)';
+      oCtx.fillText('sign', x1+4, y1-2);
     });
   }
 
@@ -370,30 +496,43 @@ function render(d) {
       const [x1,y1,x2,y2] = g.bbox;
       if (g.confirmed) {
         open++;
-        oCtx.fillStyle = 'rgba(52,211,153,0.07)';
+        oCtx.fillStyle = 'rgba(62,106,225,0.06)';
         oCtx.fillRect(x1,y1,x2-x1,y2-y1);
-        oCtx.strokeStyle = 'rgba(52,211,153,0.6)';
-        oCtx.lineWidth = 2; oCtx.setLineDash([]);
+        oCtx.strokeStyle = 'rgba(62,106,225,0.5)';
+        oCtx.lineWidth = 1.5; oCtx.setLineDash([]);
       } else {
-        oCtx.strokeStyle = 'rgba(251,191,36,0.4)';
-        oCtx.lineWidth = 1.5; oCtx.setLineDash([4,3]);
+        oCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+        oCtx.lineWidth = 1; oCtx.setLineDash([4,3]);
       }
       oCtx.strokeRect(x1,y1,x2-x1,y2-y1);
       oCtx.setLineDash([]);
+
       const cx=(x1+x2)/2, cy=(y1+y2)/2;
-      oCtx.textAlign='center'; oCtx.font='400 10px "Fragment Mono",monospace';
+      oCtx.textAlign='center'; oCtx.font='500 11px Inter, sans-serif';
       if (g.confirmed) {
-        oCtx.fillStyle='rgba(52,211,153,0.8)';
-        oCtx.fillText(g.median_width_meters?g.median_width_meters.toFixed(1)+'m':'OPEN',cx,cy+4);
+        let label = 'OPEN';
+        if (g.median_width_meters != null) {
+          const w = g.median_width_meters;
+          label = w.toFixed(1) + 'm';
+          const fit = w < 5.0 ? 'tight' : w < 6.0 ? 'sedan' : 'SUV+';
+          oCtx.fillStyle='rgba(255,255,255,0.85)';
+          oCtx.fillText(label, cx, cy);
+          oCtx.font='500 9px Inter, sans-serif';
+          oCtx.fillStyle='rgba(255,255,255,0.45)';
+          oCtx.fillText(fit, cx, cy+14);
+        } else {
+          oCtx.fillStyle='rgba(255,255,255,0.85)';
+          oCtx.fillText(label, cx, cy+4);
+        }
       } else {
-        oCtx.fillStyle='rgba(251,191,36,0.65)';
+        oCtx.fillStyle='rgba(255,255,255,0.5)';
         oCtx.fillText(g.duration.toFixed(1)+'s',cx,cy+4);
       }
       oCtx.textAlign='start';
     });
     document.getElementById('s-gaps').textContent = open;
   } else if (d.gap_bboxes) {
-    oCtx.strokeStyle='rgba(251,191,36,0.25)'; oCtx.lineWidth=1; oCtx.setLineDash([3,3]);
+    oCtx.strokeStyle='rgba(255,255,255,0.1)'; oCtx.lineWidth=1; oCtx.setLineDash([3,3]);
     d.gap_bboxes.forEach(g=>{const[x1,y1,x2,y2]=g;oCtx.strokeRect(x1,y1,x2-x1,y2-y1);});
     oCtx.setLineDash([]);
   }
@@ -403,26 +542,27 @@ function render(d) {
 
   // GPS
   if (d.lat && d.lng) {
-    emit('scene', `frame at <em>${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}</em>  scene:${d.scene_valid?'<span class="hi">valid</span>':'<span class="err">invalid</span>'}  pipeline:<em>${d.pipeline_state||'—'}</em>`);
+    const depthTag = d.used_depth ? ' <span class="hi">depth</span>' : '';
+    const segTag = d.used_segmentation ? ' <span class="hi">seg</span>' : '';
+    emit('scene', `frame at <em>${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}</em>${segTag}${depthTag}  scene:${d.scene_valid?'<span class="hi">valid</span>':'<span class="err">invalid</span>'}  pipeline:<em>${d.pipeline_state||'—'}</em>`);
   }
 
-  // Log detections
+  // Detection chips
   if (d.raw_detections && d.raw_detections.length > 0) {
-    // Detection strip
     let chips = '';
     for (const r of d.raw_detections) {
       const c = r.accepted ? 'ok' : 'rej';
       chips += `<span class="det-chip ${c}">${esc(r.cls)} <span class="pct">${(r.confidence*100)|0}%</span></span>`;
     }
     detStrip.innerHTML = chips;
+  }
 
-    // Stream each detection
-    for (const r of d.raw_detections) {
-      if (r.accepted) {
-        emit('vehicle', `<em>${esc(r.cls)}</em> detected  conf:<span class="hi">${(r.confidence*100)|0}%</span>  track:${r.track_id||'—'}`);
-      } else {
-        emit('rej', `${esc(r.cls)} rejected  conf:${(r.confidence*100)|0}%  reason:<span class="err">${esc(r.reason)}</span>`);
-      }
+  // Depth log
+  if (d.vehicles && d.used_depth && totalFrames % 5 === 0) {
+    const withDepth = d.vehicles.filter(v => v.depth_m != null);
+    if (withDepth.length > 0) {
+      const depthStr = withDepth.map(v => `T${v.track_id||'?'}:<em>${v.depth_m.toFixed(1)}m</em>`).join(' ');
+      emit('depth', depthStr);
     }
   }
 
@@ -438,7 +578,7 @@ function render(d) {
     }
   }
 
-  // Sign rules — persist HUD for 10s after last reading
+  // Sign rules HUD
   const sr = d.sign_rules;
   if (sr && (sr.combined_summary || sr.summary)) {
     const txt = sr.combined_summary || sr.summary;
@@ -457,13 +597,13 @@ function render(d) {
     document.getElementById('s-spots').textContent = confirmedCount;
     const cb = d.confirmed_block;
     emit('spot', `<em>SPOT CONFIRMED</em>  gaps:<span class="hi">${cb.gap_count}</span>  segment:<em>${esc(cb.segment_id)}</em>  at ${cb.lat?.toFixed(5)},${cb.lng?.toFixed(5)}`, true);
-    toast.textContent = '● spot confirmed — ' + cb.gap_count + ' gap' + (cb.gap_count>1?'s':'');
+    toast.textContent = 'SPOT CONFIRMED — ' + cb.gap_count + ' gap' + (cb.gap_count>1?'s':'');
     toast.classList.add('on');
     setTimeout(() => toast.classList.remove('on'), 3000);
   }
 }
 
-// ── Terminal ──
+// ---- Terminal ----
 function emit(tag, msg, highlight) {
   const now = new Date();
   const ts = now.toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});

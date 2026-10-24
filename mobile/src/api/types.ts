@@ -77,6 +77,19 @@ export type Booking = {
   version: number;
 };
 
+export type Garage = {
+  id: string;
+  location: GeoPoint;
+  lat: number;
+  lng: number;
+  name: string | null;
+  summary: string;
+  price: string | null;
+  arrow_direction: string | null;
+  sign_category: "garage" | "lot";
+  version: number;
+};
+
 export type NearbyParkingResponse = {
   generated_at: string;
   zones: CurbZone[];
@@ -137,6 +150,7 @@ export type RealtimeEventType =
   | "space.occupied"
   | "space.expired"
   | "sign_rule.updated"
+  | "garage.detected"
   | "driveway.updated"
   | "driveway.held"
   | "driveway.released"

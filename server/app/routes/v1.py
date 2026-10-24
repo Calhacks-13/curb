@@ -368,14 +368,18 @@ async def upload_frame(
         heading=heading,
     )
 
-    # Relay to WS viewers (fire-and-forget so it doesn't block the phone response)
+    # Relay to WS viewers (frame + depth + BEV + JSON)
     if ws_viewers:
         viewer_json = json.dumps(result["frame_result"].model_dump(mode="json"))
+        depth_jpeg = result.get("depth_jpeg") or b"\x00"
+        bev_jpeg = result.get("bev_jpeg") or b"\x00"
         async def _relay():
             dead = []
             for v in ws_viewers:
                 try:
                     await v.send_bytes(image_bytes)
+                    await v.send_bytes(depth_jpeg)
+                    await v.send_bytes(bev_jpeg)
                     await v.send_text(viewer_json)
                 except Exception:
                     dead.append(v)
@@ -403,6 +407,66 @@ async def upload_frame(
         response["space"] = _block_to_space(block_dict).model_dump(mode="json")
         response["zone"] = _block_to_zone(block_dict, []).model_dump(mode="json")
     return response
+
+
+@router.get("/debug/state")
+async def debug_state():
+    """Observability endpoint: dump in-memory pipeline state."""
+    from app.cv.pipeline import get_pipeline
+    from app.cv.detector import _sign_model, _sign_model_available, _seg_model_available
+    from app.cv.depth import is_available as depth_is_available
+
+    pipeline = get_pipeline()
+    mgr = pipeline._spot_mgr
+    dedup = pipeline._sign_dedup
+
+    sessions_info = {}
+    for sid, sess in pipeline._sessions.items():
+        sessions_info[sid] = {
+            "vehicle_tracks": len(sess.vehicle_tracker.tracks),
+            "confirmed_gaps": len(sess.gap_tracker._confirmed),
+            "sign_tracks": len(sess.sign_tracker.tracks),
+            "gap_segments": dict(
+                (f"{k[0]},{k[1]}", v) for k, v in sess.confirmed_gap_segments.items()
+            ),
+            "last_sign_reading": sess.last_sign_reading.combined_summary if sess.last_sign_reading else None,
+        }
+
+    spots_info = {}
+    for seg_id, spot in mgr._spots.items():
+        spots_info[seg_id] = {
+            "id": spot.id,
+            "status": spot.status,
+            "lat": spot.lat,
+            "lng": spot.lng,
+            "version": spot.version,
+            "width_meters": spot.width_meters,
+            "opened_at": spot.opened_at.isoformat() if spot.opened_at else None,
+            "last_seen_at": spot.last_seen_at.isoformat() if spot.last_seen_at else None,
+            "sign_summary": spot.sign_rules.combined_summary if spot.sign_rules else None,
+        }
+
+    signs_info = [
+        {"id": doc.id, "lat": doc.lat, "lng": doc.lng,
+         "summary": doc.pole_reading.combined_summary if doc.pole_reading else None}
+        for doc in dedup._cache.values()
+    ]
+
+    sign_model_type = type(_sign_model).__name__ if _sign_model else "none"
+
+    return {
+        "models": {
+            "seg_available": _seg_model_available or False,
+            "sign_model_type": sign_model_type,
+            "sign_model_available": _sign_model_available or False,
+            "depth_available": depth_is_available(),
+        },
+        "sessions": sessions_info,
+        "spots": spots_info,
+        "signs_deduped": signs_info,
+        "recent_blocks": len(pipeline.recent_blocks),
+        "event_buffer": len(signalr.get_recent_events(0)),
+    }
 
 
 @router.post("/realtime/negotiate")
