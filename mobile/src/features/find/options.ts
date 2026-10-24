@@ -2,6 +2,7 @@
 // list of options. Pure, so it's easy to test and cheap to recompute each tick.
 
 import type { CurbZone, Driveway, LngLat } from "@/api/types";
+import { SEP } from "@/config/tokens";
 import { distanceM } from "@/data/geo";
 import { formatHhmm, inLaWindow } from "@/lib/laTime";
 import type { StallKind } from "@/map/curbLayers";
@@ -63,7 +64,7 @@ export function findOptions(state: ParkingState, now: number, from: LngLat, user
         id: space.id,
         kind: freshness,
         title: FRESHNESS_LABEL[freshness],
-        detail: `Seen ${formatAge(ageSeconds)} · ${walkMinutes(d)} min walk`,
+        detail: `Seen ${formatAge(ageSeconds)}${SEP}${walkMinutes(d)} min walk`,
         trailing: formatDistance(d),
         position: space.location.coordinates,
         ring: space.stall_geometry.coordinates[0],
@@ -78,7 +79,7 @@ export function findOptions(state: ParkingState, now: number, from: LngLat, user
       id: dw.id,
       kind: "driveway",
       title: mine ? (dw.state === "BOOKED" ? "Your driveway" : "Driveway on hold for you") : "Guaranteed driveway",
-      detail: `${formatHhmm(dw.availability_start)} to ${formatHhmm(dw.availability_end)} · ${formatDistance(d)}`,
+      detail: `${formatHhmm(dw.availability_start)} to ${formatHhmm(dw.availability_end)}${SEP}${formatDistance(d)}`,
       trailing: formatUsdc(dw.price_usdc),
       position: dw.location.coordinates,
       ring: drivewayRing(dw.location.coordinates),
@@ -123,7 +124,7 @@ export function mapPills(options: FindOption[]): MapPill[] {
   return options.map((o) => ({
     id: o.id,
     kind: o.kind,
-    label: o.kind !== "driveway" ? PILL_LABEL[o.kind] : o.mine ? "Your driveway" : `${o.trailing} · Reserve`,
+    label: o.kind !== "driveway" ? PILL_LABEL[o.kind] : o.mine ? "Your driveway" : `${o.trailing}${SEP}Reserve`,
     position: o.position,
     mine: o.mine,
   }));

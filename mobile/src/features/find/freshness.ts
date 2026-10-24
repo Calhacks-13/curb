@@ -51,6 +51,12 @@ export function visibleSpaces(spaces: ParkingSpace[], zones: Record<string, Curb
   return out;
 }
 
+/** "20 sec", "2 min": the age without "ago", for compact stat values. */
+export function formatAgeShort(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "—";
+  return seconds < 60 ? `${Math.max(1, Math.round(seconds))} sec` : `${Math.floor(seconds / 60)} min`;
+}
+
 /** "20 sec ago", "2 min ago". */
 export function formatAge(seconds: number): string {
   if (!Number.isFinite(seconds)) return "not observed";

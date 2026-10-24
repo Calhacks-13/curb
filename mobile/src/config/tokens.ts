@@ -58,3 +58,9 @@ export const shadow = {
     elevation: 6,
   },
 } as const;
+
+/**
+ * Separator for inline metadata ("Seen 20 sec ago • 2 min walk"). Overpass draws
+ * its middle dot off-center, so we use a bullet, which sits evenly.
+ */
+export const SEP = " • ";

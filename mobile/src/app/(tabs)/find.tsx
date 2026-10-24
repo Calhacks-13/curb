@@ -19,7 +19,7 @@ import { SpaceDetailSheet } from "@/components/find/SpaceDetailSheet";
 import { SHEET_PEEK, SheetFrame } from "@/components/sheet/SheetFrame";
 import { CameraOverlay } from "@/components/CameraOverlay";
 import { DraggablePip } from "@/components/DraggablePip";
-import { font, ink, radius } from "@/config/tokens";
+import { font, ink, radius, SEP } from "@/config/tokens";
 import { DEMO_DRIVER } from "@/data/mock/marina";
 import { DemoModeBadge } from "@/demo/DemoModeBadge";
 import { getDeviceId, newCaptureSessionId, type FrameContext } from "@/features/capture/frameUpload";
@@ -248,7 +248,7 @@ export default function FindScreen() {
       <View style={[styles.top, { top: insets.top + 8 }]}>
         <View style={styles.leftCol}>
           {mode === "demo" && <DemoModeBadge />}
-          {realtime === "reconnecting" && <StatusPill text="Reconnecting · showing last update" />}
+          {realtime === "reconnecting" && <StatusPill text={`Reconnecting${SEP}showing last update`} />}
         </View>
         <View style={styles.mapButtons}>
           <AccountMenu />

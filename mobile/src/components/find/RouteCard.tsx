@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { font, ink, radius } from "@/config/tokens";
+import { font, ink, radius, SEP } from "@/config/tokens";
 import { formatAge } from "@/features/find/freshness";
 import { formatDistance, type FindOption } from "@/features/find/options";
 import { formatDuration, type Route } from "@/features/find/route";
@@ -35,7 +35,9 @@ export function RouteCard({ route, target, targetTitle, ageSeconds, onEnd }: Pro
         </Text>
       </View>
       <Text style={styles.eta}>
-        {formatDuration(route.durationS)} · {formatDistance(route.distanceM)}
+        {formatDuration(route.durationS)}
+        {SEP}
+        {formatDistance(route.distanceM)}
       </Text>
       <Text style={styles.status} accessibilityLiveRegion="polite">
         {status}

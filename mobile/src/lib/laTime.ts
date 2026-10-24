@@ -44,6 +44,11 @@ export function formatLaClock(iso: string | Date): string {
   return clockFmt.format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
+/** "6 PM" / "6:30 PM" in LA time (drops ":00"). */
+export function formatLaClockShort(iso: string | Date): string {
+  return formatLaClock(iso).replace(":00", "");
+}
+
 /** "HH:MM" -> minutes after midnight. */
 export function hhmmToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);

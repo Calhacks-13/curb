@@ -215,9 +215,9 @@ export const MAP_RUNTIME_JS = String.raw`
   function escapeHtml(t) {
     return String(t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
   }
-  /** " · " becomes a spaced separator element; the font's middle dot eats a plain space. */
+  /** " • " becomes a spaced separator element so its gaps stay even in Overpass. */
   function labelHtml(label) {
-    return escapeHtml(label).split(" · ").join('<span class="sep">·</span>');
+    return escapeHtml(label).split(" • ").join('<span class="sep">•</span>');
   }
 
   var pills = {}; // id -> { marker, el }
