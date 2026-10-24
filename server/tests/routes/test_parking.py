@@ -168,6 +168,29 @@ def test_local_demo_seed_refreshes_observations_without_changing_fixture_data(se
     assert fixture.nearby.spaces[0].last_observed_at == datetime(2026, 10, 24, 0, 59, 40, tzinfo=UTC)
 
 
+def test_confirmed_scan_is_saved_to_the_canonical_map_repository(seed):
+    from app.models.cv import BlockObservation
+    from app.routes.v1 import _persist_confirmed_scan
+
+    client, repository = build_client(seed)
+    observed_at = NOW - timedelta(seconds=20)
+    scan = BlockObservation(
+        segment_id="scan_segment_1", gap_count=1, confidence=0.91,
+        lat=37.80279, lng=-122.44935,
+        location={"type": "Point", "coordinates": [-122.44935, 37.80279]},
+        confirmed_at=observed_at,
+    )
+
+    asyncio.run(_persist_confirmed_scan(repository, scan))
+
+    response = nearby(client, lat=scan.lat, lng=scan.lng)
+    assert response.status_code == 200
+    body = response.json()
+    assert [space["id"] for space in body["spaces"]] == [scan.segment_id]
+    assert body["spaces"][0]["location"]["coordinates"] == [scan.lng, scan.lat]
+    assert body["zones"][0]["current_rules"].startswith("Scanner-confirmed")
+
+
 def test_sessions_are_idempotent_validate_profiles_and_do_not_refresh_seed(seed):
     from app.seed.loader import load_seed
 

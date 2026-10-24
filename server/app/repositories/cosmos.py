@@ -6,6 +6,7 @@ from app.repositories.protocols import Collection
 
 class DocumentContainer(Protocol):
     async def create_item(self, body: dict) -> dict: ...
+    async def upsert_item(self, body: dict) -> dict: ...
     async def read_item(self, item: str, partition_key: str) -> dict: ...
     def query_items(self, query: str, *, partition_key: str): ...
 
@@ -46,6 +47,15 @@ class CosmosParkingRepository:
         except Exception as error:
             if getattr(error, "status_code", None) != 409:
                 raise RepositoryError("parking seed write failed") from None
+
+    async def upsert(self, collection: Collection, value: ContractModel) -> None:
+        try:
+            await self._container.upsert_item({
+                "id": value.id, "partition_key": f"parking:{collection}",
+                "value": value.model_dump(mode="json"),
+            })
+        except Exception:
+            raise RepositoryError("parking write failed") from None
 
     async def _get(self, collection, id, model):
         try:

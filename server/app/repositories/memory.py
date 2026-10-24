@@ -11,6 +11,9 @@ class InMemoryParkingRepository:
     async def add_if_absent(self, collection: Collection, value: ContractModel) -> None:
         self._data[collection].setdefault(value.id, value.model_copy(deep=True))
 
+    async def upsert(self, collection: Collection, value: ContractModel) -> None:
+        self._data[collection][value.id] = value.model_copy(deep=True)
+
     def _get(self, collection, id):
         value = self._data[collection].get(id)
         return value.model_copy(deep=True) if value else None

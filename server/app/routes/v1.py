@@ -10,13 +10,30 @@ import asyncio
 import json
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
-from fastapi import APIRouter, Form, Query, UploadFile, File
+from fastapi import APIRouter, Form, Query, Request, UploadFile, File
 from pydantic import BaseModel
 
 from app.azure import cosmos, signalr
 from app.cv.frame_selector import FrameSelector
+from app.models.cv import BlockObservation
+from app.models.domain import (
+    CurbZoneView as CanonicalCurbZone,
+    DayOfWeek,
+    GeoLineString,
+    GeoPoint as CanonicalGeoPoint,
+    GeoPolygon,
+    InternalSpaceState,
+    LegalStatus,
+    ParkingSpaceView as CanonicalParkingSpace,
+    PaymentRules,
+    PermitRules,
+    RuleKind,
+    SignRuleView as CanonicalSignRule,
+    WeeklyRuleWindow,
+)
+from app.repositories.protocols import ParkingRepository
 from app.routes.ws import viewers as ws_viewers
 
 logger = logging.getLogger(__name__)
@@ -200,6 +217,87 @@ def _block_to_zone(block: dict, signs: list[dict]) -> CurbZone:
     )
 
 
+async def _persist_confirmed_scan(repository: ParkingRepository, block: BlockObservation) -> None:
+    """Store a scanner-confirmed opening in the canonical map repository.
+
+    A scanner observation is tied to its captured GPS coordinates; it never
+    moves demo data or invents a location elsewhere on the map.
+    """
+    if not (-90 <= block.lat <= 90 and -180 <= block.lng <= 180) or (block.lat == block.lng == 0):
+        logger.warning("Not persisting scan %s without a valid GPS coordinate", block.segment_id)
+        return
+
+    observed_at = block.confirmed_at
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=UTC)
+    else:
+        observed_at = observed_at.astimezone(UTC)
+
+    sign = block.sign_rules
+    evidence = sign.combined_summary.strip() if sign and sign.combined_summary.strip() else (
+        "Scanner-confirmed open curb space; verify posted signs before parking."
+    )
+    prohibited = bool(sign and any(
+        phrase in evidence.lower() for phrase in ("no parking", "no stopping")
+    ))
+    legal_status = LegalStatus.ILLEGAL if prohibited else LegalStatus.LEGAL
+    rule_kind = RuleKind.NO_PARKING if prohibited else RuleKind.ALLOWED
+    rule_id = f"scan-rule:{block.segment_id}"
+    d = 0.00003
+    line_d = 0.00005
+    coordinates = (block.lng, block.lat)
+
+    rule = CanonicalSignRule(
+        id=rule_id,
+        zone_id=block.segment_id,
+        weekly_schedule=[WeeklyRuleWindow(
+            days=list(DayOfWeek), start_local="00:00", end_local="23:59", kind=rule_kind,
+        )],
+        max_minutes=sign.combined_max_duration_min if sign else None,
+        payment_rules=PaymentRules(
+            required=bool(sign and sign.combined_price),
+            price_text=sign.combined_price if sign else None,
+        ),
+        permit_rules=PermitRules(required=False, permitted_labels=[]),
+        exceptions=[],
+        evidence_text=evidence,
+        interpretation_confidence=max(0.0, min(1.0, block.confidence)),
+        last_validated_at=observed_at,
+        version=1,
+    )
+    zone = CanonicalCurbZone(
+        id=block.segment_id,
+        geometry=GeoLineString(type="LineString", coordinates=[
+            (block.lng - line_d, block.lat), (block.lng + line_d, block.lat),
+        ]),
+        sign_rule_id=rule_id,
+        legal_status_now=legal_status,
+        current_rules=evidence,
+        next_change_at=None,
+        version=1,
+    )
+    space = CanonicalParkingSpace(
+        id=block.segment_id,
+        zone_id=block.segment_id,
+        location=CanonicalGeoPoint(type="Point", coordinates=coordinates),
+        stall_geometry=GeoPolygon(type="Polygon", coordinates=[[
+            (block.lng - d, block.lat - d), (block.lng + d, block.lat - d),
+            (block.lng + d, block.lat + d), (block.lng - d, block.lat + d),
+            (block.lng - d, block.lat - d),
+        ]]),
+        internal_state=InternalSpaceState.OPEN if block.gap_count > 0 else InternalSpaceState.OCCUPIED,
+        last_observed_at=observed_at,
+        base_confidence=max(0.0, min(1.0, block.confidence)),
+        freshness=None,
+        status_label="Likely open",
+        distance_m=0,
+        version=1,
+    )
+    await repository.upsert("rules", rule)
+    await repository.upsert("zones", zone)
+    await repository.upsert("spaces", space)
+
+
 def _sign_to_rule_view(sign_doc: dict) -> SignRuleView:
     """Convert a Cosmos sign doc (SignPoleReading or legacy SignRules) to mobile SignRuleView."""
     # Handle both SignPoleReading (combined_summary) and legacy SignRules (summary)
@@ -261,6 +359,7 @@ def _driveway_to_view(dw: dict) -> dict:
 
 @router.post("/vision/frames")
 async def upload_frame(
+    request: Request,
     frame: UploadFile = File(...),
     metadata: str = Form(...),
 ):
@@ -317,6 +416,7 @@ async def upload_frame(
     }
     confirmed = result.get("confirmed_block")
     if confirmed is not None:
+        await _persist_confirmed_scan(request.app.state.parking_repository, confirmed)
         block_dict = confirmed.model_dump(mode="json")
         response["space"] = _block_to_space(block_dict).model_dump(mode="json")
         response["zone"] = _block_to_zone(block_dict, []).model_dump(mode="json")
