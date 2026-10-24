@@ -119,8 +119,9 @@ export function buildDemoFixture(now: Date) {
       ? `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${drivewayPos[0]},${drivewayPos[1]},19.4,0/640x360@2x?access_token=${token}`
       : null,
     price_usdc: "8.00",
-    availability_start: "08:00",
-    availability_end: "22:00",
+    // Overnight window so the demo works for late testing and an early judging slot.
+    availability_start: "07:00",
+    availability_end: "03:00",
     availability_timezone: "America/Los_Angeles",
     state: "AVAILABLE",
     held_by_user_id: null,

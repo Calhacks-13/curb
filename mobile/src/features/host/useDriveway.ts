@@ -22,18 +22,25 @@ export function sameDraft(a: DrivewayDraft, b: DrivewayDraft) {
   return a.available === b.available && a.price === b.price && a.start === b.start && a.end === b.end;
 }
 
-const toHhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+const DAY = 24 * 60;
+const toHhmm = (min: number) => {
+  const m = ((min % DAY) + DAY) % DAY;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
 
-/** Moves a same-day window edge by `deltaMin`, keeping at least an hour between start and end. */
+/** Window length in minutes; windows may run past midnight (e.g. 7 AM to 3 AM). */
+function windowLength(start: string, end: string) {
+  return (((hhmmToMinutes(end) - hhmmToMinutes(start)) % DAY) + DAY) % DAY;
+}
+
+/**
+ * Moves one window edge by `deltaMin`, wrapping past midnight, while keeping the
+ * window between 1 hour and 23 hours long.
+ */
 export function shiftWindow(draft: DrivewayDraft, edge: "start" | "end", deltaMin: number): DrivewayDraft {
-  const s = hhmmToMinutes(draft.start);
-  const e = hhmmToMinutes(draft.end);
-  if (edge === "start") {
-    const next = Math.min(Math.max(0, s + deltaMin), e - 60);
-    return { ...draft, start: toHhmm(next) };
-  }
-  const next = Math.max(Math.min(24 * 60 - 30, e + deltaMin), s + 60);
-  return { ...draft, end: toHhmm(next) };
+  const next = { ...draft, [edge]: toHhmm(hhmmToMinutes(draft[edge]) + deltaMin) };
+  const len = windowLength(next.start, next.end);
+  return len >= 60 && len <= DAY - 60 ? next : draft;
 }
 
 export function ownedDriveway(state: ParkingState, ownerId: string | null): Driveway | null {

@@ -66,11 +66,12 @@ describe("owner availability window", () => {
     expect(shiftWindow(base, "end", -60).end).toBe("21:00");
   });
 
-  it("keeps at least an hour between start and end and stays inside the day", () => {
+  it("keeps the window between 1 and 23 hours, wrapping past midnight", () => {
     const tight = { ...base, start: "20:00", end: "21:00" };
-    expect(shiftWindow(tight, "start", 60).start).toBe("20:00");
-    expect(shiftWindow(tight, "end", -60).end).toBe("21:00");
-    expect(shiftWindow({ ...base, start: "00:00" }, "start", -60).start).toBe("00:00");
-    expect(shiftWindow({ ...base, end: "23:30" }, "end", 60).end).toBe("23:30");
+    expect(shiftWindow(tight, "start", 60)).toEqual(tight);
+    expect(shiftWindow(tight, "end", -60)).toEqual(tight);
+    expect(shiftWindow({ ...base, end: "23:00" }, "end", 60).end).toBe("00:00");
+    expect(shiftWindow({ ...base, start: "07:00", end: "03:00" }, "end", 60).end).toBe("04:00");
+    expect(shiftWindow({ ...base, start: "07:00", end: "06:00" }, "end", 60)).toMatchObject({ end: "06:00" });
   });
 });
