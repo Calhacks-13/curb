@@ -22,6 +22,7 @@ _signs_container = None
 _mem_blocks: dict[str, dict] = {}
 _mem_spots: dict[str, dict] = {}
 _mem_signs: dict[str, dict] = {}
+_mem_driveways: dict[str, dict] = {}
 _use_memory: bool = False
 
 
@@ -188,6 +189,15 @@ async def query_signs_nearby(
     return items
 
 
+async def query_driveways_nearby(
+    lat: float, lng: float, radius_m: float = 500
+) -> list[dict]:
+    if _use_memory:
+        return _mem_nearby(_mem_driveways, lat, lng, radius_m)
+    # No Cosmos container for driveways yet — in-memory only for demo
+    return _mem_nearby(_mem_driveways, lat, lng, radius_m)
+
+
 async def get_block(segment_id: str) -> dict | None:
     if _use_memory:
         return _mem_blocks.get(segment_id)
@@ -258,20 +268,43 @@ def _seed_demo_data() -> None:
         }
         _mem_blocks[spot["segment_id"]] = block_doc
 
-    logger.info("Seeded %d demo spots + blocks into memory store", len(SEED_SPOTS))
+    for dw in _SEED_DRIVEWAYS:
+        lng, lat = dw["lng"], dw["lat"]
+        doc = {**dw, "location": {"type": "Point", "coordinates": [lng, lat]}}
+        _mem_driveways[dw["id"]] = doc
+
+    logger.info("Seeded %d demo spots + blocks + %d driveways into memory store", len(SEED_SPOTS), len(_SEED_DRIVEWAYS))
 
 
 # Shared seed data used by both in-memory and Cosmos paths
 _SEED_SPOTS = [
     # Palace of Fine Arts area — Baker St, Bay St, Lyon St
+    # seed_age_sec controls freshness color: ≤90s green, ≤180s yellow, ≤300s gray
     {"id": "seed_spot_1", "segment_id": "seg_baker_bay_1", "status": "open", "gap_count": 1,
-     "confidence": 0.88, "lat": 37.80190, "lng": -122.44720, "width_meters": 5.8},
+     "confidence": 0.88, "lat": 37.80190, "lng": -122.44720, "width_meters": 5.8, "seed_age_sec": 30},
     {"id": "seed_spot_2", "segment_id": "seg_bay_lyon_1", "status": "open", "gap_count": 1,
-     "confidence": 0.84, "lat": 37.80240, "lng": -122.44630, "width_meters": 6.1},
+     "confidence": 0.84, "lat": 37.80240, "lng": -122.44630, "width_meters": 6.1, "seed_age_sec": 120},
     {"id": "seed_spot_3", "segment_id": "seg_palace_dr_1", "status": "open", "gap_count": 1,
-     "confidence": 0.91, "lat": 37.80150, "lng": -122.44850, "width_meters": 5.5},
+     "confidence": 0.91, "lat": 37.80150, "lng": -122.44850, "width_meters": 5.5, "seed_age_sec": 10},
     {"id": "seed_spot_4", "segment_id": "seg_lyon_jefferson_1", "status": "open", "gap_count": 1,
-     "confidence": 0.80, "lat": 37.80310, "lng": -122.44550, "width_meters": 5.2},
+     "confidence": 0.80, "lat": 37.80310, "lng": -122.44550, "width_meters": 5.2, "seed_age_sec": 220},
+]
+
+
+_SEED_DRIVEWAYS = [
+    # Private driveways near Palace of Fine Arts — purple on map
+    {"id": "driveway_demo_1", "owner_id": "owner_demo",
+     "lat": 37.80170, "lng": -122.44680,
+     "photo_url": None, "price_usdc": "8",
+     "availability_start": "00:00", "availability_end": "23:59",
+     "availability_timezone": "America/Los_Angeles",
+     "state": "AVAILABLE", "held_by_user_id": None, "version": 1},
+    {"id": "driveway_demo_2", "owner_id": "owner_demo",
+     "lat": 37.80280, "lng": -122.44770,
+     "photo_url": None, "price_usdc": "6",
+     "availability_start": "00:00", "availability_end": "23:59",
+     "availability_timezone": "America/Los_Angeles",
+     "state": "AVAILABLE", "held_by_user_id": None, "version": 1},
 ]
 
 
@@ -308,4 +341,9 @@ async def _seed_cosmos_data() -> None:
         except Exception:
             logger.debug("Seed upsert failed for %s", spot["id"], exc_info=True)
 
-    logger.info("Seeded %d demo spots + blocks into Cosmos", len(_SEED_SPOTS))
+    # Driveways go into in-memory store (no Cosmos container for driveways yet)
+    for dw in _SEED_DRIVEWAYS:
+        lng, lat = dw["lng"], dw["lat"]
+        _mem_driveways[dw["id"]] = {**dw, "location": {"type": "Point", "coordinates": [lng, lat]}}
+
+    logger.info("Seeded %d demo spots + blocks + %d driveways", len(_SEED_SPOTS), len(_SEED_DRIVEWAYS))

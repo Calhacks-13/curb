@@ -2,7 +2,7 @@
 Azure SignalR / Web PubSub publisher (serverless REST mode).
 
 Two transports:
-  - SignalR: legacy web client (broadcast_block / broadcast_block_expired)
+  - SignalR: legacy web client (broadcast_block)
   - Web PubSub: mobile app realtime (get_client_url / broadcast_realtime_event)
 
 Graceful fallback: if connection strings are empty, all operations are no-ops.
@@ -82,34 +82,6 @@ async def broadcast_block(observation: BlockObservation) -> None:
     payload = {
         "target": "spotUpdate",
         "arguments": [observation.model_dump(mode="json")],
-    }
-    try:
-        await _client.post(
-            url,
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {key}",
-            },
-            timeout=5.0,
-        )
-    except httpx.HTTPError:
-        pass
-
-
-async def broadcast_block_expired(segment_id: str) -> None:
-    if _client is None or not settings.signalr_connection_string:
-        return
-    conn = _parse_connection_string(settings.signalr_connection_string)
-    endpoint = conn.get("Endpoint", "")
-    key = conn.get("AccessKey", "")
-    if not endpoint or not key:
-        return
-
-    url = f"{endpoint}/api/v1/hubs/{settings.signalr_hub}"
-    payload = {
-        "target": "spotExpired",
-        "arguments": [{"segment_id": segment_id}],
     }
     try:
         await _client.post(

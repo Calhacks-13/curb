@@ -9,7 +9,7 @@ and the mobile's ParkingSpace/CurbZone/NearbyParkingResponse contract.
 import json
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Form, Query, UploadFile, File
 from pydantic import BaseModel
@@ -173,21 +173,17 @@ def _block_to_zone(block: dict, signs: list[dict]) -> CurbZone:
         "coordinates": [[lng - d, lat], [lng + d, lat]],
     }
 
-    sign_rule_id = None
-    legal_status = "UNKNOWN"
+    sign_rule_id = seg_id
+    legal_status = "LEGAL"
 
-    # Check if there's a matching sign for this block
-    # sign_rules is now SignPoleReading (combined_summary) not SignRules (summary)
+    # If sign rules exist, use them to determine legal status
     block_sign = block.get("sign_rules")
     if isinstance(block_sign, dict):
         summary = block_sign.get("combined_summary") or block_sign.get("summary") or ""
         if summary:
-            sign_rule_id = seg_id
             summary_lower = summary.lower()
             if "no parking" in summary_lower or "no stopping" in summary_lower:
                 legal_status = "ILLEGAL"
-            else:
-                legal_status = "LEGAL"
 
     return CurbZone(
         id=seg_id,
@@ -212,6 +208,27 @@ def _sign_to_rule_view(sign_doc: dict) -> SignRuleView:
         interpretation_confidence=sign_doc.get("confidence_score", 0.0),
         last_validated_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _driveway_to_view(dw: dict) -> dict:
+    """Convert an in-memory driveway doc to the mobile Driveway shape."""
+    loc = dw.get("location", {})
+    if not loc:
+        lng, lat = dw.get("lng", 0), dw.get("lat", 0)
+        loc = {"type": "Point", "coordinates": [lng, lat]}
+    return {
+        "id": dw.get("id", ""),
+        "owner_id": dw.get("owner_id", ""),
+        "location": loc,
+        "photo_url": dw.get("photo_url"),
+        "price_usdc": str(dw.get("price_usdc", "0")),
+        "availability_start": dw.get("availability_start", "00:00"),
+        "availability_end": dw.get("availability_end", "23:59"),
+        "availability_timezone": "America/Los_Angeles",
+        "state": dw.get("state", "AVAILABLE"),
+        "held_by_user_id": dw.get("held_by_user_id"),
+        "version": dw.get("version", 1),
+    }
 
 
 # ---------- endpoints ----------
@@ -240,10 +257,24 @@ async def nearby_parking(
     lng: float = Query(...),
     radius_m: float = Query(805, ge=50, le=5000),
 ):
-    """Query spots + blocks + signs, transform to NearbyParkingResponse."""
+    """Query spots + blocks + signs + driveways, transform to NearbyParkingResponse."""
     spots = await cosmos.query_spots_nearby(lat, lng, radius_m)
     blocks = await cosmos.query_blocks_nearby(lat, lng, radius_m)
     signs = await cosmos.query_signs_nearby(lat, lng, radius_m)
+    raw_driveways = await cosmos.query_driveways_nearby(lat, lng, radius_m)
+
+    # Refresh seed timestamps relative to now with per-spot age offsets
+    # so they never expire but show different freshness colors on the map
+    now = datetime.now(timezone.utc)
+    for s in spots:
+        if s.get("id", "").startswith("seed_"):
+            age = s.get("seed_age_sec", 0)
+            ts = (now - timedelta(seconds=age)).isoformat()
+            s["last_seen_at"] = ts
+            s["opened_at"] = ts
+    for b in blocks:
+        if b.get("segment_id", "").startswith("seg_"):
+            b["confirmed_at"] = now.isoformat()
 
     # Prefer SpotDocuments (have real status); fall back to legacy blocks
     spot_segments = {s.get("segment_id") for s in spots}
@@ -254,12 +285,13 @@ async def nearby_parking(
             spaces.append(_block_to_space(b))
 
     zones = [_block_to_zone(b, signs) for b in blocks]
+    driveways = [_driveway_to_view(d) for d in raw_driveways]
 
     return NearbyParkingResponse(
         generated_at=datetime.now(timezone.utc).isoformat(),
         zones=zones,
         spaces=spaces,
-        driveways=[],
+        driveways=driveways,
     )
 
 

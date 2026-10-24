@@ -74,9 +74,12 @@ export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): P
       const booking = { ...(prev ?? {}), ...patch } as Booking;
       return { ...state, versions, bookings: { ...state.bookings, [event.entity_id]: booking } };
     }
-    case "sign_rule.updated":
-      // Rule text is read through the space detail endpoint; only the version is tracked here.
-      return { ...state, versions };
+    case "sign_rule.updated": {
+      const prev = state.zones[event.entity_id];
+      if (!("geometry" in event.payload)) return { ...state, versions };
+      const zone = { ...(prev ?? {}), ...patch } as CurbZone;
+      return { ...state, versions, zones: { ...state.zones, [event.entity_id]: zone } };
+    }
     default:
       return state;
   }

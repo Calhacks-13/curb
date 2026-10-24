@@ -26,13 +26,6 @@ class Settings(BaseSettings):
 
     # Bird's Eye View
     bev_output_size: int = 400  # BEV image is NxN pixels
-    bev_meters_per_pixel: float = 0.05  # each BEV pixel = 5cm
-    bev_forward_range_m: float = 20.0  # how far ahead to project
-
-    # Occupancy grid
-    occupancy_cell_size_m: float = 1.0  # each grid cell = 1m x 1m
-    occupancy_free_threshold: int = 3  # frames to confirm free
-    occupancy_decay_sec: float = 30.0  # evidence decays after this
 
     # Gap sizing (meters)
     min_gap_meters: float = 4.5  # minimum gap to count as a parking spot
@@ -49,11 +42,6 @@ class Settings(BaseSettings):
     gap_confirm_sec: float = 2.0  # seconds gap must persist to confirm
     gap_expire_sec: float = 1.5  # seconds without seeing gap before it expires
 
-    # Legacy fallback (kept for non-tracking path)
-    confirmation_count: int = 3
-    confirmation_window_sec: float = 10.0
-    gap_tolerance: int = 1
-
     # Sign confidence
     sign_read_confidence_threshold: float = 0.5
 
@@ -62,13 +50,8 @@ class Settings(BaseSettings):
     sign_default_distance_m: float = 8.0
     sign_dedup_radius_m: float = 15.0
 
-    # Block-level snapping (3 decimal places ~ 111m)
-    grid_precision: int = 3
-
     # Spot TTL defaults (seconds)
     default_ttl_sec: int = 1800  # 30 min
-    downtown_ttl_sec: int = 900  # 15 min
-    suburb_ttl_sec: int = 3600  # 60 min
 
     # Azure Cosmos DB
     cosmos_endpoint: str = ""

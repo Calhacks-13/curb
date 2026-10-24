@@ -117,13 +117,23 @@ export default function FindScreen() {
   const onSpotConfirmed = useCallback(
     (result: FrameAccepted) => {
       if (!result.space) return;
+      const now = new Date().toISOString();
       dispatchEvent({
         type: "space.opened",
         entity_id: result.space.id,
         entity_version: result.space.version,
-        occurred_at: new Date().toISOString(),
+        occurred_at: now,
         payload: result.space as unknown as Record<string, unknown>,
       });
+      if (result.zone) {
+        dispatchEvent({
+          type: "sign_rule.updated",
+          entity_id: result.zone.id,
+          entity_version: result.zone.version,
+          occurred_at: now,
+          payload: result.zone as unknown as Record<string, unknown>,
+        });
+      }
     },
     [dispatchEvent],
   );

@@ -6,7 +6,6 @@ hand-tuned heuristic needed for relative depth models.
 Falls back to DA2 with calibration if ZoeDepth unavailable.
 """
 
-import asyncio
 import math
 import numpy as np
 from PIL import Image
@@ -89,10 +88,6 @@ def estimate_depth(image: Image.Image) -> np.ndarray | None:
         else:
             depth_map = np.zeros_like(depth_map, dtype=np.float32)
         return depth_map.astype(np.float32)
-
-
-async def estimate_depth_async(image: Image.Image) -> np.ndarray | None:
-    return await asyncio.to_thread(estimate_depth, image)
 
 
 def measure_gap_width_meters(

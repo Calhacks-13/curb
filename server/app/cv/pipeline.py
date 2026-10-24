@@ -228,15 +228,12 @@ def _zone_payload(segment_id: str, lat: float, lng: float, sign_rules: SignPoleR
         "type": "LineString",
         "coordinates": [[lng - d, lat], [lng + d, lat]],
     }
-    legal_status = "UNKNOWN"
-    sign_rule_id = None
+    sign_rule_id = segment_id
+    legal_status = "LEGAL"
     if sign_rules and sign_rules.combined_summary:
-        sign_rule_id = segment_id
         s = sign_rules.combined_summary.lower()
         if "no parking" in s or "no stopping" in s:
             legal_status = "ILLEGAL"
-        else:
-            legal_status = "LEGAL"
     return {
         "id": segment_id,
         "geometry": geometry,
@@ -249,7 +246,7 @@ def _zone_payload(segment_id: str, lat: float, lng: float, sign_rules: SignPoleR
 class SessionState:
     """Per-session tracking state."""
     __slots__ = ("vehicle_tracker", "gap_tracker", "sign_tracker",
-                 "confirmed_gap_segments")
+                 "confirmed_gap_segments", "last_sign_reading")
 
     def __init__(self):
         self.vehicle_tracker = VehicleTracker()
@@ -257,6 +254,7 @@ class SessionState:
         self.sign_tracker = SignTracker()
         # Map gap_key -> segment_id for tracking which gaps map to which spots
         self.confirmed_gap_segments: dict[tuple[int, int], str] = {}
+        self.last_sign_reading: SignPoleReading | None = None
 
 
 class Pipeline:
@@ -324,6 +322,8 @@ class Pipeline:
                 sign_pole_reading = await self._process_sign_tracks(
                     ready_tracks, heading
                 )
+                if sign_pole_reading is not None:
+                    session.last_sign_reading = sign_pole_reading
         else:
             session.sign_tracker.update([])
 
@@ -393,15 +393,16 @@ class Pipeline:
                     for gap in newly_confirmed:
                         session.confirmed_gap_segments[gap.gap_key] = segment_id
                 else:
-                    # New spot
+                    # New spot — use current or cached sign reading
                     best_gap = max(newly_confirmed, key=lambda g: g.duration)
+                    sign_rules = sign_pole_reading or session.last_sign_reading
                     spot = await self._spot_mgr.open_spot(
                         segment_id=segment_id,
                         lat=lat,
                         lng=lng,
                         gap=best_gap,
                         session_id=session_id,
-                        sign_rules=sign_pole_reading,
+                        sign_rules=sign_rules,
                     )
                     # Track gap→segment mapping for occupy detection
                     for gap in newly_confirmed:
@@ -412,7 +413,7 @@ class Pipeline:
                     segment_id=segment_id,
                     gap_count=len(newly_confirmed),
                     confidence=1.0,
-                    sign_rules=sign_pole_reading,
+                    sign_rules=sign_pole_reading or session.last_sign_reading,
                     confirmed_at=datetime.utcnow(),
                     ttl=settings.default_ttl_sec,
                     lat=lat,

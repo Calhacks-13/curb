@@ -43,16 +43,12 @@ app.add_middleware(
 
 # Wire routers
 from app.routes.ws import router as ws_router
-from app.routes.spots import router as spots_router
 from app.routes.signs import router as signs_router
-from app.routes.dashboard import router as dashboard_router
 from app.routes.v1 import router as v1_router
 
 app.include_router(v1_router)
 app.include_router(ws_router)
-app.include_router(spots_router)
 app.include_router(signs_router)
-app.include_router(dashboard_router)
 
 # Serve static files
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -61,11 +57,6 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/")
 async def root():
     return FileResponse(STATIC_DIR / "client.html")
-
-
-@app.get("/dashboard")
-async def dashboard_page():
-    return FileResponse(STATIC_DIR / "dashboard.html")
 
 
 @app.get("/viewer")

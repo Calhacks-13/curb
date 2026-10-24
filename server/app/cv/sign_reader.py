@@ -7,10 +7,14 @@ sends to Claude Vision API, returns structured SignRules or SignPoleReading.
 
 import base64
 import json
+import logging
+
 import anthropic
 
 from app.config import settings
 from app.models import SignRules, SignPoleReading, SignReading
+
+logger = logging.getLogger(__name__)
 
 _client: anthropic.AsyncAnthropic | None = None
 
@@ -42,6 +46,13 @@ async def read_sign(image_bytes: bytes) -> SignRules:
     Send cropped sign image to Claude Vision.
     Returns SignRules with confidence scoring.
     """
+    if not settings.anthropic_api_key:
+        logger.warning("CURB_ANTHROPIC_API_KEY not set — skipping sign reading")
+        return SignRules(
+            summary="Sign detected but not read (no API key)",
+            confidence_score=0.0,
+            flagged=True,
+        )
     client = get_client()
     b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
@@ -144,6 +155,13 @@ async def read_sign_pole(image_bytes: bytes) -> SignPoleReading:
     Send cropped pole image (one or more signs) to Claude Vision.
     Returns SignPoleReading with per-sign structured rules.
     """
+    if not settings.anthropic_api_key:
+        logger.warning("CURB_ANTHROPIC_API_KEY not set — skipping sign reading")
+        return SignPoleReading(
+            combined_summary="Sign detected but not read (no API key)",
+            confidence_score=0.0,
+            flagged=True,
+        )
     client = get_client()
     b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
