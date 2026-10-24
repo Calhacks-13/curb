@@ -6,6 +6,8 @@ Hardware auto-detection sets optimal defaults for CPU vs CUDA vs MPS.
 """
 
 import logging
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 _logger = logging.getLogger(__name__)
@@ -111,6 +113,23 @@ class Settings(BaseSettings):
 
     # Anthropic
     anthropic_api_key: str = ""
+
+    # Browser-only development origins. Native iOS requests do not use CORS.
+    cors_allowed_origins: str = "http://localhost:8081,http://localhost:19006"
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def validate_cors_allowed_origins(cls, value: str) -> str:
+        origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+        if "*" in origins:
+            raise ValueError("wildcard CORS origins are not allowed")
+        if not origins:
+            raise ValueError("at least one CORS origin is required")
+        return ",".join(origins)
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return self.cors_allowed_origins.split(",")
 
     # Detected device (read-only, set at startup)
     device: str = _DEVICE
