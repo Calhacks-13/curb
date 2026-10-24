@@ -90,6 +90,19 @@ def get_spot_by_segment_mem(segment_id: str) -> dict | None:
     return None
 
 
+async def get_spot(spot_id: str) -> dict | None:
+    """Read one spot by id (spots are partitioned by segment_id, so query by id)."""
+    if _use_memory:
+        return _mem_spots.get(spot_id)
+    if _spots_container is None:
+        return None
+    query = "SELECT * FROM c WHERE c.id = @id"
+    params = [{"name": "@id", "value": spot_id}]
+    async for item in _spots_container.query_items(query, parameters=params):
+        return item
+    return None
+
+
 async def query_spots_nearby(
     lat: float, lng: float, radius_m: float = 500
 ) -> list[dict]:

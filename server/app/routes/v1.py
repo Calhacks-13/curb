@@ -333,8 +333,7 @@ async def get_space(space_id: str):
     if block is None:
         # space_id might be a spot id (e.g. "seed_spot_1") — find the spot
         # and use its segment_id to look up the block
-        spots = await cosmos.query_spots_nearby(0, 0, 50000)  # broad search
-        spot = next((s for s in spots if s.get("id") == space_id), None)
+        spot = await cosmos.get_spot(space_id)
         if spot:
             seg_id = spot.get("segment_id", "")
             block = await cosmos.get_block(seg_id)
