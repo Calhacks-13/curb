@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field, HttpUrl, field_validator, model_validator
+from pydantic import Field, HttpUrl, WebsocketUrl, field_validator, model_validator
 
 from app.models.domain import (
     AgentParkingOption,
@@ -27,9 +27,9 @@ class DemoSessionResponse(ContractModel):
 
 
 class NearbyParkingQuery(ContractModel):
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
-    radius_m: float
+    lat: float = Field(ge=-90, le=90, strict=True)
+    lng: float = Field(ge=-180, le=180, strict=True)
+    radius_m: float = Field(strict=True)
 
     @field_validator("radius_m")
     @classmethod
@@ -40,7 +40,14 @@ class NearbyParkingQuery(ContractModel):
 
 
 class RealtimeNegotiateResponse(ContractModel):
-    url: HttpUrl
+    url: WebsocketUrl
+
+    @field_validator("url")
+    @classmethod
+    def url_uses_secure_websocket(cls, value: WebsocketUrl) -> WebsocketUrl:
+        if value.scheme != "wss":
+            raise ValueError("URL must use wss://")
+        return value
 
 
 class VisionFrameMetadata(ContractModel):
@@ -59,7 +66,7 @@ class VisionFrameAccepted(ContractModel):
 
 
 class DrivewayUpdateRequest(ContractModel):
-    expected_version: int = Field(gt=0)
+    expected_version: int = Field(gt=0, strict=True)
     available: bool
     price_usdc: str = Field(pattern=r"^\d+(\.\d{1,6})?$")
     availability_start: UtcDateTime
@@ -73,7 +80,7 @@ class DrivewayUpdateRequest(ContractModel):
 
 
 class CreateHoldRequest(ContractModel):
-    expected_version: int = Field(gt=0)
+    expected_version: int = Field(gt=0, strict=True)
 
 
 class ReleaseHoldRequest(ContractModel):
@@ -85,13 +92,13 @@ class RecoverDrivewayRequest(CreateHoldRequest):
 
 
 class PaymentProcessingRequest(ContractModel):
-    expected_booking_version: int = Field(gt=0)
+    expected_booking_version: int = Field(gt=0, strict=True)
 
 
 class FinalizeBookingRequest(ContractModel):
     idempotency_key: str = Field(min_length=1)
     transaction_hash: str = Field(min_length=1)
-    expected_booking_version: int = Field(gt=0)
+    expected_booking_version: int = Field(gt=0, strict=True)
 
 
 class PaymentFailedRequest(ContractModel):
@@ -117,9 +124,9 @@ class X402BookingReceipt(ContractModel):
 
 
 class AgentParkingSearchRequest(ContractModel):
-    lat: float = Field(ge=-90, le=90)
-    lng: float = Field(ge=-180, le=180)
-    radius_m: float = Field(gt=0)
+    lat: float = Field(ge=-90, le=90, strict=True)
+    lng: float = Field(ge=-180, le=180, strict=True)
+    radius_m: float = Field(gt=0, strict=True, allow_inf_nan=False)
 
 
 class AgentParkingSearchResponse(ContractModel):

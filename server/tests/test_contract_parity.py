@@ -7,7 +7,14 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.models.api import NearbyParkingQuery, PublicSeedFixture
+from app.models.api import (
+    AgentParkingSearchRequest,
+    CreateHoldRequest,
+    NearbyParkingQuery,
+    PublicSeedFixture,
+    RealtimeNegotiateResponse,
+)
+from app.models.domain import DrivewayView, SignRuleView
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -86,3 +93,52 @@ def test_mobile_nearby_query_requires_the_fixed_half_mile_radius():
 
     with pytest.raises(ValidationError):
         NearbyParkingQuery(lat=37.775, lng=-122.419, radius_m=500)
+
+
+def test_secure_websocket_negotiation_url_matches_typescript_contract():
+    response = RealtimeNegotiateResponse(
+        url="wss://curb.webpubsub.azure.com/client/hubs/curb?access_token=demo"
+    )
+    assert str(response.url).startswith("wss://")
+
+    with pytest.raises(ValidationError):
+        RealtimeNegotiateResponse(url="https://example.test/negotiate")
+
+
+def test_held_driveway_exposes_active_booking_payment_state():
+    raw_driveway = _typescript_seed_fixture()["driveway"]
+    raw_driveway.update(
+        {
+            "state": "HELD",
+            "held_by_user_id": "driver_demo",
+            "active_booking": {
+                "id": "booking_demo_1",
+                "state": "PROCESSING",
+                "payment_status": "PROCESSING",
+            },
+        }
+    )
+
+    driveway = DrivewayView.model_validate(raw_driveway)
+    assert driveway.active_booking.id == "booking_demo_1"
+    assert driveway.active_booking.payment_status.value == "PROCESSING"
+
+
+def test_python_contracts_reject_values_rejected_by_typescript():
+    fixture = _typescript_seed_fixture()
+
+    invalid_booking = {**fixture["booking"], "transaction_hash": ""}
+    with pytest.raises(ValidationError):
+        PublicSeedFixture.model_validate({**fixture, "booking": invalid_booking})
+
+    sign_rule_without_required_nullable_field = {**fixture["sign_rule"]}
+    sign_rule_without_required_nullable_field.pop("max_minutes")
+    with pytest.raises(ValidationError):
+        SignRuleView.model_validate(sign_rule_without_required_nullable_field)
+
+    with pytest.raises(ValidationError):
+        CreateHoldRequest(expected_version=True)
+    with pytest.raises(ValidationError):
+        NearbyParkingQuery(lat="37.775", lng=-122.419, radius_m=804.672)
+    with pytest.raises(ValidationError):
+        AgentParkingSearchRequest(lat=37.775, lng=-122.419, radius_m=float("inf"))

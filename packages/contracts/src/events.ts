@@ -15,61 +15,61 @@ const eventBase = {
 };
 
 export const RealtimeEventSchema = z.discriminatedUnion("type", [
-  z.object({
+  z.strictObject({
     type: z.literal("space.opened"),
     ...eventBase,
-    payload: z.object({ space: ParkingSpaceViewSchema }),
+    payload: z.strictObject({ space: ParkingSpaceViewSchema }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("space.refreshed"),
     ...eventBase,
-    payload: z.object({ space: ParkingSpaceViewSchema }),
+    payload: z.strictObject({ space: ParkingSpaceViewSchema }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("space.occupied"),
     ...eventBase,
-    payload: z.object({ space_id: z.string().min(1) }),
+    payload: z.strictObject({ space_id: z.string().min(1) }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("space.expired"),
     ...eventBase,
-    payload: z.object({ space_id: z.string().min(1) }),
+    payload: z.strictObject({ space_id: z.string().min(1) }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("sign_rule.updated"),
     ...eventBase,
-    payload: z.object({
+    payload: z.strictObject({
       zone_id: z.string().min(1),
       sign_rule: SignRuleViewSchema,
     }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("driveway.updated"),
     ...eventBase,
-    payload: z.object({ driveway: DrivewayViewSchema }),
+    payload: z.strictObject({ driveway: DrivewayViewSchema }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("driveway.held"),
     ...eventBase,
-    payload: z.object({ driveway: DrivewayViewSchema }),
+    payload: z.strictObject({ driveway: DrivewayViewSchema }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("driveway.released"),
     ...eventBase,
-    payload: z.object({ driveway: DrivewayViewSchema }),
+    payload: z.strictObject({ driveway: DrivewayViewSchema }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("booking.confirmed"),
     ...eventBase,
-    payload: z.object({
+    payload: z.strictObject({
       booking: BookingViewSchema,
       driveway: DrivewayViewSchema,
     }),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("payment.failed"),
     ...eventBase,
-    payload: z.object({
+    payload: z.strictObject({
       booking_id: z.string().min(1),
       code: z.string().min(1),
       retryable: z.boolean(),

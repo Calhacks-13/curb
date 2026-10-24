@@ -11,17 +11,17 @@ export const LongitudeSchema = z.number().min(-180).max(180);
 export const LatitudeSchema = z.number().min(-90).max(90);
 export const LngLatSchema = z.tuple([LongitudeSchema, LatitudeSchema]);
 
-export const GeoPointSchema = z.object({
+export const GeoPointSchema = z.strictObject({
   type: z.literal("Point"),
   coordinates: LngLatSchema,
 });
 
-export const GeoLineStringSchema = z.object({
+export const GeoLineStringSchema = z.strictObject({
   type: z.literal("LineString"),
   coordinates: z.array(LngLatSchema).min(2),
 });
 
-export const GeoPolygonSchema = z.object({
+export const GeoPolygonSchema = z.strictObject({
   type: z.literal("Polygon"),
   coordinates: z.array(z.array(LngLatSchema).min(4)).min(1),
 });
@@ -58,30 +58,30 @@ export const RuleKindSchema = z.enum([
   "METERED",
 ]);
 
-export const WeeklyRuleWindowSchema = z.object({
+export const WeeklyRuleWindowSchema = z.strictObject({
   days: z.array(DayOfWeekSchema).min(1),
   start_local: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   end_local: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   kind: RuleKindSchema,
 });
 
-export const PaymentRulesSchema = z.object({
+export const PaymentRulesSchema = z.strictObject({
   required: z.boolean(),
   price_text: z.string().nullable(),
 });
 
-export const PermitRulesSchema = z.object({
+export const PermitRulesSchema = z.strictObject({
   required: z.boolean(),
   permitted_labels: z.array(z.string()),
 });
 
-export const UserViewSchema = z.object({
+export const UserViewSchema = z.strictObject({
   id: z.string().min(1),
   display_name: z.string().min(1),
   demo_profile: DemoProfileSchema,
 });
 
-export const SignRuleViewSchema = z.object({
+export const SignRuleViewSchema = z.strictObject({
   id: z.string().min(1),
   zone_id: z.string().min(1),
   weekly_schedule: z.array(WeeklyRuleWindowSchema),
@@ -95,7 +95,7 @@ export const SignRuleViewSchema = z.object({
   version: z.number().int().positive(),
 });
 
-export const CurbZoneViewSchema = z.object({
+export const CurbZoneViewSchema = z.strictObject({
   id: z.string().min(1),
   geometry: GeoLineStringSchema,
   sign_rule_id: z.string().min(1).nullable(),
@@ -105,7 +105,7 @@ export const CurbZoneViewSchema = z.object({
   version: z.number().int().positive(),
 });
 
-export const ParkingSpaceViewSchema = z.object({
+export const ParkingSpaceViewSchema = z.strictObject({
   id: z.string().min(1),
   zone_id: z.string().min(1),
   location: GeoPointSchema,
@@ -119,6 +119,12 @@ export const ParkingSpaceViewSchema = z.object({
   version: z.number().int().positive(),
 });
 
+export const ActiveBookingSummarySchema = z.strictObject({
+  id: z.string().min(1),
+  state: BookingStateSchema,
+  payment_status: PaymentStatusSchema,
+});
+
 export const SpaceDetailSchema = ParkingSpaceViewSchema.extend({
   sign_rule: SignRuleViewSchema,
   current_rules: z.string().min(1),
@@ -126,23 +132,41 @@ export const SpaceDetailSchema = ParkingSpaceViewSchema.extend({
   next_change_at: UtcDateTimeSchema.nullable(),
 });
 
-export const DrivewayViewSchema = z.object({
-  id: z.string().min(1),
-  owner_id: z.string().min(1),
-  location: GeoPointSchema,
-  photo_url: z.string().url(),
-  price_usdc: z.string().regex(/^\d+(\.\d{1,6})?$/),
-  availability_start: UtcDateTimeSchema,
-  availability_end: UtcDateTimeSchema,
-  availability_timezone: z.literal("America/Los_Angeles"),
-  state: DrivewayStateSchema,
-  held_by_user_id: z.string().min(1).nullable(),
-  available_now: z.boolean(),
-  distance_m: z.number().nonnegative(),
-  version: z.number().int().positive(),
-});
+export const DrivewayViewSchema = z
+  .strictObject({
+    id: z.string().min(1),
+    owner_id: z.string().min(1),
+    location: GeoPointSchema,
+    photo_url: z.string().url(),
+    price_usdc: z.string().regex(/^\d+(\.\d{1,6})?$/),
+    availability_start: UtcDateTimeSchema,
+    availability_end: UtcDateTimeSchema,
+    availability_timezone: z.literal("America/Los_Angeles"),
+    state: DrivewayStateSchema,
+    held_by_user_id: z.string().min(1).nullable(),
+    active_booking: ActiveBookingSummarySchema.nullable(),
+    available_now: z.boolean(),
+    distance_m: z.number().nonnegative(),
+    version: z.number().int().positive(),
+  })
+  .superRefine((value, context) => {
+    if (value.state === "HELD" && value.active_booking === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["active_booking"],
+        message: "held driveways require an active booking",
+      });
+    }
+    if (["UNAVAILABLE", "AVAILABLE"].includes(value.state) && value.active_booking !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["active_booking"],
+        message: "unheld driveways cannot expose an active booking",
+      });
+    }
+  });
 
-export const BookingViewSchema = z.object({
+export const BookingViewSchema = z.strictObject({
   id: z.string().min(1),
   idempotency_key: z.string().min(1),
   driveway_id: z.string().min(1),
@@ -157,7 +181,7 @@ export const BookingViewSchema = z.object({
   version: z.number().int().positive(),
 });
 
-export const ObservationSchema = z.object({
+export const ObservationSchema = z.strictObject({
   id: z.string().min(1),
   space_id: z.string().min(1),
   session_id: z.string().min(1),
@@ -169,7 +193,7 @@ export const ObservationSchema = z.object({
   model_version: z.string().min(1),
 });
 
-export const NearbyParkingResponseSchema = z.object({
+export const NearbyParkingResponseSchema = z.strictObject({
   generated_at: UtcDateTimeSchema,
   zones: z.array(CurbZoneViewSchema),
   spaces: z.array(ParkingSpaceViewSchema),
@@ -177,7 +201,7 @@ export const NearbyParkingResponseSchema = z.object({
 });
 
 export const ParkingOptionTypeSchema = z.enum(["CURB", "DRIVEWAY"]);
-export const AgentParkingOptionSchema = z.object({
+export const AgentParkingOptionSchema = z.strictObject({
   id: z.string().min(1),
   type: ParkingOptionTypeSchema,
   location: GeoPointSchema,
@@ -190,7 +214,7 @@ export const AgentParkingOptionSchema = z.object({
   reservation_supported: z.boolean(),
 });
 
-export const PublicSeedFixtureSchema = z.object({
+export const PublicSeedFixtureSchema = z.strictObject({
   driver: UserViewSchema,
   owner: UserViewSchema,
   sign_rule: SignRuleViewSchema,
@@ -208,6 +232,7 @@ export type CurbZoneView = z.infer<typeof CurbZoneViewSchema>;
 export type ParkingSpaceView = z.infer<typeof ParkingSpaceViewSchema>;
 export type SpaceDetail = z.infer<typeof SpaceDetailSchema>;
 export type DrivewayView = z.infer<typeof DrivewayViewSchema>;
+export type ActiveBookingSummary = z.infer<typeof ActiveBookingSummarySchema>;
 export type BookingView = z.infer<typeof BookingViewSchema>;
 export type Observation = z.infer<typeof ObservationSchema>;
 export type NearbyParkingResponse = z.infer<typeof NearbyParkingResponseSchema>;

@@ -2,11 +2,19 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 
 
 class ContractModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
 def _utc_datetime(value: datetime) -> datetime:
@@ -156,7 +164,7 @@ class SignRuleView(ContractModel):
     id: str = Field(min_length=1)
     zone_id: str = Field(min_length=1)
     weekly_schedule: list[WeeklyRuleWindow]
-    max_minutes: int | None = Field(default=None, gt=0)
+    max_minutes: int | None = Field(gt=0)
     payment_rules: PaymentRules
     permit_rules: PermitRules
     exceptions: list[str]
@@ -193,8 +201,14 @@ class ParkingSpaceView(ContractModel):
 class SpaceDetail(ParkingSpaceView):
     sign_rule: SignRuleView
     current_rules: str = Field(min_length=1)
-    max_minutes: int | None = Field(default=None, gt=0)
+    max_minutes: int | None = Field(gt=0)
     next_change_at: UtcDateTime | None
+
+
+class ActiveBookingSummary(ContractModel):
+    id: str = Field(min_length=1)
+    state: BookingState
+    payment_status: PaymentStatus
 
 
 class DrivewayView(ContractModel):
@@ -208,9 +222,18 @@ class DrivewayView(ContractModel):
     availability_timezone: Literal["America/Los_Angeles"]
     state: DrivewayState
     held_by_user_id: str | None
+    active_booking: ActiveBookingSummary | None
     available_now: bool
     distance_m: float = Field(ge=0)
     version: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def active_booking_matches_state(self):
+        if self.state == DrivewayState.HELD and self.active_booking is None:
+            raise ValueError("held driveways require an active booking")
+        if self.state in {DrivewayState.UNAVAILABLE, DrivewayState.AVAILABLE} and self.active_booking:
+            raise ValueError("unheld driveways cannot expose an active booking")
+        return self
 
 
 class BookingView(ContractModel):
@@ -222,7 +245,7 @@ class BookingView(ContractModel):
     payment_status: PaymentStatus
     amount_usdc: str = Field(pattern=r"^\d+(\.\d{1,6})?$")
     network: Literal["base-sepolia"]
-    transaction_hash: str | None
+    transaction_hash: str | None = Field(min_length=1)
     created_at: UtcDateTime
     confirmed_at: UtcDateTime | None
     version: int = Field(gt=0)
@@ -245,9 +268,9 @@ class AgentParkingOption(ContractModel):
     type: ParkingOptionType
     location: GeoPoint
     distance_m: float = Field(ge=0)
-    price_usdc: str | None = Field(default=None, pattern=r"^\d+(\.\d{1,6})?$")
+    price_usdc: str | None = Field(pattern=r"^\d+(\.\d{1,6})?$")
     current_rules: str = Field(min_length=1)
-    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence: float | None = Field(ge=0, le=1)
     freshness: Freshness | None
     availability: str = Field(min_length=1)
     reservation_supported: bool

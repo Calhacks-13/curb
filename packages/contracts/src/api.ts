@@ -13,24 +13,30 @@ import {
   UserViewSchema,
 } from "./domain.js";
 
-export const DemoSessionRequestSchema = z.object({ profile: DemoProfileSchema });
-export const DemoSessionResponseSchema = z.object({
+export const DemoSessionRequestSchema = z.strictObject({ profile: DemoProfileSchema });
+export const DemoSessionResponseSchema = z.strictObject({
   user: UserViewSchema,
   token: z.string().min(1),
 });
 
-export const NearbyParkingQuerySchema = z.object({
-  lat: z.coerce.number().min(-90).max(90),
-  lng: z.coerce.number().min(-180).max(180),
-  radius_m: z.coerce
+export const NearbyParkingQuerySchema = z.strictObject({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  radius_m: z
     .number()
     .refine((value) => value === 804.672, "mobile nearby radius must be 804.672 meters"),
 });
 export { NearbyParkingResponseSchema, SpaceDetailSchema };
 
-export const RealtimeNegotiateResponseSchema = z.object({ url: z.string().url() });
+export const SecureWebSocketUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => new URL(value).protocol === "wss:", "URL must use wss://");
+export const RealtimeNegotiateResponseSchema = z.strictObject({
+  url: SecureWebSocketUrlSchema,
+});
 
-export const VisionFrameMetadataSchema = z.object({
+export const VisionFrameMetadataSchema = z.strictObject({
   timestamp: UtcDateTimeSchema,
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
@@ -39,7 +45,7 @@ export const VisionFrameMetadataSchema = z.object({
   device_id: z.string().min(1),
   session_id: z.string().min(1),
 });
-export const VisionFrameAcceptedSchema = z.object({
+export const VisionFrameAcceptedSchema = z.strictObject({
   frame_id: z.string().min(1),
   accepted: z.boolean(),
 });
@@ -52,31 +58,34 @@ export const DrivewayUpdateRequestSchema = z
     availability_start: UtcDateTimeSchema,
     availability_end: UtcDateTimeSchema,
   })
-  .refine((value) => value.availability_start < value.availability_end, {
+  .refine(
+    (value) => Date.parse(value.availability_start) < Date.parse(value.availability_end),
+    {
     message: "availability_start must precede availability_end",
     path: ["availability_end"],
-  });
+    },
+  );
 
-export const CreateHoldRequestSchema = z.object({
+export const CreateHoldRequestSchema = z.strictObject({
   expected_version: z.number().int().positive(),
 });
-export const ReleaseHoldRequestSchema = z.object({}).strict();
+export const ReleaseHoldRequestSchema = z.strictObject({}).strict();
 export const RecoverDrivewayRequestSchema = CreateHoldRequestSchema;
 
-export const PaymentProcessingRequestSchema = z.object({
+export const PaymentProcessingRequestSchema = z.strictObject({
   expected_booking_version: z.number().int().positive(),
 });
-export const FinalizeBookingRequestSchema = z.object({
+export const FinalizeBookingRequestSchema = z.strictObject({
   idempotency_key: z.string().min(1),
   transaction_hash: z.string().min(1),
   expected_booking_version: z.number().int().positive(),
 });
-export const PaymentFailedRequestSchema = z.object({
+export const PaymentFailedRequestSchema = z.strictObject({
   code: z.string().min(1),
   retryable: z.boolean(),
 });
 
-export const BookingAndDrivewayResponseSchema = z.object({
+export const BookingAndDrivewayResponseSchema = z.strictObject({
   booking: BookingViewSchema,
   driveway: DrivewayViewSchema,
 });
@@ -84,7 +93,7 @@ export const ExecutePaymentResponseSchema = BookingAndDrivewayResponseSchema.ext
   explorer_url: z.string().url(),
 });
 
-export const X402BookingReceiptSchema = z.object({
+export const X402BookingReceiptSchema = z.strictObject({
   booking_id: z.string().min(1),
   driveway_id: z.string().min(1),
   amount_usdc: z.string().regex(/^\d+(\.\d{1,6})?$/),
@@ -92,17 +101,17 @@ export const X402BookingReceiptSchema = z.object({
   payee_address: z.string().min(1),
 });
 
-export const AgentParkingSearchRequestSchema = z.object({
+export const AgentParkingSearchRequestSchema = z.strictObject({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   radius_m: z.number().positive(),
 });
-export const AgentParkingSearchResponseSchema = z.object({
+export const AgentParkingSearchResponseSchema = z.strictObject({
   generated_at: UtcDateTimeSchema,
   options: z.array(AgentParkingOptionSchema).max(3),
 });
 
-export const RouteDestinationSchema = z.object({
+export const RouteDestinationSchema = z.strictObject({
   destination: GeoPointSchema,
 });
 

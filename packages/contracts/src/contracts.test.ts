@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   AgentParkingSearchResponseSchema,
   DemoSessionResponseSchema,
+  DrivewayUpdateRequestSchema,
   NearbyParkingQuerySchema,
+  RealtimeNegotiateResponseSchema,
 } from "./api.js";
 import { NearbyParkingResponseSchema, PublicSeedFixtureSchema } from "./domain.js";
 import { RealtimeEventSchema } from "./events.js";
@@ -43,9 +45,9 @@ describe("shared contracts", () => {
       { type: "space.expired", entity_id: "space_demo_1", entity_version: 5, occurred_at: occurredAt, payload: { space_id: "space_demo_1" } },
       { type: "sign_rule.updated", entity_id: "zone_demo_1", entity_version: 2, occurred_at: occurredAt, payload: { zone_id: "zone_demo_1", sign_rule: PUBLIC_SEED_FIXTURE.sign_rule } },
       { type: "driveway.updated", entity_id: driveway.id, entity_version: 2, occurred_at: occurredAt, payload: { driveway } },
-      { type: "driveway.held", entity_id: driveway.id, entity_version: 3, occurred_at: occurredAt, payload: { driveway: { ...driveway, state: "HELD", held_by_user_id: "driver_demo", version: 3 } } },
+      { type: "driveway.held", entity_id: driveway.id, entity_version: 3, occurred_at: occurredAt, payload: { driveway: { ...driveway, state: "HELD", held_by_user_id: "driver_demo", active_booking: { id: "booking_demo_1", state: "PROCESSING", payment_status: "PROCESSING" }, version: 3 } } },
       { type: "driveway.released", entity_id: driveway.id, entity_version: 4, occurred_at: occurredAt, payload: { driveway } },
-      { type: "booking.confirmed", entity_id: "booking_demo_1", entity_version: 3, occurred_at: occurredAt, payload: { booking: PUBLIC_SEED_FIXTURE.booking, driveway: { ...driveway, state: "BOOKED", version: 3 } } },
+      { type: "booking.confirmed", entity_id: "booking_demo_1", entity_version: 3, occurred_at: occurredAt, payload: { booking: PUBLIC_SEED_FIXTURE.booking, driveway: { ...driveway, state: "BOOKED", active_booking: { id: "booking_demo_1", state: "CONFIRMED", payment_status: "SETTLED" }, version: 3 } } },
       { type: "payment.failed", entity_id: "booking_demo_1", entity_version: 2, occurred_at: occurredAt, payload: { booking_id: "booking_demo_1", code: "SETTLEMENT_FAILED", retryable: true } },
     ];
 
@@ -63,6 +65,79 @@ describe("shared contracts", () => {
     ).toEqual({ lat: 37.775, lng: -122.419, radius_m: 804.672 });
     expect(() =>
       NearbyParkingQuerySchema.parse({ lat: 37.775, lng: -122.419, radius_m: 500 }),
+    ).toThrow();
+  });
+
+  it("accepts only secure WebSocket negotiation URLs", () => {
+    expect(
+      RealtimeNegotiateResponseSchema.parse({
+        url: "wss://curb.webpubsub.azure.com/client/hubs/curb?access_token=demo",
+      }),
+    ).toEqual({
+      url: "wss://curb.webpubsub.azure.com/client/hubs/curb?access_token=demo",
+    });
+    expect(() =>
+      RealtimeNegotiateResponseSchema.parse({ url: "https://example.test/negotiate" }),
+    ).toThrow();
+  });
+
+  it("orders driveway availability by instant rather than timestamp spelling", () => {
+    const base = {
+      expected_version: 1,
+      available: true,
+      price_usdc: "8.00",
+    };
+
+    expect(
+      DrivewayUpdateRequestSchema.parse({
+        ...base,
+        availability_start: "2026-10-24T01:00:00Z",
+        availability_end: "2026-10-24T01:00:00.001Z",
+      }),
+    ).toBeDefined();
+    expect(() =>
+      DrivewayUpdateRequestSchema.parse({
+        ...base,
+        availability_start: "2026-10-24T01:00:00+00:00",
+        availability_end: "2026-10-24T01:00:00Z",
+      }),
+    ).toThrow();
+    expect(() =>
+      DrivewayUpdateRequestSchema.parse({
+        ...base,
+        availability_start: "2026-10-24T01:00:01Z",
+        availability_end: "2026-10-24T01:00:00Z",
+      }),
+    ).toThrow();
+  });
+
+  it("exposes the active booking and payment state on held driveways", () => {
+    const held = {
+      ...PUBLIC_SEED_FIXTURE.driveway,
+      state: "HELD",
+      held_by_user_id: "driver_demo",
+      active_booking: {
+        id: "booking_demo_1",
+        state: "PROCESSING",
+        payment_status: "PROCESSING",
+      },
+    };
+
+    expect(PublicSeedFixtureSchema.shape.driveway.parse(held).active_booking).toEqual(
+      held.active_booking,
+    );
+  });
+
+  it("rejects coercion and unknown fields at contract boundaries", () => {
+    expect(() =>
+      NearbyParkingQuerySchema.parse({ lat: "37.775", lng: -122.419, radius_m: 804.672 }),
+    ).toThrow();
+    expect(() =>
+      DemoSessionResponseSchema.parse({
+        user: PUBLIC_SEED_FIXTURE.driver,
+        token: "driver-demo-token",
+        unexpected: true,
+      }),
     ).toThrow();
   });
 });
