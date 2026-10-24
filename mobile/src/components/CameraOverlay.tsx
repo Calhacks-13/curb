@@ -72,7 +72,7 @@ function LiveCamera({ sampling, frameContext, onCapturing, onSpotConfirmed }: Li
     if (!capturing) return;
     const controller = new CaptureController({
       capture: async () => {
-        const shot = await camera.current?.takePictureAsync({ quality: 0.5, shutterSound: false });
+        const shot = await camera.current?.takePictureAsync({ quality: 0.2, shutterSound: false, skipProcessing: true });
         if (!shot?.uri) throw new Error("no frame");
         return shot.uri;
       },
