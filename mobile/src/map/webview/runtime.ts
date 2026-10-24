@@ -313,7 +313,14 @@ export const MAP_RUNTIME_JS = String.raw`
 
   // --- route -------------------------------------------------------------------------
 
-  function setRoute(route, targetId) {
+  function fitLine(line) {
+    var b = new mapboxgl.LngLatBounds(line[0], line[0]);
+    line.forEach(function (p) { b.extend(p); });
+    var pad = { top: padding.top + 40, bottom: padding.bottom + 40, left: 48, right: 48 };
+    map.fitBounds(b, { padding: pad, pitch: 45, bearing: map.getBearing(), maxZoom: 17.6, duration: reduceMotion ? 0 : 1200 });
+  }
+
+  function setRoute(route, targetId, fit) {
     if (target) fs(target, { target: 0, pulse: 0 });
     target = route ? targetId : null;
     map.getSource("route").setData({
@@ -325,6 +332,7 @@ export const MAP_RUNTIME_JS = String.raw`
       fs(target, { target: 1, pulse: reduceMotion ? 0.3 : 0 });
       pulseStart = performance.now();
     }
+    if (route && fit) fitLine(route);
     refreshPillVisibility();
     kick();
   }
@@ -393,7 +401,7 @@ export const MAP_RUNTIME_JS = String.raw`
         // Keep the Mapbox logo and attribution visible above native chrome.
         document.documentElement.style.setProperty("--curb-bottom", padding.bottom + "px");
         return;
-      case "setRoute": return setRoute(msg.route, msg.targetId);
+      case "setRoute": return setRoute(msg.route, msg.targetId, msg.fit);
       case "setCarPosition": return setCarPosition(msg.position, msg.heading);
     }
   }

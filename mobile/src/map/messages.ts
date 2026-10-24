@@ -37,8 +37,8 @@ export type AppToMap =
   | { type: "flyTo"; camera: CameraTarget }
   /** Pixel insets covered by native chrome, so the map centers in the visible area. */
   | { type: "setPadding"; padding: CameraPadding }
-  /** Draws one route line to a target bay; null clears it. */
-  | { type: "setRoute"; route: LngLat[] | null; targetId: string | null }
+  /** Draws one route line to a target bay and frames it; null clears it. */
+  | { type: "setRoute"; route: LngLat[] | null; targetId: string | null; fit?: boolean }
   | { type: "setCarPosition"; position: LngLat; heading: number };
 
 export type MapToApp =
