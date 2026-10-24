@@ -18,7 +18,7 @@ export async function requestRoute(origin: LngLat, destination: LngLat, token = 
   if (!res.ok) throw new Error(`Directions failed (${res.status})`);
   const body = (await res.json()) as { routes?: { geometry: { coordinates: LngLat[] }; duration: number; distance: number }[] };
   const best = body.routes?.[0];
-  if (!best || best.geometry.coordinates.length < 2) throw new Error("No route found");
+  if (!best?.geometry?.coordinates || best.geometry.coordinates.length < 2) throw new Error("No route found");
   // End exactly at the bay so the line meets the highlighted stall.
   return { line: [...best.geometry.coordinates, destination], durationS: best.duration, distanceM: best.distance };
 }

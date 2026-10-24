@@ -5,12 +5,12 @@ import type { CameraTarget, LngLat } from "./messages";
 export const MAPBOX_GL_VERSION = "3.33.0";
 export const STYLE_URL = "mapbox://styles/mapbox/standard";
 
-/** Chestnut St & Fillmore St, Marina District. */
-export const MARINA_CENTER: LngLat = [-122.4366, 37.8007];
+/** Palace of Fine Arts area. */
+export const MARINA_CENTER: LngLat = [-122.4475, 37.8022];
 
-/** Where the camera settles after load. Bearing roughly follows the street grid (~9 deg). */
+/** Where the camera settles after load. */
 export const HOME_CAMERA: Required<Omit<CameraTarget, "durationMs" | "padding">> = {
-  center: [-122.4372, 37.8005],
+  center: [-122.4475, 37.8022],
   zoom: 17,
   pitch: 55,
   bearing: -28,
@@ -18,7 +18,7 @@ export const HOME_CAMERA: Required<Omit<CameraTarget, "durationMs" | "padding">>
 
 /** Starting point of the one-time settle on load: a little wider and flatter. */
 export const INTRO_CAMERA: Required<Omit<CameraTarget, "durationMs" | "padding">> = {
-  center: [-122.4374, 37.8002],
+  center: [-122.4480, 37.8018],
   zoom: 16.3,
   pitch: 40,
   bearing: -36,

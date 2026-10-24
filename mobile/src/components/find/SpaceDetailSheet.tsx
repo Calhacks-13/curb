@@ -65,7 +65,7 @@ function RuleCard({ detail }: { detail: SpaceDetail }) {
 
 /** Opens before any route is drawn: what this spot is, the rules, and how sure we are. */
 export function SpaceDetailSheet({ option, ageSeconds, load, routing, onRoute, onClose, onRetry }: Props) {
-  const confidence = load.status === "ready" ? `${Math.round(load.detail.space.base_confidence * 100)}%` : "—";
+  const confidence = load.status === "ready" && load.detail.space ? `${Math.round(load.detail.space.base_confidence * 100)}%` : "—";
   return (
     <View>
       <View style={styles.header}>

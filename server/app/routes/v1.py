@@ -179,7 +179,7 @@ def _block_to_zone(block: dict, signs: list[dict]) -> CurbZone:
     # Check if there's a matching sign for this block
     # sign_rules is now SignPoleReading (combined_summary) not SignRules (summary)
     block_sign = block.get("sign_rules")
-    if block_sign:
+    if isinstance(block_sign, dict):
         summary = block_sign.get("combined_summary") or block_sign.get("summary") or ""
         if summary:
             sign_rule_id = seg_id
@@ -266,9 +266,32 @@ async def nearby_parking(
 @router.get("/spaces/{space_id}")
 async def get_space(space_id: str):
     """Get space detail with sign rule."""
+    # Try looking up as a block segment_id first, then try as spot zone_id
     block = await cosmos.get_block(space_id)
+
     if block is None:
-        return {"error": "not found"}
+        # space_id might be a spot id (e.g. "seed_spot_1") — find the spot
+        # and use its segment_id to look up the block
+        spots = await cosmos.query_spots_nearby(0, 0, 50000)  # broad search
+        spot = next((s for s in spots if s.get("id") == space_id), None)
+        if spot:
+            seg_id = spot.get("segment_id", "")
+            block = await cosmos.get_block(seg_id)
+            if block is None:
+                # No block exists — build a synthetic one from the spot
+                block = {
+                    "segment_id": seg_id, "id": seg_id,
+                    "gap_count": spot.get("gap_count", 1),
+                    "confidence": spot.get("confidence", 0.0),
+                    "confirmed_at": spot.get("last_seen_at"),
+                    "lat": spot.get("lat", 0), "lng": spot.get("lng", 0),
+                    "location": spot.get("location", {}),
+                    "sign_rules": spot.get("sign_rules"),
+                }
+
+    if block is None:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "not found"}, status_code=404)
 
     signs = await cosmos.query_signs_nearby(
         block.get("lat", 0), block.get("lng", 0), 200
@@ -279,7 +302,7 @@ async def get_space(space_id: str):
 
     rule = None
     block_sign = block.get("sign_rules")
-    if block_sign and (block_sign.get("combined_summary") or block_sign.get("summary")):
+    if isinstance(block_sign, dict) and (block_sign.get("combined_summary") or block_sign.get("summary")):
         rule = _sign_to_rule_view(block_sign)
 
     return SpaceDetail(space=space, zone=zone, rule=rule)

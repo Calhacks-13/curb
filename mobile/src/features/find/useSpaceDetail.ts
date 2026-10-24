@@ -16,7 +16,11 @@ export function useSpaceDetail(spaceId: string | null) {
     let cancelled = false;
     getApi()
       .space(spaceId)
-      .then((detail) => !cancelled && setResult({ key, detail }))
+      .then((detail) => {
+        if (cancelled) return;
+        // Guard against malformed responses (e.g. {"error": "not found"})
+        setResult({ key, detail: detail?.space ? detail : null });
+      })
       .catch(() => !cancelled && setResult({ key, detail: null }));
     return () => {
       cancelled = true;

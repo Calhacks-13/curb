@@ -42,6 +42,7 @@ async def init() -> None:
     _blocks_container = db.get_container_client(settings.cosmos_blocks_container)
     _spots_container = db.get_container_client(settings.cosmos_spots_container)
     _signs_container = db.get_container_client(settings.cosmos_signs_container)
+    await _seed_cosmos_data()
 
 
 async def close() -> None:
@@ -227,21 +228,7 @@ def _seed_demo_data() -> None:
     logger = logging.getLogger(__name__)
     now = datetime.now(timezone.utc).isoformat()
 
-    # Marina District: Steiner/Chestnut/Fillmore area — matches mobile demo fixtures
-    SEED_SPOTS = [
-        {"id": "seed_spot_1", "segment_id": "seg_steiner_1", "status": "open", "gap_count": 1,
-         "confidence": 0.86, "lat": 37.80061, "lng": -122.43791, "width_meters": 5.8,
-         "opened_at": now, "last_seen_at": now, "version": 1},
-        {"id": "seed_spot_2", "segment_id": "seg_chestnut_1", "status": "open", "gap_count": 1,
-         "confidence": 0.82, "lat": 37.80041, "lng": -122.43952, "width_meters": 6.1,
-         "opened_at": now, "last_seen_at": now, "version": 1},
-        {"id": "seed_spot_3", "segment_id": "seg_chestnut_2", "status": "open", "gap_count": 1,
-         "confidence": 0.91, "lat": 37.80082, "lng": -122.43630, "width_meters": 5.5,
-         "opened_at": now, "last_seen_at": now, "version": 1},
-        {"id": "seed_spot_4", "segment_id": "seg_fillmore_1", "status": "open", "gap_count": 1,
-         "confidence": 0.78, "lat": 37.80175, "lng": -122.43650, "width_meters": 5.2,
-         "opened_at": now, "last_seen_at": now, "version": 1},
-    ]
+    SEED_SPOTS = [{**s, "opened_at": now, "last_seen_at": now, "version": 1} for s in _SEED_SPOTS]
 
     for spot in SEED_SPOTS:
         lng, lat = spot["lng"], spot["lat"]
@@ -272,3 +259,53 @@ def _seed_demo_data() -> None:
         _mem_blocks[spot["segment_id"]] = block_doc
 
     logger.info("Seeded %d demo spots + blocks into memory store", len(SEED_SPOTS))
+
+
+# Shared seed data used by both in-memory and Cosmos paths
+_SEED_SPOTS = [
+    # Palace of Fine Arts area — Baker St, Bay St, Lyon St
+    {"id": "seed_spot_1", "segment_id": "seg_baker_bay_1", "status": "open", "gap_count": 1,
+     "confidence": 0.88, "lat": 37.80190, "lng": -122.44720, "width_meters": 5.8},
+    {"id": "seed_spot_2", "segment_id": "seg_bay_lyon_1", "status": "open", "gap_count": 1,
+     "confidence": 0.84, "lat": 37.80240, "lng": -122.44630, "width_meters": 6.1},
+    {"id": "seed_spot_3", "segment_id": "seg_palace_dr_1", "status": "open", "gap_count": 1,
+     "confidence": 0.91, "lat": 37.80150, "lng": -122.44850, "width_meters": 5.5},
+    {"id": "seed_spot_4", "segment_id": "seg_lyon_jefferson_1", "status": "open", "gap_count": 1,
+     "confidence": 0.80, "lat": 37.80310, "lng": -122.44550, "width_meters": 5.2},
+]
+
+
+async def _seed_cosmos_data() -> None:
+    """Upsert seed spots + blocks into Cosmos so the app has data on startup."""
+    import logging
+    from datetime import datetime, timezone
+
+    logger = logging.getLogger(__name__)
+    now = datetime.now(timezone.utc).isoformat()
+
+    for spot in _SEED_SPOTS:
+        lng, lat = spot["lng"], spot["lat"]
+        d = 0.00003
+        spot_doc = {
+            **spot,
+            "opened_at": now, "last_seen_at": now, "version": 1, "ttl": -1,
+            "location": {"type": "Point", "coordinates": [lng, lat]},
+        }
+        block_doc = {
+            "id": spot["segment_id"],
+            "segment_id": spot["segment_id"],
+            "gap_count": 1, "confidence": spot["confidence"],
+            "confirmed_at": now, "ttl": -1,
+            "lat": lat, "lng": lng,
+            "location": {"type": "Point", "coordinates": [lng, lat]},
+            "sign_rules": {"combined_summary": "2-hour parking until 6 PM. Free after 6 PM.", "confidence_score": 0.9},
+        }
+        try:
+            if _spots_container:
+                await _spots_container.upsert_item(spot_doc)
+            if _blocks_container:
+                await _blocks_container.upsert_item(block_doc)
+        except Exception:
+            logger.debug("Seed upsert failed for %s", spot["id"], exc_info=True)
+
+    logger.info("Seeded %d demo spots + blocks into Cosmos", len(_SEED_SPOTS))

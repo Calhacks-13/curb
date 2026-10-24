@@ -76,18 +76,22 @@ export function findOptions(
   area: SearchArea | null = null,
 ): FindOption[] {
   const curb = visibleSpaces(Object.values(state.spaces), state.zones, now)
-    .filter(({ space }) => inArea(space.location.coordinates, area))
+    .filter(({ space }) => {
+      const coords = space.location?.coordinates;
+      return coords && inArea(coords, area);
+    })
     .map(
     ({ space, freshness, ageSeconds }): FindOption => {
-      const d = distanceM(from, space.location.coordinates);
+      const coords = space.location.coordinates as LngLat;
+      const d = distanceM(from, coords);
       return {
         id: space.id,
         kind: freshness,
         title: FRESHNESS_LABEL[freshness],
         detail: `Seen ${formatAge(ageSeconds)}${SEP}${walkMinutes(d)} min walk`,
         trailing: formatDistance(d),
-        position: space.location.coordinates,
-        ring: space.stall_geometry.coordinates[0],
+        position: coords,
+        ring: space.stall_geometry?.coordinates?.[0] ?? [coords],
         distanceM: d,
       };
     },

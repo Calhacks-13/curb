@@ -499,13 +499,17 @@ class Pipeline:
             existing = await self._sign_dedup.find_existing(est_lat, est_lng)
             if existing is not None:
                 pole_reading = existing.pole_reading
-                for t in pole_tracks:
-                    t.read_result = pole_reading
-                existing.last_confirmed = datetime.utcnow()
-                logger.info("Sign dedup hit at (%.5f, %.5f), reusing %s", est_lat, est_lng, existing.id)
-                if result is None:
-                    result = pole_reading
-                continue
+                if pole_reading is None:
+                    # Cosmos doc existed but had no reading — treat as new
+                    pass
+                else:
+                    for t in pole_tracks:
+                        t.read_result = pole_reading
+                    existing.last_confirmed = datetime.utcnow()
+                    logger.info("Sign dedup hit at (%.5f, %.5f), reusing %s", est_lat, est_lng, existing.id)
+                    if result is None:
+                        result = pole_reading
+                    continue
 
             # No existing sign — call Claude Vision once for the whole pole
             best_crop_track = max(pole_tracks, key=lambda t: t.best_crop_confidence)
