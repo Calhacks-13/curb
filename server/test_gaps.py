@@ -1,12 +1,11 @@
 """
 Smoke test for gap detection + tracking pipeline.
-Tests the tracker with synthetic detections (no YOLO needed)
-and optionally runs a real frame through the full detector.
+Tests the tracker with synthetic, precomputed detections.
+End-to-end pipeline checks live in tests/cv/test_detection_pipeline.py.
 
 Run from server/: python test_gaps.py
 """
 
-import asyncio
 import sys
 import os
 import time
@@ -151,88 +150,6 @@ def test_gap_expire():
     return True
 
 
-def test_depth_available():
-    print("\n" + "=" * 50)
-    print("DEPTH MODEL")
-    print("=" * 50)
-
-    from app.cv.depth import is_available, is_metric
-    avail = is_available()
-    print(f"  Available: {avail}")
-    if avail:
-        print(f"  Metric:    {is_metric()}")
-    else:
-        print("  (Gap width in meters will be None — pixel heuristic still works)")
-    return True
-
-
-def test_detector_models():
-    print("\n" + "=" * 50)
-    print("YOLO MODELS")
-    print("=" * 50)
-
-    from app.cv.detector import get_seg_model, get_vehicle_model, get_sign_model
-
-    seg = get_seg_model()
-    print(f"  Segmentation (yolov8m-seg): {'loaded' if seg else 'not available'}")
-
-    veh = get_vehicle_model()
-    print(f"  Vehicle bbox (yolov8m):     {'loaded' if veh else 'FAILED'}")
-
-    sign = get_sign_model()
-    print(f"  Sign detection:             {'loaded' if sign else 'not available (using COCO fallback)'}")
-
-    return veh is not None
-
-
-def test_full_pipeline_synthetic():
-    """Run a synthetic frame through the full pipeline (requires YOLO)."""
-    print("\n" + "=" * 50)
-    print("FULL PIPELINE (synthetic 1280x720 image)")
-    print("=" * 50)
-
-    try:
-        import numpy as np
-        from PIL import Image
-        import io
-
-        # Create a synthetic street scene: gray road with two dark car-like rectangles
-        img = np.full((720, 1280, 3), 128, dtype=np.uint8)  # gray background
-        # "Car" on left
-        img[300:550, 100:350] = [40, 40, 40]
-        # "Car" on right
-        img[300:550, 650:900] = [40, 40, 40]
-        # Gap between: x=350 to x=650 (300px, ~23% of frame)
-
-        pil = Image.fromarray(img)
-        buf = io.BytesIO()
-        pil.save(buf, format="JPEG")
-        image_bytes = buf.getvalue()
-
-        from app.cv.detector import detect_from_frame
-        result = detect_from_frame(image_bytes)
-
-        print(f"  Vehicles detected:  {len(result['vehicles'])}")
-        print(f"  Signs detected:     {len(result['signs'])}")
-        print(f"  Gap estimate:       {result['gap_estimate']}")
-        print(f"  Gap bboxes:         {len(result['gap_bboxes'])}")
-        print(f"  Scene valid:        {result['scene_valid']}")
-        print(f"  Used segmentation:  {result['used_segmentation']}")
-        print(f"  Used depth:         {result['used_depth']}")
-
-        if result['gap_measurements']:
-            for i, gm in enumerate(result['gap_measurements']):
-                print(f"  Gap {i+1}: bbox={[int(x) for x in gm.bbox]} "
-                      f"width_px={gm.width_pixels} width_m={gm.width_meters} valid={gm.is_valid_spot}")
-
-        print("  (Note: YOLO may not detect synthetic rectangles as cars — that's OK)")
-        print("  PASSED")
-        return True
-    except Exception as e:
-        print(f"  FAILED: {e}")
-        return False
-
-
 def main():
     print("\nCurb Gap Pipeline Smoke Tests")
     print(f"Settings: min_gap_fraction={settings.min_gap_fraction}, "
@@ -243,9 +160,6 @@ def main():
     r1 = test_vehicle_tracker()
     r2 = test_gap_tracker()
     r3 = test_gap_expire()
-    r4 = test_depth_available()
-    r5 = test_detector_models()
-    r6 = test_full_pipeline_synthetic()
 
     print("\n" + "=" * 50)
     print("SUMMARY")
@@ -253,9 +167,6 @@ def main():
     print(f"  Vehicle tracker:    {'PASS' if r1 else 'FAIL'}")
     print(f"  Gap confirmation:   {'PASS' if r2 else 'FAIL'}")
     print(f"  Gap expiry:         {'PASS' if r3 else 'FAIL'}")
-    print(f"  Depth model:        {'PASS' if r4 else 'FAIL'}")
-    print(f"  YOLO models:        {'PASS' if r5 else 'FAIL'}")
-    print(f"  Full pipeline:      {'PASS' if r6 else 'FAIL'}")
     print()
 
 

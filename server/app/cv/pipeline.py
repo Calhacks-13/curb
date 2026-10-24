@@ -1,8 +1,8 @@
 """
-Full CV pipeline: frame in -> tracked spots + sign rules out.
+Detection pipeline: device detections in -> tracked spots + sign rules out.
 
-Orchestrates detector (YOLO-seg + depth), object tracker (IoU-based),
-gap tracker (track-pair confirmation), sign tracker (IoU + GPS accumulation),
+Orchestrates object tracker (IoU-based), gap tracker (track-pair confirmation),
+sign tracker (IoU + GPS accumulation),
 sign localizer (triangulation), and sign_reader (Claude Vision).
 
 Spot lifecycle: OPEN -> REFRESHED -> OCCUPIED (via gap disappearance)
@@ -18,13 +18,14 @@ from app.config import settings
 from app.models import (
     BlockObservation,
     FrameResult,
+    GapMeasurement,
     SignDocument,
     SignPoleReading,
     SpotDocument,
     TrackedGapInfo,
     SignDetection,
+    VehicleDetection,
 )
-from app.cv.detector import detect_from_frame_async
 from app.cv.tracker import (
     VehicleTracker,
     GapTracker,
@@ -283,37 +284,50 @@ class Pipeline:
     def cleanup_session(self, session_id: str):
         self._sessions.pop(session_id, None)
 
-    async def process_frame(
+    async def process_detections(
         self,
-        image_bytes: bytes,
+        vehicles: list[VehicleDetection],
+        signs: list[SignDetection],
+        frame_width: int,
+        frame_height: int,
         lat: float,
         lng: float,
         session_id: str,
-        camera_pitch: float = 0.0,
         heading: float = 0.0,
-        hfov: float | None = None,
     ) -> dict:
         """
         Main entry point. Returns dict with frame_result and
         optional confirmed_block.
         """
         session = self._get_session(session_id)
-        detections = await detect_from_frame_async(image_bytes, camera_pitch, hfov)
-
-        frame_w = detections.get("frame_width", 1280)
-        frame_h = detections.get("frame_height", 720)
+        # Only gaps between adjacent vehicles count; frame edges are unreliable.
+        sorted_vehicles = sorted(vehicles, key=lambda vehicle: vehicle.bbox[0])
+        min_gap_px = frame_width * settings.min_gap_fraction
+        gap_bboxes = [
+            [left.bbox[2], 0, right.bbox[0], frame_height]
+            for left, right in zip(sorted_vehicles, sorted_vehicles[1:])
+            if right.bbox[0] - left.bbox[2] >= min_gap_px
+        ]
+        gap_measurements = [
+            GapMeasurement(
+                bbox=bbox,
+                width_pixels=int(bbox[2] - bbox[0]),
+                is_valid_spot=True,
+            )
+            for bbox in gap_bboxes
+        ]
 
         # --- Sign tracking & reading ---
         sign_pole_reading: SignPoleReading | None = None
 
-        if detections["signs"]:
+        if signs:
             sign_det_dicts = [
                 {
                     "bbox": s.bbox,
                     "confidence": s.confidence,
                     "crop_bytes": s.crop_bytes,
                 }
-                for s in detections["signs"]
+                for s in signs
             ]
             all_sign_tracks = session.sign_tracker.update(sign_det_dicts)
 
@@ -321,7 +335,7 @@ class Pipeline:
             for track in all_sign_tracks:
                 if track.time_since_update == 0:
                     bbox_cx = (track.bbox[0] + track.bbox[2]) / 2
-                    track.add_gps(lat, lng, heading, bbox_cx, frame_w)
+                    track.add_gps(lat, lng, heading, bbox_cx, frame_width)
 
             # Process confirmed tracks that haven't been read yet
             ready_tracks = [t for t in all_sign_tracks if t.needs_reading]
@@ -334,144 +348,129 @@ class Pipeline:
         else:
             session.sign_tracker.update([])
 
-        scene_valid = detections["scene_valid"]
+        scene_valid = bool(vehicles or signs)
         confirmed = None
         pipeline_state = "no_scene"
         tracked_gap_infos: list[TrackedGapInfo] = []
 
-        if scene_valid:
-            # --- Object tracking ---
-            det_dicts = [
-                {"bbox": v.bbox, "cls": v.cls, "confidence": v.confidence}
-                for v in detections["vehicles"]
-            ]
-            confirmed_tracks = session.vehicle_tracker.update(det_dicts)
+        # --- Object tracking (empty frames must age tracks too) ---
+        det_dicts = [
+            {"bbox": v.bbox, "cls": v.cls, "confidence": v.confidence}
+            for v in vehicles
+        ]
+        confirmed_tracks = session.vehicle_tracker.update(det_dicts)
 
-            # Assign track IDs back to vehicle detections for protocol
-            for vehicle in detections["vehicles"]:
-                best_track_id = None
-                best_iou = 0.0
-                for track in session.vehicle_tracker.tracks:
-                    iou = _iou(vehicle.bbox, track.bbox)
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_track_id = track.id
-                if best_iou > 0.3:
-                    vehicle.track_id = best_track_id
+        # Assign track IDs back to vehicle detections for protocol.
+        for vehicle in vehicles:
+            best_track_id = None
+            best_iou = 0.0
+            for track in session.vehicle_tracker.tracks:
+                iou = _iou(vehicle.bbox, track.bbox)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_track_id = track.id
+            if best_iou > 0.3:
+                vehicle.track_id = best_track_id
 
-            # --- Gap tracking ---
-            all_gaps, newly_confirmed, expired_confirmed = session.gap_tracker.update(
-                confirmed_tracks, frame_w, frame_h,
-                gap_measurements=detections.get("gap_measurements"),
-            )
+        # Missed vehicle tracks remain available for matching, but must not
+        # count as fresh sightings that keep gaps alive on empty frames.
+        visible_tracks = [t for t in confirmed_tracks if t.time_since_update == 0]
+        all_gaps, newly_confirmed, expired_confirmed = session.gap_tracker.update(
+            visible_tracks, frame_width, frame_height,
+            gap_measurements=gap_measurements,
+        )
 
-            confirmed_keys = session.gap_tracker._confirmed
-            for gap in all_gaps:
-                median_w = gap.median_width_meters
-                tracked_gap_infos.append(TrackedGapInfo(
-                    left_track_id=gap.left_track_id,
-                    right_track_id=gap.right_track_id,
-                    bbox=gap.bbox,
-                    duration=round(gap.duration, 1),
-                    confirmed=gap.gap_key in confirmed_keys,
-                    median_width_meters=round(median_w, 2) if median_w is not None else None,
-                ))
+        confirmed_keys = session.gap_tracker._confirmed
+        for gap in all_gaps:
+            median_w = gap.median_width_meters
+            tracked_gap_infos.append(TrackedGapInfo(
+                left_track_id=gap.left_track_id,
+                right_track_id=gap.right_track_id,
+                bbox=gap.bbox,
+                duration=round(gap.duration, 1),
+                confirmed=gap.gap_key in confirmed_keys,
+                median_width_meters=round(median_w, 2) if median_w is not None else None,
+            ))
 
-            # --- Handle expired confirmed gaps → space.occupied ---
-            for gap in expired_confirmed:
-                seg_id = session.confirmed_gap_segments.pop(gap.gap_key, None)
-                if seg_id:
-                    asyncio.create_task(_safe(
-                        self._spot_mgr.occupy_spot(seg_id)
-                    ))
+        # --- Handle expired confirmed gaps → space.occupied ---
+        for gap in expired_confirmed:
+            seg_id = session.confirmed_gap_segments.pop(gap.gap_key, None)
+            if seg_id:
+                asyncio.create_task(_safe(self._spot_mgr.occupy_spot(seg_id)))
 
-            # --- Confirmation: new gaps → open or refresh ---
-            if newly_confirmed:
-                pipeline_state = "confirmed"
-                segment_id = make_road_segment_id(lat, lng, heading)
+        # --- Confirmation: new gaps → open or refresh ---
+        if newly_confirmed:
+            pipeline_state = "confirmed"
+            segment_id = make_road_segment_id(lat, lng, heading)
 
-                # Check if this segment already has an open spot → refresh
-                existing_spot = self._spot_mgr.find_by_segment(segment_id)
-                if existing_spot is not None:
-                    asyncio.create_task(_safe(
-                        self._spot_mgr.refresh_spot(existing_spot)
-                    ))
-                    # Track gap→segment mapping for occupy detection
-                    for gap in newly_confirmed:
-                        session.confirmed_gap_segments[gap.gap_key] = segment_id
-                else:
-                    # New spot — use current or cached sign reading
-                    best_gap = max(newly_confirmed, key=lambda g: g.duration)
-                    sign_rules = sign_pole_reading or session.last_sign_reading
-                    spot = await self._spot_mgr.open_spot(
-                        segment_id=segment_id,
-                        lat=lat,
-                        lng=lng,
-                        gap=best_gap,
-                        session_id=session_id,
-                        sign_rules=sign_rules,
-                        is_seed=self.mapping_mode,
-                    )
-                    # Track gap→segment mapping for occupy detection
-                    for gap in newly_confirmed:
-                        session.confirmed_gap_segments[gap.gap_key] = segment_id
-
-                # Also maintain legacy BlockObservation for backward compat
-                confirmed = BlockObservation(
+            existing_spot = self._spot_mgr.find_by_segment(segment_id)
+            if existing_spot is not None:
+                asyncio.create_task(_safe(self._spot_mgr.refresh_spot(existing_spot)))
+            else:
+                best_gap = max(newly_confirmed, key=lambda g: g.duration)
+                sign_rules = sign_pole_reading or session.last_sign_reading
+                await self._spot_mgr.open_spot(
                     segment_id=segment_id,
-                    gap_count=len(newly_confirmed),
-                    confidence=1.0,
-                    sign_rules=sign_pole_reading or session.last_sign_reading,
-                    confirmed_at=datetime.utcnow(),
-                    ttl=-1 if self.mapping_mode else settings.default_ttl_sec,
                     lat=lat,
                     lng=lng,
-                    location={"type": "Point", "coordinates": [lng, lat]},
+                    gap=best_gap,
+                    session_id=session_id,
+                    sign_rules=sign_rules,
+                    is_seed=self.mapping_mode,
                 )
-                self.recent_blocks.appendleft(confirmed.model_dump(mode="json"))
-                asyncio.create_task(_safe(cosmos.upsert_block(confirmed)))
-                asyncio.create_task(_safe(signalr.broadcast_block(confirmed)))
-            else:
-                # Check for re-sighting of existing confirmed gaps (still visible)
-                for gap in all_gaps:
-                    if gap.gap_key in confirmed_keys:
-                        seg_id = session.confirmed_gap_segments.get(gap.gap_key)
-                        if seg_id:
-                            existing = self._spot_mgr.find_by_segment(seg_id)
-                            if existing and (datetime.utcnow() - existing.last_seen_at).total_seconds() > 10:
-                                asyncio.create_task(_safe(
-                                    self._spot_mgr.refresh_spot(existing)
-                                ))
+            for gap in newly_confirmed:
+                session.confirmed_gap_segments[gap.gap_key] = segment_id
 
-                pipeline_state = session.gap_tracker.get_state_string()
-                if not pipeline_state or pipeline_state == "no gaps":
-                    n_tracks = len(confirmed_tracks)
-                    pipeline_state = f"tracking {n_tracks} vehicle{'s' if n_tracks != 1 else ''}"
-        else:
-            session.vehicle_tracker.update([])
+            # Also maintain legacy BlockObservation for backward compatibility.
+            confirmed = BlockObservation(
+                segment_id=segment_id,
+                gap_count=len(newly_confirmed),
+                confidence=1.0,
+                sign_rules=sign_pole_reading or session.last_sign_reading,
+                confirmed_at=datetime.utcnow(),
+                ttl=-1 if self.mapping_mode else settings.default_ttl_sec,
+                lat=lat,
+                lng=lng,
+                location={"type": "Point", "coordinates": [lng, lat]},
+            )
+            self.recent_blocks.appendleft(confirmed.model_dump(mode="json"))
+            asyncio.create_task(_safe(cosmos.upsert_block(confirmed)))
+            asyncio.create_task(_safe(signalr.broadcast_block(confirmed)))
+        elif scene_valid:
+            # Re-sighting of existing confirmed gaps (still visible).
+            for gap in all_gaps:
+                if gap.gap_key in confirmed_keys:
+                    seg_id = session.confirmed_gap_segments.get(gap.gap_key)
+                    if seg_id:
+                        existing = self._spot_mgr.find_by_segment(seg_id)
+                        if existing and (datetime.utcnow() - existing.last_seen_at).total_seconds() > 10:
+                            asyncio.create_task(_safe(self._spot_mgr.refresh_spot(existing)))
+
+            pipeline_state = session.gap_tracker.get_state_string()
+            if not pipeline_state or pipeline_state == "no gaps":
+                n_tracks = len(visible_tracks)
+                pipeline_state = f"tracking {n_tracks} vehicle{'s' if n_tracks != 1 else ''}"
 
         frame_result = FrameResult(
-            vehicles=detections["vehicles"],
-            signs=detections["signs"],
-            gap_estimate=detections["gap_estimate"],
-            gap_bboxes=detections["gap_bboxes"],
-            gap_measurements=detections.get("gap_measurements", []),
+            vehicles=vehicles,
+            signs=signs,
+            gap_estimate=len(gap_bboxes),
+            gap_bboxes=gap_bboxes,
+            gap_measurements=gap_measurements,
             sign_rules=sign_pole_reading,
             lat=lat,
             lng=lng,
-            raw_detections=detections["raw_detections"],
+            raw_detections=[],
             scene_valid=scene_valid,
             pipeline_state=pipeline_state,
-            used_segmentation=detections.get("used_segmentation", False),
-            used_depth=detections.get("used_depth", False),
+            used_segmentation=False,
+            used_depth=False,
             tracked_gaps=tracked_gap_infos,
         )
 
         return {
             "frame_result": frame_result,
             "confirmed_block": confirmed,
-            "depth_jpeg": detections.get("depth_jpeg"),
-            "bev_jpeg": detections.get("bev_jpeg"),
         }
 
     async def _process_sign_tracks(

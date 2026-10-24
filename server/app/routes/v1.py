@@ -391,8 +391,6 @@ async def upload_detections(request: Request, submission: DetectionSubmission):
 async def debug_state():
     """Observability endpoint: dump in-memory pipeline state."""
     from app.cv.pipeline import get_pipeline
-    from app.cv.detector import _sign_model, _sign_model_available, _seg_model_available
-    from app.cv.depth import is_available as depth_is_available
 
     pipeline = get_pipeline()
     mgr = pipeline._spot_mgr
@@ -430,15 +428,7 @@ async def debug_state():
         for doc in dedup._cache.values()
     ]
 
-    sign_model_type = type(_sign_model).__name__ if _sign_model else "none"
-
     return {
-        "models": {
-            "seg_available": _seg_model_available or False,
-            "sign_model_type": sign_model_type,
-            "sign_model_available": _sign_model_available or False,
-            "depth_available": depth_is_available(),
-        },
         "sessions": sessions_info,
         "spots": spots_info,
         "signs_deduped": signs_info,
