@@ -226,10 +226,13 @@ const toast = document.getElementById('toast');
 
 let ws, reconnect = 1000, frameCount = 0, totalFrames = 0, confirmedCount = 0;
 let lastFpsTime = performance.now(), lastFrameTime = null, ready = false;
-let pendingRender = null;
 const MAX_LINES = 500;
 let lineCount = 0;
 let signHudTimer = null;
+
+// Queued frame pair: bitmap decode is async, so we hold the pending
+// bitmap promise and render overlay only AFTER the frame is on-canvas.
+let pendingBitmap = null; // Promise<ImageBitmap>
 
 // ── Connection ──
 function connect() {
@@ -247,21 +250,17 @@ function connect() {
     if (e.data instanceof ArrayBuffer) {
       lastFrameTime = performance.now();
       const blob = new Blob([e.data], { type: 'image/jpeg' });
-      createImageBitmap(blob).then(bmp => {
-        showFrame(bmp);
-        // Draw overlay that arrived before bitmap decoded
-        if (pendingRender) {
-          render(pendingRender);
-          pendingRender = null;
-        }
-      });
+      pendingBitmap = createImageBitmap(blob);
     } else {
+      // JSON metadata — wait for the bitmap, then draw both together
       try {
         const d = JSON.parse(e.data);
-        if (ready) {
+        const bmpPromise = pendingBitmap;
+        pendingBitmap = null;
+        if (bmpPromise) {
+          bmpPromise.then(bmp => { showFrame(bmp); render(d); });
+        } else if (ready) {
           render(d);
-        } else {
-          pendingRender = d;
         }
       } catch (err) { console.error('render error:', err); }
     }

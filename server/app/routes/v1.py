@@ -6,6 +6,7 @@ This router translates between the server's BlockObservation/SignRules models
 and the mobile's ParkingSpace/CurbZone/NearbyParkingResponse contract.
 """
 
+import asyncio
 import json
 import uuid
 import logging
@@ -367,19 +368,20 @@ async def upload_frame(
         heading=heading,
     )
 
-    # Relay to WS viewers (so laptop viewer shows mobile frames + detections)
+    # Relay to WS viewers (fire-and-forget so it doesn't block the phone response)
     if ws_viewers:
-        response = result["frame_result"].model_dump(mode="json")
-        response_json = json.dumps(response)
-        dead = []
-        for v in ws_viewers:
-            try:
-                await v.send_bytes(image_bytes)
-                await v.send_text(response_json)
-            except Exception:
-                dead.append(v)
-        for v in dead:
-            ws_viewers.discard(v)
+        viewer_json = json.dumps(result["frame_result"].model_dump(mode="json"))
+        async def _relay():
+            dead = []
+            for v in ws_viewers:
+                try:
+                    await v.send_bytes(image_bytes)
+                    await v.send_text(viewer_json)
+                except Exception:
+                    dead.append(v)
+            for v in dead:
+                ws_viewers.discard(v)
+        asyncio.create_task(_relay())
 
     # Realtime events (space.opened/refreshed/occupied) are now
     # broadcast directly by the pipeline's SpotManager.
