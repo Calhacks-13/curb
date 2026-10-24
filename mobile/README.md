@@ -18,7 +18,10 @@ Expo Go and Expo CLI must be signed in to the same Expo account.
 
 ```
 src/
-  app/index.tsx            Find screen
+  app/index.tsx            Demo profile picker (Driver / Driveway Owner)
+  app/(tabs)/find.tsx      Find: map, nearby list, details, Route here
+  app/(tabs)/host.tsx      Host: the owner's driveway
+  features/session/        Seeded demo session, remembered in SecureStore
   api/types.ts             Backend contract (spec sections 11-13); swap for @curb/contracts
   api/client.ts            CurbApi interface + HTTP client; getApi() picks live or demo
   realtime/reducer.ts      Pure versioned event reducer (never rolls an entity back)
