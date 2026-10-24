@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.azure import cosmos, signalr
+from app.config import settings
 from app.routes.bookings import router as bookings_router
 from app.routes.driveways import router as driveways_router
 
@@ -38,7 +39,7 @@ app = FastAPI(title="Curb API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
