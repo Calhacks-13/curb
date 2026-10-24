@@ -1,8 +1,9 @@
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { getApi } from "@/api/client";
 import { AccountMenu } from "@/components/AccountMenu";
 import { CurbMap } from "@/components/map/CurbMap";
 import { MapLegend } from "@/components/MapLegend";
@@ -15,10 +16,12 @@ import { RouteCard } from "@/components/find/RouteCard";
 import { RouteReplacementPrompt } from "@/components/find/RouteReplacementPrompt";
 import { SpaceDetailSheet } from "@/components/find/SpaceDetailSheet";
 import { SheetFrame } from "@/components/sheet/SheetFrame";
-import { SharingLivePip } from "@/components/SharingLivePip";
+import { CameraOverlay } from "@/components/CameraOverlay";
 import { font, ink, radius } from "@/config/tokens";
 import { DEMO_DRIVER } from "@/data/mock/marina";
 import { DemoModeBadge } from "@/demo/DemoModeBadge";
+import { getDeviceId, newCaptureSessionId, type FrameContext } from "@/features/capture/frameUpload";
+import { useDriverLocation } from "@/features/capture/useDriverLocation";
 import { ageSeconds } from "@/features/find/freshness";
 import { findOptions, mapPills, mapSignature, mapStalls, mapZones, type FindOption } from "@/features/find/options";
 import { replacementFor, requestRoute, type Route } from "@/features/find/route";
@@ -27,12 +30,13 @@ import { useDrivewayBooking } from "@/features/find/useDrivewayBooking";
 import { useParkingState } from "@/features/find/useParkingState";
 import { useSpaceDetail } from "@/features/find/useSpaceDetail";
 import { useSession } from "@/features/session/SessionContext";
+import { useAppActive } from "@/hooks/useAppActive";
 import { useMood } from "@/hooks/useMood";
+import { useScreenFocused } from "@/hooks/useScreenFocused";
+import { haptics } from "@/lib/haptics";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { HOME_CAMERA, SPOT_CAMERA } from "@/map/mapConfig";
 import type { LngLat, MapController, MapToApp } from "@/map/messages";
-
-const SHARED_SPOTS = 3;
 
 type Sheet =
   | { mode: "list" }
@@ -47,13 +51,40 @@ export default function FindScreen() {
   const mapRef = useRef<MapController>(null);
   const send: MapController["send"] = useCallback((m) => mapRef.current?.send(m), []);
 
-  // Demo replay centers on the calibrated block; live mode will use device location.
-  const driver = DEMO_DRIVER;
-  const { state, load, refresh, mode } = useParkingState(HOME_CAMERA.center);
+  const focused = useScreenFocused();
+  const appActive = useAppActive();
+  const live = getApi().mode === "live";
+
+  // Live: the device's location. Demo replay: the fixture driver on the calibrated block.
+  const location = useDriverLocation(live && focused);
+  const driver = useMemo(
+    () =>
+      live && location.position ? { position: location.position, heading: location.heading ?? 0 } : DEMO_DRIVER,
+    [live, location.position, location.heading],
+  );
+  const { state, load, refresh, mode } = useParkingState(live ? location.position : HOME_CAMERA.center);
   const userId = useSession().session?.user.id ?? null;
   const now = useFreshnessClock();
   const options = useMemo(() => findOptions(state, now, driver.position, userId), [state, now, driver.position, userId]);
-  const { checkout, reserve, pay, cancel, reset } = useDrivewayBooking();
+  const { checkout, reserve, pay, cancel, reset } = useDrivewayBooking(() => haptics.success());
+
+  // Frame metadata for camera sampling.
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [captureSession] = useState(newCaptureSessionId);
+  useEffect(() => {
+    getDeviceId().then(setDeviceId);
+  }, []);
+  const frameContext = useCallback((): FrameContext | null => {
+    if (!location.position || !deviceId) return null;
+    return {
+      lat: location.position[1],
+      lng: location.position[0],
+      accuracy_m: location.accuracyM,
+      heading: location.heading,
+      device_id: deviceId,
+      session_id: captureSession,
+    };
+  }, [location.position, location.accuracyM, location.heading, deviceId, captureSession]);
   const signature = mapSignature(options);
 
   const [sheet, setSheet] = useState<Sheet>({ mode: "list" });
@@ -85,6 +116,23 @@ export default function FindScreen() {
     send({ type: "setCarPosition", position: driver.position, heading: driver.heading });
   }, [driver, send]);
 
+  // Live: center on the driver once, at the first location fix.
+  const centered = useRef(false);
+  useEffect(() => {
+    if (!live || !location.position || centered.current) return;
+    centered.current = true;
+    send({ type: "flyTo", camera: { center: location.position, zoom: HOME_CAMERA.zoom, pitch: HOME_CAMERA.pitch, durationMs: 1200 } });
+  }, [live, location.position, send]);
+
+  // Haptics for checkout milestones.
+  const lastPhase = useRef(checkout.phase);
+  useEffect(() => {
+    if (checkout.phase === lastPhase.current) return;
+    if (checkout.phase === "review" && lastPhase.current === "holding") haptics.hold();
+    if (checkout.phase === "failed") haptics.error();
+    lastPhase.current = checkout.phase;
+  }, [checkout.phase]);
+
   // A browsed opening that expired or was taken closes its details. While routing,
   // the replacement prompt handles it instead, so the route never changes silently.
   useEffect(() => {
@@ -109,6 +157,7 @@ export default function FindScreen() {
   /** Marker or row tap: select, frame, and open details. Never routes by itself. */
   const open = useCallback(
     (o: FindOption) => {
+      haptics.select();
       setSelectedId(o.id);
       setRouteError(null);
       if (sheet.mode !== "route") setSheet(o.kind === "driveway" ? { mode: "driveway", id: o.id } : { mode: "detail", id: o.id });
@@ -129,6 +178,7 @@ export default function FindScreen() {
         setSelectedId(o.id);
         setSheet({ mode: "route", id: o.id, title: o.title, position: o.position, route });
         send({ type: "setRoute", route: route.line, targetId: o.id, fit: true });
+        haptics.tap();
       } catch {
         setRouteError("Couldn't get a route. Check your connection and try again.");
       } finally {
@@ -191,7 +241,12 @@ export default function FindScreen() {
       <View style={[styles.top, { top: insets.top + 8 }]}>
         <View style={styles.leftCol}>
           {mode === "demo" && <DemoModeBadge />}
-          <SharingLivePip spotsShared={SHARED_SPOTS} reduceMotion={reduceMotion} />
+          <CameraOverlay
+            active={focused && appActive}
+            sampling={live && location.status === "granted"}
+            frameContext={frameContext}
+            reduceMotion={reduceMotion}
+          />
         </View>
         <View style={styles.mapButtons}>
           <AccountMenu />
@@ -202,7 +257,22 @@ export default function FindScreen() {
 
       {/* The tab bar below already covers the home-indicator inset. */}
       <SheetFrame bottomInset={0} onContentHeight={setSheetH}>
-        {sheet.mode === "list" && <NearbyList options={options} load={load} onOpen={open} onRetry={refresh} />}
+        {sheet.mode === "list" &&
+          (live && location.status === "denied" ? (
+            <View style={styles.locationOff}>
+              <Text style={styles.locationTitle}>Location is off</Text>
+              <Text style={styles.locationText}>Curb uses your precise location to find legal parking within half a mile.</Text>
+              <Pressable
+                onPress={() => (location.canAskAgain ? location.request() : Linking.openSettings())}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.locationButton, pressed && { opacity: 0.85 }]}
+              >
+                <Text style={styles.locationButtonText}>{location.canAskAgain ? "Allow location" : "Open Settings"}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <NearbyList options={options} load={load} onOpen={open} onRetry={refresh} />
+          ))}
         {sheet.mode === "detail" && detailOption && (
           <>
             <SpaceDetailSheet
@@ -282,6 +352,11 @@ const styles = StyleSheet.create({
   leftCol: { gap: 10, alignItems: "flex-start" },
   mapButtons: { gap: 10, alignItems: "flex-end", zIndex: 10 },
   prompt: { position: "absolute", left: 16, right: 16 },
+  locationOff: { alignItems: "center", paddingVertical: 20, paddingHorizontal: 16, gap: 6 },
+  locationTitle: { fontFamily: font.bold, fontSize: 16, color: ink.black, textAlign: "center" },
+  locationText: { fontFamily: font.regular, fontSize: 14, color: ink.grey500, textAlign: "center" },
+  locationButton: { marginTop: 8, height: 42, paddingHorizontal: 18, borderRadius: radius.control, backgroundColor: ink.black, justifyContent: "center" },
+  locationButtonText: { fontFamily: font.bold, fontSize: 14, color: ink.white, marginTop: 2 },
   routeError: { fontFamily: font.semibold, fontSize: 13, color: ink.black, marginTop: 8, marginHorizontal: 4 },
   error: {
     position: "absolute",

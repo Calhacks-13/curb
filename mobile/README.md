@@ -23,6 +23,7 @@ src/
   app/(tabs)/host.tsx      Host: the owner's driveway
   features/session/        Seeded demo session, remembered in SecureStore
   features/host/           Owner listing editor, recovery, booking receipt
+  features/capture/        Camera frame sampler (2 fps, one upload in flight), location
   api/types.ts             Backend contract (spec sections 11-13); swap for @curb/contracts
   api/client.ts            CurbApi interface + HTTP client; getApi() picks live or demo
   realtime/reducer.ts      Pure versioned event reducer (never rolls an entity back)
@@ -86,6 +87,13 @@ and the receipt says so; against the real services the receipt links the Base
 Sepolia transaction. The contract has no "payment processing" event, so the
 owner's Return to available button relies on the server's 409 while a payment
 is in flight.
+
+Camera: Find shows a live preview in the corner card whenever it's focused and
+the app is in the foreground. Against the real backend it samples ~2 JPEG
+frames per second with location, heading, device and session ids, keeps at most
+one upload in flight (dropping, not queueing), and deletes every frame after
+upload. In Demo replay it's preview only and says "Not uploading". Location is
+foreground-only and is used in live mode for centering and distances.
 
 Run the tests with `npm test` (freshness boundaries, out-of-order realtime
 events, version conflicts, idempotent payment, DST).

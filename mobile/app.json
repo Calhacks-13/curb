@@ -34,7 +34,21 @@
         }
       ],
       "expo-font",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Curb uses the camera while Find is open to spot open curb spaces for other drivers. Frames are processed and deleted, never stored.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Curb uses your precise location to show legal parking within half a mile of you."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
