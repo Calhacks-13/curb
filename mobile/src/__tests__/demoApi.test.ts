@@ -8,6 +8,19 @@ async function freshDriveway(api = createDemoApi()) {
   return { api, d: res.driveways.find((x) => x.id === DEMO_IDS.driveway)! };
 }
 
+describe("demo nearby query", () => {
+  it("returns only supply within the radius, like the backend", async () => {
+    const api = createDemoApi();
+    const near = await api.nearby(37.8007, -122.4372);
+    expect(near.spaces.length).toBeGreaterThan(0);
+    expect(near.driveways).toHaveLength(1);
+    const far = await api.nearby(37.7749, -122.4194); // downtown SF, ~3 km away
+    expect(far).toMatchObject({ zones: [], spaces: [], driveways: [] });
+    const tight = await api.nearby(37.8007, -122.4372, 50);
+    expect(tight.spaces.length).toBeLessThan(near.spaces.length);
+  });
+});
+
 describe("demo driveway marketplace", () => {
   it("goes AVAILABLE -> HELD -> BOOKED and pays only once for repeated requests", async () => {
     const { api, d } = await freshDriveway();
@@ -35,7 +48,7 @@ describe("demo driveway marketplace", () => {
   it("blocks owner recovery while payment is processing", async () => {
     const { api, d } = await freshDriveway();
     const booking = await api.holdDriveway(d.id, d.version);
-    const held = (await api.nearby(0, 0)).driveways[0];
+    const held = (await api.nearby(37.8, -122.4366)).driveways[0];
     const paying = api.executePayment(booking.id);
     await expect(api.recoverDriveway(d.id, held.version)).rejects.toMatchObject({ status: 409 });
     jest.advanceTimersByTime(3000);

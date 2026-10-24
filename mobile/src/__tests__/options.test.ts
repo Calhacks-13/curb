@@ -38,6 +38,14 @@ describe("findOptions", () => {
     expect(kinds).not.toContain("driveway");
   });
 
+  it("keeps only options inside the search area", () => {
+    const all = findOptions(stateAt(NOW), NOW, from);
+    const area = { center: [-122.4372, 37.8005] as [number, number], radiusM: 120 };
+    const near = findOptions(stateAt(NOW), NOW, from, null, area);
+    expect(near.length).toBeGreaterThan(0);
+    expect(near.length).toBeLessThan(all.length);
+  });
+
   it("draws only zones that are legal now", () => {
     const ids = mapZones(stateAt(NOW).zones).map((z) => z.id);
     expect(ids).not.toContain("zone_demo_6");

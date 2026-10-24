@@ -56,8 +56,28 @@ export function visibleDriveways(state: ParkingState, now: number, userId: strin
   );
 }
 
-export function findOptions(state: ParkingState, now: number, from: LngLat, userId: string | null = null): FindOption[] {
-  const curb = visibleSpaces(Object.values(state.spaces), state.zones, now).map(
+/** The Find search area: the spec's fixed 0.5-mile radius around the search center. */
+export type SearchArea = { center: LngLat; radiusM: number };
+
+export function inArea(point: LngLat, area: SearchArea | null): boolean {
+  return !area || distanceM(area.center, point) <= area.radiusM;
+}
+
+/**
+ * Ranked options within the search area. The backend already limits the nearby
+ * query to the radius; filtering here too keeps out anything realtime pushes
+ * from farther away, and anything left over after the driver moves.
+ */
+export function findOptions(
+  state: ParkingState,
+  now: number,
+  from: LngLat,
+  userId: string | null = null,
+  area: SearchArea | null = null,
+): FindOption[] {
+  const curb = visibleSpaces(Object.values(state.spaces), state.zones, now)
+    .filter(({ space }) => inArea(space.location.coordinates, area))
+    .map(
     ({ space, freshness, ageSeconds }): FindOption => {
       const d = distanceM(from, space.location.coordinates);
       return {
@@ -72,7 +92,10 @@ export function findOptions(state: ParkingState, now: number, from: LngLat, user
       };
     },
   );
-  const driveways = visibleDriveways(state, now, userId).map((dw): FindOption => {
+  const driveways = visibleDriveways(state, now, userId)
+    // A driveway you're holding or booked stays visible even if you've moved away.
+    .filter((dw) => dw.held_by_user_id === userId || inArea(dw.location.coordinates, area))
+    .map((dw): FindOption => {
     const d = distanceM(from, dw.location.coordinates);
     const mine = dw.held_by_user_id === userId && dw.state !== "AVAILABLE";
     return {
@@ -103,9 +126,9 @@ function drivewayRing([lng, lat]: LngLat): LngLat[] {
   ];
 }
 
-export function mapZones(zones: Record<string, CurbZone>): MapZone[] {
+export function mapZones(zones: Record<string, CurbZone>, area: SearchArea | null = null): MapZone[] {
   return Object.values(zones)
-    .filter((z) => z.legal_status_now === "LEGAL")
+    .filter((z) => z.legal_status_now === "LEGAL" && z.geometry.coordinates.some((p) => inArea(p, area)))
     .map((z) => ({ id: z.id, coordinates: z.geometry.coordinates }));
 }
 

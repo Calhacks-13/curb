@@ -5,8 +5,11 @@
 
 import type { CurbApi, RealtimeConnection } from "@/api/client";
 import { ApiError } from "@/api/errors";
+import { distanceM } from "@/data/geo";
 import {
   DEMO_IDS,
+  FIND_RADIUS_M,
+  type LngLat,
   type Booking,
   type Driveway,
   type NearbyParkingResponse,
@@ -119,12 +122,14 @@ export function createDemoApi(): CurbApi {
       return { user, token: `demo-${profile}` };
     },
 
-    async nearby(): Promise<NearbyParkingResponse> {
+    async nearby(lat, lng, radiusM = FIND_RADIUS_M): Promise<NearbyParkingResponse> {
+      // Same radius filter as the backend's nearby query.
+      const near = (p: LngLat) => distanceM([lng, lat], p) <= radiusM;
       return {
         generated_at: new Date().toISOString(),
-        zones: [...state.zones.values()],
-        spaces: [...state.spaces.values()],
-        driveways: [...state.driveways.values()],
+        zones: [...state.zones.values()].filter((z) => z.geometry.coordinates.some(near)),
+        spaces: [...state.spaces.values()].filter((sp) => near(sp.location.coordinates)),
+        driveways: [...state.driveways.values()].filter((d) => near(d.location.coordinates)),
       };
     },
 

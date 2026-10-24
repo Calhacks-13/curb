@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { getApi, type RealtimeStatus } from "@/api/client";
 import { FIND_RADIUS_M, type LngLat, type NearbyParkingResponse, type RealtimeEvent } from "@/api/types";
@@ -17,8 +17,11 @@ function centerKey(center: LngLat | null): string | null {
   return center ? `${center[0].toFixed(3)},${center[1].toFixed(3)}` : null;
 }
 
-/** Nearby supply around `center`, kept current by versioned realtime events. */
-export function useParkingState(center: LngLat | null) {
+/**
+ * Nearby supply around `center`, kept current by versioned realtime events.
+ * `onEvent` sees each realtime event as it arrives (e.g. to announce new openings).
+ */
+export function useParkingState(center: LngLat | null, onEvent?: (event: RealtimeEvent) => void) {
   const api = getApi();
   const [state, dispatch] = useReducer(reduce, emptyParkingState);
   const [result, setResult] = useState<{ key: string; ok: boolean } | null>(null);
@@ -44,8 +47,16 @@ export function useParkingState(center: LngLat | null) {
     };
   }, [api, fetchKey]);
 
+  const onEventRef = useRef(onEvent);
   useEffect(() => {
-    const conn = api.connectRealtime((event) => dispatch({ type: "event", event }), setRealtime);
+    onEventRef.current = onEvent;
+  }, [onEvent]);
+
+  useEffect(() => {
+    const conn = api.connectRealtime((event) => {
+      dispatch({ type: "event", event });
+      onEventRef.current?.(event);
+    }, setRealtime);
     return () => conn.close();
   }, [api]);
 

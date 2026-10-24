@@ -4,6 +4,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi } from "@/api/client";
+import { FIND_RADIUS_M, type RealtimeEvent } from "@/api/types";
 import { AccountMenu } from "@/components/AccountMenu";
 import { CurbMap } from "@/components/map/CurbMap";
 import { MapErrorCard } from "@/components/map/MapErrorCard";
@@ -13,6 +14,7 @@ import { BookingConfirmation } from "@/components/find/BookingConfirmation";
 import { DrivewayDetailSheet } from "@/components/find/DrivewayDetailSheet";
 import { PaymentSheet } from "@/components/find/PaymentSheet";
 import { NearbyList } from "@/components/find/NearbyList";
+import { NewSpotBanner } from "@/components/find/NewSpotBanner";
 import { RouteCard } from "@/components/find/RouteCard";
 import { RouteReplacementPrompt } from "@/components/find/RouteReplacementPrompt";
 import { SpaceDetailSheet } from "@/components/find/SpaceDetailSheet";
@@ -25,7 +27,8 @@ import { DemoModeBadge } from "@/demo/DemoModeBadge";
 import { getDeviceId, newCaptureSessionId, type FrameContext } from "@/features/capture/frameUpload";
 import { useDriverLocation } from "@/features/capture/useDriverLocation";
 import { ageSeconds } from "@/features/find/freshness";
-import { findOptions, mapPills, mapSignature, mapStalls, mapZones, type FindOption } from "@/features/find/options";
+import { mergeAlert, newOpening, worthInterruptingRoute, type SpotAlert } from "@/features/find/newSpots";
+import { findOptions, mapPills, mapSignature, mapStalls, mapZones, type FindOption, type SearchArea } from "@/features/find/options";
 import { replacementFor, requestRoute, type Route } from "@/features/find/route";
 import { useFreshnessClock } from "@/features/find/useFreshnessClock";
 import { useDrivewayBooking } from "@/features/find/useDrivewayBooking";
@@ -38,6 +41,7 @@ import { haptics } from "@/lib/haptics";
 import { useReduceMotion } from "@/hooks/useReduceMotion";
 import { HOME_CAMERA, SPOT_CAMERA } from "@/map/mapConfig";
 import type { LngLat, MapController, MapToApp } from "@/map/messages";
+import type { ParkingState } from "@/realtime/reducer";
 
 type Sheet =
   | { mode: "list" }
@@ -62,10 +66,29 @@ export default function FindScreen() {
       live && location.position ? { position: location.position, heading: location.heading ?? 0 } : DEMO_DRIVER,
     [live, location.position, location.heading],
   );
-  const { state, load, refresh, mode, realtime } = useParkingState(live ? location.position : HOME_CAMERA.center);
+  // Search area: the spec's fixed 0.5 mi around the driver (live) or the demo block.
+  const searchCenter = live ? location.position : HOME_CAMERA.center;
+  const area = useMemo<SearchArea | null>(() => (searchCenter ? { center: searchCenter, radiusM: FIND_RADIUS_M } : null), [searchCenter]);
+
+  // New-opening alerts. Realtime events arrive outside render, so the handler
+  // reads the latest screen state through a ref.
+  const [spotAlert, setSpotAlert] = useState<SpotAlert | null>(null);
+  const latest = useRef<{ state: ParkingState; area: SearchArea | null; driver: LngLat; routeTargetM: number | null } | null>(null);
+  const onRealtimeEvent = useCallback((event: RealtimeEvent) => {
+    const L = latest.current;
+    if (!L) return;
+    const hit = newOpening(event, L.state, L.area, Date.now());
+    if (!hit) return;
+    if (L.routeTargetM != null && !worthInterruptingRoute(hit.position, L.driver, L.routeTargetM)) return;
+    setSpotAlert((prev) => mergeAlert(prev, hit.id, Date.now()));
+    haptics.tap();
+  }, []);
+  const dismissAlert = useCallback(() => setSpotAlert(null), []);
+
+  const { state, load, refresh, mode, realtime } = useParkingState(searchCenter, onRealtimeEvent);
   const userId = useSession().session?.user.id ?? null;
   const now = useFreshnessClock();
-  const options = useMemo(() => findOptions(state, now, driver.position, userId), [state, now, driver.position, userId]);
+  const options = useMemo(() => findOptions(state, now, driver.position, userId, area), [state, now, driver.position, userId, area]);
   const { checkout, reserve, pay, cancel, reset } = useDrivewayBooking(() => haptics.success());
 
   // Frame metadata for camera sampling.
@@ -92,7 +115,7 @@ export default function FindScreen() {
   // A browsed opening that expired or was taken closes its details. While routing,
   // the replacement prompt handles it instead, so the route never changes silently.
   const detailGone = sheetState.mode === "detail" && !options.some((o) => o.id === sheetState.id);
-  const sheet: Sheet = detailGone ? { mode: "list" } : sheetState;
+  const sheet = useMemo<Sheet>(() => (detailGone ? { mode: "list" } : sheetState), [detailGone, sheetState]);
   const selectedId = detailGone ? null : selectedState;
   const [mapError, setMapError] = useState<string | null>(null);
   // Bumps on every mapReady so a reloaded map gets the full state again.
@@ -102,6 +125,11 @@ export default function FindScreen() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [keptRoutes, setKeptRoutes] = useState<Record<string, true>>({});
 
+  useEffect(() => {
+    const target = sheet.mode === "route" ? options.find((o) => o.id === sheet.id) : undefined;
+    latest.current = { state, area, driver: driver.position, routeTargetM: sheet.mode === "route" ? (target?.distanceM ?? Infinity) : null };
+  }, [state, area, driver.position, sheet, options]);
+
   const detailId = sheet.mode === "detail" && state.spaces[sheet.id] ? sheet.id : null;
   const detail = useSpaceDetail(detailId);
   const optionById = (id: string) => options.find((o) => o.id === id) ?? null;
@@ -110,8 +138,8 @@ export default function FindScreen() {
   // --- push state to the map (only when what's drawn changes) ---------------
 
   useEffect(() => {
-    send({ type: "setZones", zones: mapZones(state.zones) });
-  }, [state.zones, send, mapGen]);
+    send({ type: "setZones", zones: mapZones(state.zones, area) });
+  }, [state.zones, area, send, mapGen]);
 
   useEffect(() => {
     send({ type: "setStalls", stalls: mapStalls(options) });
@@ -148,7 +176,7 @@ export default function FindScreen() {
 
   const [sheetH, setSheetH] = useState(260);
   const [sheetCollapsed, setSheetCollapsed] = useState(false);
-  const [area, setArea] = useState({ w: 0, h: 0 });
+  const [screen, setScreen] = useState({ w: 0, h: 0 });
   // Swiped down: the map gets the space back for framing spots and routes.
   const visibleSheetH = sheetCollapsed ? SHEET_PEEK : sheetH;
   const padding = useMemo(() => ({ top: insets.top + 70, bottom: visibleSheetH + 12, left: 0, right: 0 }), [insets.top, visibleSheetH]);
@@ -241,7 +269,7 @@ export default function FindScreen() {
   };
 
   return (
-    <View style={styles.root} onLayout={(e) => setArea({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
+    <View style={styles.root} onLayout={(e) => setScreen({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
       <StatusBar style="dark" />
       <CurbMap key={mapKey} ref={mapRef} mood="clay" reduceMotion={reduceMotion} onMapMessage={onMapMessage} />
 
@@ -257,8 +285,8 @@ export default function FindScreen() {
       </View>
 
       <DraggablePip
-        areaWidth={area.w}
-        areaHeight={area.h}
+        areaWidth={screen.w}
+        areaHeight={screen.h}
         topInset={insets.top + 52}
         bottomInset={visibleSheetH}
         reduceMotion={reduceMotion}
@@ -352,6 +380,20 @@ export default function FindScreen() {
         )}
       </SheetFrame>
 
+      {spotAlert && (
+        <View style={[styles.banner, { top: insets.top + 8 }]}>
+          <NewSpotBanner
+            key={spotAlert.ids[0]}
+            alert={spotAlert}
+            options={options}
+            routing={sheet.mode === "route"}
+            reduceMotion={reduceMotion}
+            onOpen={open}
+            onDismiss={dismissAlert}
+          />
+        </View>
+      )}
+
       {replacement && (
         <View style={[styles.prompt, { bottom: visibleSheetH + 12 }]}>
           <RouteReplacementPrompt replacement={replacement} onAccept={acceptReplacement} onKeep={keepRoute} />
@@ -379,6 +421,7 @@ const styles = StyleSheet.create({
   leftCol: { gap: 10, alignItems: "flex-start" },
   mapButtons: { gap: 10, alignItems: "flex-end", zIndex: 10 },
   prompt: { position: "absolute", left: 16, right: 16 },
+  banner: { position: "absolute", left: 0, right: 0, zIndex: 30 },
   locationOff: { alignItems: "center", paddingVertical: 20, paddingHorizontal: 16, gap: 6 },
   locationTitle: { fontFamily: font.bold, fontSize: 16, color: ink.black, textAlign: "center" },
   locationText: { fontFamily: font.regular, fontSize: 14, color: ink.grey500, textAlign: "center" },
