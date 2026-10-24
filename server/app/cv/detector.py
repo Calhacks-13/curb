@@ -81,17 +81,17 @@ def get_sign_model() -> YOLO | None:
         except Exception as e:
             logger.warning("Failed to load fine-tuned sign model: %s", e)
 
-    # Fallback: YOLO-World open-vocabulary
-    if os.path.exists(settings.sign_world_model_path):
-        try:
-            _sign_model = YOLOWorld(settings.sign_world_model_path)
-            _sign_model.set_classes(settings.sign_world_classes)
-            _sign_model_available = True
-            logger.info("Loaded YOLO-World sign model: %s with classes %s",
-                        settings.sign_world_model_path, settings.sign_world_classes)
-            return _sign_model
-        except Exception as e:
-            logger.warning("Failed to load YOLO-World sign model: %s", e)
+    # Fallback: YOLO-World open-vocabulary (auto-downloads if not present)
+    try:
+        logger.info("Downloading/loading YOLO-World sign model: %s", settings.sign_world_model_path)
+        _sign_model = YOLOWorld(settings.sign_world_model_path)
+        _sign_model.set_classes(settings.sign_world_classes)
+        _sign_model_available = True
+        logger.info("Loaded YOLO-World sign model: %s with classes %s",
+                    settings.sign_world_model_path, settings.sign_world_classes)
+        return _sign_model
+    except Exception as e:
+        logger.warning("Failed to load YOLO-World sign model: %s", e)
 
     _sign_model_available = False
     return None
