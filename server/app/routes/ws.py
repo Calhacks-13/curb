@@ -17,11 +17,16 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.models import WSMetadata
 from app.cv.frame_selector import FrameSelector
-from app.cv.pipeline import get_pipeline
 
 router = APIRouter()
 _frame_selector = FrameSelector()
 viewers: set[WebSocket] = set()
+
+
+def get_pipeline():
+    from app.cv.pipeline import get_pipeline as load_pipeline
+
+    return load_pipeline()
 
 
 @router.websocket("/ws/stream")

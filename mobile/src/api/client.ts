@@ -7,6 +7,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { createDemoApi } from "@/demo/demoApi";
 import { laWindowToUtc, toLaHhmm } from "@/lib/laTime";
 import { ApiError } from "./errors";
+import { normalizeNearby, normalizeSpaceDetail } from "./normalize";
 import { connectWebPubSub } from "@/realtime/webPubSub";
 
 import {
@@ -84,9 +85,9 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
       token = t;
     },
     startSession: (profile) => call("POST", "/v1/demo/sessions", { profile }),
-    nearby: (lat, lng, radiusM = FIND_RADIUS_M) =>
-      call("GET", `/v1/parking/nearby?lat=${lat}&lng=${lng}&radius_m=${radiusM}`),
-    space: (id) => call("GET", `/v1/spaces/${encodeURIComponent(id)}`),
+    nearby: async (lat, lng, radiusM = FIND_RADIUS_M) =>
+      normalizeNearby(await call("GET", `/v1/parking/nearby?lat=${lat}&lng=${lng}&radius_m=${radiusM}`)),
+    space: async (id) => normalizeSpaceDetail(await call("GET", `/v1/spaces/${encodeURIComponent(id)}`)),
     async updateDriveway(id, update) {
       const window = laWindowToUtc(update.availability_start, update.availability_end, new Date());
       const view = await call<Driveway>("PATCH", `/v1/driveways/${encodeURIComponent(id)}`, {

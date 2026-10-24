@@ -10,13 +10,12 @@ import asyncio
 import json
 import uuid
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Form, Query, Request, UploadFile, File
+from fastapi import APIRouter, Form, Query, UploadFile, File
 from pydantic import BaseModel
 
 from app.azure import cosmos, signalr
-from app.cv.pipeline import get_pipeline
 from app.cv.frame_selector import FrameSelector
 from app.routes.ws import viewers as ws_viewers
 
@@ -25,6 +24,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["v1"])
 
 _frame_selector = FrameSelector()
+
+
+def get_pipeline():
+    from app.cv.pipeline import get_pipeline as load_pipeline
+
+    return load_pipeline()
 
 
 # ---------- response models (match mobile types.ts) ----------
@@ -253,121 +258,6 @@ def _driveway_to_view(dw: dict) -> dict:
 
 
 # ---------- endpoints ----------
-
-@router.post("/demo/sessions")
-async def demo_session(body: dict | None = None):
-    """Return a hardcoded demo session so the mobile app can bootstrap."""
-    profile = "driver"
-    if body and "profile" in body:
-        profile = body["profile"]
-
-    user_id = f"{profile}_demo"
-    return {
-        "user": {
-            "id": user_id,
-            "display_name": f"Demo {profile.title()}",
-            "demo_profile": profile,
-        },
-        "token": f"demo-token-{user_id}",
-    }
-
-
-@router.get("/parking/nearby")
-async def nearby_parking(
-    request: Request,
-    lat: float = Query(...),
-    lng: float = Query(...),
-    radius_m: float = Query(805, ge=50, le=5000),
-):
-    """Query spots + blocks + signs + driveways, transform to NearbyParkingResponse."""
-    spots = await cosmos.query_spots_nearby(lat, lng, radius_m)
-    blocks = await cosmos.query_blocks_nearby(lat, lng, radius_m)
-    signs = await cosmos.query_signs_nearby(lat, lng, radius_m)
-    raw_driveways = await cosmos.query_driveways_nearby(lat, lng, radius_m)
-    raw_garages = await cosmos.query_garages_nearby(lat, lng, radius_m)
-
-    # Refresh seed timestamps relative to now with per-spot age offsets
-    # so they never expire but show different freshness colors on the map
-    now = datetime.now(timezone.utc)
-    for s in spots:
-        if s.get("id", "").startswith("seed_"):
-            age = s.get("seed_age_sec", 0)
-            ts = (now - timedelta(seconds=age)).isoformat()
-            s["last_seen_at"] = ts
-            s["opened_at"] = ts
-    for b in blocks:
-        if b.get("segment_id", "").startswith("seg_"):
-            b["confirmed_at"] = now.isoformat()
-
-    # Prefer SpotDocuments (have real status); fall back to legacy blocks
-    spot_segments = {s.get("segment_id") for s in spots}
-    spaces = [_spot_to_space(s) for s in spots if s.get("status") != "expired"]
-    # Add legacy blocks that don't have a corresponding SpotDocument
-    for b in blocks:
-        if b.get("segment_id") not in spot_segments:
-            spaces.append(_block_to_space(b))
-
-    zones = [_block_to_zone(b, signs) for b in blocks]
-    driveways = [_driveway_to_view(d) for d in raw_driveways]
-    service = getattr(request.app.state, "driveway_service", None)
-    if service is not None:
-        from app.wiring import overlay_driveway_state
-        driveways = [await overlay_driveway_state(d, service, now) for d in driveways]
-    garages = [_garage_to_view(g) for g in raw_garages]
-
-    return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "zones": [z.model_dump() for z in zones],
-        "spaces": [s.model_dump() for s in spaces],
-        "driveways": driveways,
-        "garages": garages,
-    }
-
-
-@router.get("/spaces/{space_id}")
-async def get_space(space_id: str):
-    """Get space detail with sign rule."""
-    # Try looking up as a block segment_id first, then try as spot zone_id
-    block = await cosmos.get_block(space_id)
-
-    if block is None:
-        # space_id might be a spot id (e.g. "seed_spot_1") — find the spot
-        # and use its segment_id to look up the block
-        spots = await cosmos.query_spots_nearby(0, 0, 50000)  # broad search
-        spot = next((s for s in spots if s.get("id") == space_id), None)
-        if spot:
-            seg_id = spot.get("segment_id", "")
-            block = await cosmos.get_block(seg_id)
-            if block is None:
-                # No block exists — build a synthetic one from the spot
-                block = {
-                    "segment_id": seg_id, "id": seg_id,
-                    "gap_count": spot.get("gap_count", 1),
-                    "confidence": spot.get("confidence", 0.0),
-                    "confirmed_at": spot.get("last_seen_at"),
-                    "lat": spot.get("lat", 0), "lng": spot.get("lng", 0),
-                    "location": spot.get("location", {}),
-                    "sign_rules": spot.get("sign_rules"),
-                }
-
-    if block is None:
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": "not found"}, status_code=404)
-
-    signs = await cosmos.query_signs_nearby(
-        block.get("lat", 0), block.get("lng", 0), 200
-    )
-
-    space = _block_to_space(block)
-    zone = _block_to_zone(block, signs)
-
-    rule = None
-    block_sign = block.get("sign_rules")
-    if isinstance(block_sign, dict) and (block_sign.get("combined_summary") or block_sign.get("summary")):
-        rule = _sign_to_rule_view(block_sign)
-
-    return SpaceDetail(space=space, zone=zone, rule=rule)
-
 
 @router.post("/vision/frames")
 async def upload_frame(

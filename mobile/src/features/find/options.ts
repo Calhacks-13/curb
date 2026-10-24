@@ -54,7 +54,9 @@ export function walkMinutes(m: number): number {
  */
 export function visibleDriveways(state: ParkingState, now: number, userId: string | null): Driveway[] {
   return Object.values(state.driveways).filter((d) => {
-    const inWindow = inLaWindow(d.availability_start, d.availability_end, new Date(now));
+    const inWindow = d.availability_window
+      ? Date.parse(d.availability_window.start) <= now && now < Date.parse(d.availability_window.end)
+      : inLaWindow(d.availability_start, d.availability_end, new Date(now));
     if (userId != null && d.held_by_user_id === userId && (d.state === "HELD" || d.state === "BOOKED")) return true;
     // Someone else's hold or booking stays on the map as a muted "Booked" pin.
     return inWindow && d.state !== "UNAVAILABLE";
@@ -194,5 +196,5 @@ export function mapPills(options: FindOption[]): MapPill[] {
 
 /** Changes only when what the map draws changes (not every clock tick). */
 export function mapSignature(options: FindOption[]): string {
-  return options.map((o) => `${o.id}:${o.kind}${o.mine ? ":mine" : ""}${o.booked ? ":booked" : ""}${o.own ? ":own" : ""}`).join("|");
+  return JSON.stringify([mapStalls(options), mapPills(options)]);
 }

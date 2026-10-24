@@ -29,11 +29,17 @@ export function useParkingState(center: LngLat | null, onEvent?: (event: Realtim
   const [attempt, setAttempt] = useState(0);
   const key = centerKey(center);
   const fetchKey = key ? `${key}#${attempt}` : null;
+  // Bucket only the trigger. Search with the actual GPS fix so the radius stays
+  // centered on the driver rather than a rounded point up to ~70 m away.
+  const centerRef = useRef(center);
+  useEffect(() => {
+    centerRef.current = center;
+  }, [center]);
 
   useEffect(() => {
-    if (!fetchKey) return;
+    if (!fetchKey || !centerRef.current) return;
     let cancelled = false;
-    const [lng, lat] = fetchKey.split("#")[0].split(",").map(Number);
+    const [lng, lat] = centerRef.current;
     api
       .nearby(lat, lng, FIND_RADIUS_M)
       .then((res) => {

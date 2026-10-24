@@ -247,7 +247,7 @@ export const MAP_RUNTIME_JS = String.raw`
         entry.muted = !!p.muted;
         entry.el.classList.toggle("is-muted", entry.muted);
         entry.el.dataset.kind = p.kind;
-        entry.el.setAttribute("aria-label", p.label);
+        entry.el.setAttribute("aria-label", p.kind === "driveway" && !p.mine ? "Driveway. " + p.label + ". Guaranteed after payment." : p.label);
         entry.el.querySelector(".callout").innerHTML = chipHtml(p.kind, p.mine) + "<span>" + labelHtml(p.label) + "</span>";
       }
       entry.el.classList.toggle("is-selected", p.id === selected);
