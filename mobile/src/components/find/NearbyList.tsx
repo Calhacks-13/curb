@@ -27,7 +27,7 @@ export function NearbyList({ options, load, locating = false, onOpen, onRetry }:
         <Text style={styles.title} accessibilityRole="header">
           Parking near you
         </Text>
-        <Text style={styles.subtitle}>Within 0.5 mi</Text>
+        <Text style={styles.subtitle}>{load === "ready" && options.length > 0 ? `${options.length} nearby · 0.5 mi` : "Within 0.5 mi"}</Text>
       </View>
 
       {load === "loading" && (

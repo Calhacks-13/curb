@@ -17,7 +17,7 @@ import { NearbyList } from "@/components/find/NearbyList";
 import { RouteCard } from "@/components/find/RouteCard";
 import { RouteReplacementPrompt } from "@/components/find/RouteReplacementPrompt";
 import { SpaceDetailSheet } from "@/components/find/SpaceDetailSheet";
-import { SheetFrame } from "@/components/sheet/SheetFrame";
+import { SHEET_PEEK, SheetFrame } from "@/components/sheet/SheetFrame";
 import { CameraOverlay } from "@/components/CameraOverlay";
 import { font, ink, radius } from "@/config/tokens";
 import { DEMO_DRIVER } from "@/data/mock/marina";
@@ -149,7 +149,10 @@ export default function FindScreen() {
   }, [selectedId, send, mapGen]);
 
   const [sheetH, setSheetH] = useState(260);
-  const padding = useMemo(() => ({ top: insets.top + 70, bottom: sheetH + 12, left: 0, right: 0 }), [insets.top, sheetH]);
+  const [sheetCollapsed, setSheetCollapsed] = useState(false);
+  // Swiped down: the map gets the space back for framing spots and routes.
+  const visibleSheetH = sheetCollapsed ? SHEET_PEEK : sheetH;
+  const padding = useMemo(() => ({ top: insets.top + 70, bottom: visibleSheetH + 12, left: 0, right: 0 }), [insets.top, visibleSheetH]);
   useEffect(() => {
     send({ type: "setPadding", padding });
   }, [padding, send, mapGen]);
@@ -262,7 +265,12 @@ export default function FindScreen() {
       </View>
 
       {/* The tab bar below already covers the home-indicator inset. */}
-      <SheetFrame bottomInset={0} onContentHeight={setSheetH}>
+      <SheetFrame
+        bottomInset={0}
+        onContentHeight={setSheetH}
+        onCollapsedChange={setSheetCollapsed}
+        expandKey={sheet.mode === "list" ? "list" : `${sheet.mode}:${sheet.id}`}
+      >
         {sheet.mode === "list" &&
           (live && location.status === "denied" ? (
             <View style={styles.locationOff}>
@@ -338,7 +346,7 @@ export default function FindScreen() {
       </SheetFrame>
 
       {replacement && (
-        <View style={[styles.prompt, { bottom: sheetH + 12 }]}>
+        <View style={[styles.prompt, { bottom: visibleSheetH + 12 }]}>
           <RouteReplacementPrompt replacement={replacement} onAccept={acceptReplacement} onKeep={keepRoute} />
         </View>
       )}
