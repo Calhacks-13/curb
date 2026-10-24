@@ -73,3 +73,29 @@ export function inLaWindow(start: string, end: string, now: Date): boolean {
   const e = hhmmToMinutes(end);
   return s <= e ? cur >= s && cur < e : cur >= s || cur < e;
 }
+
+/**
+ * The UTC instants for an HH:MM window as it applies around `now`: the window
+ * that hasn't ended yet, so an overnight window (22:00 to 03:00) at 1 AM is
+ * last night's, not tonight's.
+ */
+export function laWindowToUtc(start: string, end: string, now: Date): { start: string; end: string } {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  const overnight = hhmmToMinutes(end) <= hhmmToMinutes(start);
+  for (const offset of [-1, 0]) {
+    const s = laWallTime(sh, sm, now, offset);
+    const e = laWallTime(eh, em, now, offset + (overnight ? 1 : 0));
+    if (e.getTime() > now.getTime()) return { start: s.toISOString(), end: e.toISOString() };
+  }
+  const s = laWallTime(sh, sm, now, 1);
+  const e = laWallTime(eh, em, now, 1 + (overnight ? 1 : 0));
+  return { start: s.toISOString(), end: e.toISOString() };
+}
+
+/** A UTC timestamp as LA wall-clock "HH:MM"; an "HH:MM" input passes through. */
+export function toLaHhmm(value: string): string {
+  if (!value.includes("T")) return value;
+  const p = laParts(new Date(value));
+  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+}

@@ -20,3 +20,28 @@ describe("America/Los_Angeles wall time", () => {
     expect(formatHhmm("00:00")).toBe("12 AM");
   });
 });
+
+describe("laWindowToUtc / toLaHhmm", () => {
+  const { laWindowToUtc, toLaHhmm } = jest.requireActual<typeof import("@/lib/laTime")>("@/lib/laTime");
+
+  it("sends today's same-day window as UTC instants", () => {
+    const now = new Date("2026-10-24T19:00:00Z"); // noon PDT
+    expect(laWindowToUtc("08:00", "18:00", now)).toEqual({ start: "2026-10-24T15:00:00.000Z", end: "2026-10-25T01:00:00.000Z" });
+  });
+
+  it("uses last night's overnight window when it's still running", () => {
+    const now = new Date("2026-10-24T08:00:00Z"); // 1 AM PDT
+    expect(laWindowToUtc("22:00", "03:00", now)).toEqual({ start: "2026-10-24T05:00:00.000Z", end: "2026-10-24T10:00:00.000Z" });
+  });
+
+  it("rolls to tomorrow once today's window has ended", () => {
+    const now = new Date("2026-10-25T02:00:00Z"); // 7 PM PDT
+    expect(laWindowToUtc("08:00", "18:00", now).start).toBe("2026-10-25T15:00:00.000Z");
+  });
+
+  it("reads UTC timestamps back as LA HH:MM, across DST", () => {
+    expect(toLaHhmm("2026-10-24T15:00:00Z")).toBe("08:00"); // PDT
+    expect(toLaHhmm("2026-11-02T16:00:00Z")).toBe("08:00"); // PST
+    expect(toLaHhmm("07:30")).toBe("07:30");
+  });
+});

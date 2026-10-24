@@ -5,6 +5,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 
 import { createDemoApi } from "@/demo/demoApi";
+import { laWindowToUtc, toLaHhmm } from "@/lib/laTime";
 import { ApiError } from "./errors";
 import { connectWebPubSub } from "@/realtime/webPubSub";
 
@@ -52,6 +53,11 @@ export interface CurbApi {
   connectRealtime(onEvent: (e: RealtimeEvent) => void, onStatus?: (s: RealtimeStatus) => void): RealtimeConnection;
 }
 
+/** The server sends availability as UTC timestamps; the app works in LA "HH:MM". */
+export function normalizeDriveway(d: Driveway): Driveway {
+  return { ...d, availability_start: toLaHhmm(d.availability_start), availability_end: toLaHhmm(d.availability_end) };
+}
+
 function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
   let token: string | null = null;
 
@@ -81,12 +87,20 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
     nearby: (lat, lng, radiusM = FIND_RADIUS_M) =>
       call("GET", `/v1/parking/nearby?lat=${lat}&lng=${lng}&radius_m=${radiusM}`),
     space: (id) => call("GET", `/v1/spaces/${encodeURIComponent(id)}`),
-    updateDriveway: (id, update) => call("PATCH", `/v1/driveways/${encodeURIComponent(id)}`, update),
+    async updateDriveway(id, update) {
+      const window = laWindowToUtc(update.availability_start, update.availability_end, new Date());
+      const view = await call<Driveway>("PATCH", `/v1/driveways/${encodeURIComponent(id)}`, {
+        ...update,
+        availability_start: window.start,
+        availability_end: window.end,
+      });
+      return normalizeDriveway(view);
+    },
     holdDriveway: (id, expected_version) => call("POST", `/v1/driveways/${encodeURIComponent(id)}/holds`, { expected_version }),
-    cancelHold: (id, bookingId) =>
-      call("DELETE", `/v1/driveways/${encodeURIComponent(id)}/holds/${encodeURIComponent(bookingId)}`),
-    recoverDriveway: (id, expected_version) =>
-      call("POST", `/v1/driveways/${encodeURIComponent(id)}/recover`, { expected_version }),
+    cancelHold: async (id, bookingId) =>
+      normalizeDriveway(await call("DELETE", `/v1/driveways/${encodeURIComponent(id)}/holds/${encodeURIComponent(bookingId)}`)),
+    recoverDriveway: async (id, expected_version) =>
+      normalizeDriveway(await call("POST", `/v1/driveways/${encodeURIComponent(id)}/recover`, { expected_version })),
     async executePayment(bookingId) {
       // The payment service answers { booking, explorer_url }; accept a bare booking too.
       const res = await call<Booking | { booking: Booking }>(
