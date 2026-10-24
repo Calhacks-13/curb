@@ -7,6 +7,7 @@ import {
   INTRO_DURATION_MS,
   MAPBOX_GL_VERSION,
   MAX_PIXEL_RATIO,
+  SHOW_MAP_ATTRIBUTION,
   STYLE_URL,
 } from "../mapConfig";
 import { EGO_LAYER, EGO_MODEL, HEADING_TO_ROTATION, MODELS } from "../modelLayers";
@@ -80,6 +81,7 @@ export function buildMapHtml({ token, mood, reduceMotion }: MapHtmlOptions): str
     egoModel: EGO_MODEL,
     headingToRotation: HEADING_TO_ROTATION,
     maxPixelRatio: MAX_PIXEL_RATIO,
+    showAttribution: SHOW_MAP_ATTRIBUTION,
   };
   // Escape "<" so config strings can never close the script tag.
   const json = JSON.stringify(config).replace(/</g, "\\u003c");
@@ -100,6 +102,7 @@ export function buildMapHtml({ token, mood, reduceMotion }: MapHtmlOptions): str
   #map { position: absolute; inset: 0; }
   .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right { bottom: var(--curb-bottom, 0px); transition: bottom 250ms ease; }
   .mapboxgl-ctrl-attrib.mapboxgl-compact { opacity: 0.6; }
+  ${SHOW_MAP_ATTRIBUTION ? "" : ".mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib { display: none !important; }"}
   ${MARKER_CSS}
 </style>
 <script src="https://api.mapbox.com/mapbox-gl-js/v${v}/mapbox-gl.js"></script>

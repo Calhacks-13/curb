@@ -51,3 +51,10 @@ export const SPOT_CAMERA = { zoom: 17.6, pitch: 58, durationMs: 1300 } as const;
 
 /** Cap on canvas pixel density. */
 export const MAX_PIXEL_RATIO = 2;
+
+/**
+ * Mapbox logo and attribution. Hidden at the team's request for the demo build.
+ * Mapbox's terms and the OpenStreetMap license require them, so set this back
+ * to true before any public release.
+ */
+export const SHOW_MAP_ATTRIBUTION = false;

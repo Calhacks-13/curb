@@ -49,7 +49,7 @@ export const MAP_RUNTIME_JS = String.raw`
     attributionControl: false,
     maxPitch: 70,
   });
-  map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
+  if (C.showAttribution) map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-right");
   window.__map = map;
   document.body.classList.toggle("night", night > 0.5);
 
