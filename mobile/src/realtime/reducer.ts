@@ -42,6 +42,21 @@ export function fromNearby(prev: ParkingState, res: NearbyParkingResponse): Park
   };
 }
 
+/**
+ * Server events carry the contract's `{ driveway: DrivewayView }`, whose
+ * availability is full timestamps; the app keeps its own HH:MM window, so only
+ * the hold state is taken from it.
+ */
+function contractDriveway(payload: object): Partial<Driveway> | null {
+  const view = (payload as { driveway?: Record<string, unknown> }).driveway;
+  if (!view || typeof view !== "object") return null;
+  return {
+    state: view.state as Driveway["state"],
+    held_by_user_id: (view.held_by_user_id as string | null) ?? null,
+    version: view.version as number,
+  };
+}
+
 export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): ParkingState {
   const held = state.versions[event.entity_id] ?? 0;
   if (event.entity_version <= held) return state;
@@ -66,6 +81,12 @@ export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): P
     case "driveway.held":
     case "driveway.released": {
       const prev = state.driveways[event.entity_id];
+      const wrapped = contractDriveway(event.payload);
+      if (wrapped) {
+        if (!prev) return { ...state, versions };
+        const driveway = { ...prev, ...wrapped, version: event.entity_version };
+        return { ...state, versions, driveways: { ...state.driveways, [event.entity_id]: driveway } };
+      }
       if (!prev && !("location" in event.payload)) return { ...state, versions };
       const driveway = { ...(prev ?? {}), ...patch } as Driveway;
       return { ...state, versions, driveways: { ...state.driveways, [event.entity_id]: driveway } };
@@ -73,8 +94,21 @@ export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): P
     case "booking.confirmed":
     case "payment.failed": {
       const prev = state.bookings[event.entity_id];
-      const booking = { ...(prev ?? {}), ...patch } as Booking;
-      return { ...state, versions, bookings: { ...state.bookings, [event.entity_id]: booking } };
+      const payload = event.payload as Record<string, unknown>;
+      // Contract shape: { booking, driveway }; legacy shape: flat booking fields.
+      const fields = payload.booking && typeof payload.booking === "object" ? (payload.booking as Partial<Booking>) : patch;
+      const booking = { ...(prev ?? {}), ...fields, version: event.entity_version } as Booking;
+      let next: ParkingState = { ...state, versions, bookings: { ...state.bookings, [event.entity_id]: booking } };
+      const dw = contractDriveway(payload);
+      const dwId = (payload.driveway as { id?: string } | undefined)?.id;
+      if (dw && dwId && next.driveways[dwId] && (dw.version ?? 0) > (next.versions[dwId] ?? 0)) {
+        next = {
+          ...next,
+          versions: { ...next.versions, [dwId]: dw.version! },
+          driveways: { ...next.driveways, [dwId]: { ...next.driveways[dwId], ...dw } },
+        };
+      }
+      return next;
     }
     case "sign_rule.updated": {
       const prev = state.zones[event.entity_id];
