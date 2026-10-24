@@ -148,3 +148,41 @@ def test_owner_cannot_reserve_their_own_driveway():
         headers=bearer("demo-token-owner_demo"),
     )
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_nearby_overlay_reports_owner_edits():
+    client, service = build_client()
+    response = client.patch(
+        "/v1/driveways/driveway_demo_1",
+        json={
+            "expected_version": 1,
+            "available": True,
+            "price_usdc": "1.25",
+            "availability_start": "2026-10-24T15:00:00Z",  # 08:00 Pacific
+            "availability_end": "2026-10-25T05:00:00Z",  # 22:00 Pacific
+        },
+        headers=bearer("demo-token-owner_demo"),
+    )
+    assert response.status_code == 200, response.text
+    view = {"id": "driveway_demo_1", "price_usdc": "8", "availability_start": "00:00", "availability_end": "23:59"}
+    overlaid = await overlay_driveway_state(view, service, NOW)
+    assert overlaid["price_usdc"] == "1.25"
+    assert overlaid["availability_start"] == "08:00"
+    assert overlaid["availability_end"] == "22:00"
+
+
+def test_non_owner_cannot_edit_listing():
+    client, _ = build_client()
+    response = client.patch(
+        "/v1/driveways/driveway_demo_1",
+        json={
+            "expected_version": 1,
+            "available": False,
+            "price_usdc": "1.00",
+            "availability_start": "2026-10-24T15:00:00Z",
+            "availability_end": "2026-10-25T05:00:00Z",
+        },
+        headers=bearer("demo-token-driver_demo"),
+    )
+    assert response.status_code == 403

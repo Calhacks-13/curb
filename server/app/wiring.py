@@ -80,13 +80,17 @@ def resolve_actor(authorization: str | None, payment_service_token: str) -> Acto
 
 
 async def overlay_driveway_state(view: dict, service: DrivewayService, now: datetime) -> dict:
-    """Nearby reads seed docs; the service owns hold state, so its fields win."""
+    """Nearby reads seed docs; the service owns hold state and owner edits, so its fields win."""
     try:
         live = await service.get_driveway(view["id"], now)
     except Exception:
         return view
     return {
         **view,
+        "price_usdc": live.price_usdc,
+        # Nearby keeps the seed's LA "HH:MM" shape that the app reads.
+        "availability_start": live.availability_start.astimezone(LA).strftime("%H:%M"),
+        "availability_end": live.availability_end.astimezone(LA).strftime("%H:%M"),
         "state": live.state.value if hasattr(live.state, "value") else live.state,
         "held_by_user_id": live.held_by_user_id,
         "active_booking": live.active_booking.model_dump(mode="json") if live.active_booking else None,
