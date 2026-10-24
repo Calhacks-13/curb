@@ -2,8 +2,7 @@
 // Mapbox GL JS WebView). A native @rnmapbox/maps renderer would implement the
 // same messages, so UI components never depend on the WebView.
 
-import type { CurbSegment } from "../data/types";
-import type { Stall } from "./curbScene";
+import type { StallKind } from "./curbLayers";
 import type { Mood } from "./moods";
 
 export type LngLat = [lng: number, lat: number];
@@ -19,34 +18,32 @@ export type CameraTarget = {
   durationMs?: number;
 };
 
-export type PillKind = "free" | "metered" | "driveway";
+/** A legal-now curb zone (blue line), already on the curb face. */
+export type MapZone = { id: string; coordinates: LngLat[] };
 
-export type MapPill = {
-  segmentId: string;
-  kind: PillKind;
-  label: string; // "P Free", "$3.50/hr", "$8"
-  position: LngLat;
-};
+/** A bay to fill: an opening (by freshness) or a driveway. `id` is the space or driveway id. */
+export type MapStall = { id: string; kind: StallKind; ring: LngLat[] };
+
+/** A callout. Text and chip shape carry the meaning, not color alone. */
+export type MapPill = { id: string; kind: StallKind; label: string; position: LngLat };
 
 export type AppToMap =
   | { type: "setMood"; mood: Mood; animate: boolean }
   | { type: "setReduceMotion"; reduceMotion: boolean }
-  | { type: "setSegments"; segments: CurbSegment[] }
+  | { type: "setZones"; zones: MapZone[] }
+  | { type: "setStalls"; stalls: MapStall[] }
   | { type: "setPills"; pills: MapPill[] }
-  | { type: "setDestination"; position: LngLat; label: string }
-  /** Bays for open / likely / driveway spots, derived from segments (see map/curbScene.ts). */
-  | { type: "setStalls"; stalls: Stall[] }
-  | { type: "selectSpot"; segmentId: string | null }
+  | { type: "selectSpot"; id: string | null }
   | { type: "flyTo"; camera: CameraTarget }
   /** Pixel insets covered by native chrome, so the map centers in the visible area. */
   | { type: "setPadding"; padding: CameraPadding }
-  | { type: "startNav"; route: LngLat[]; targetSegmentId: string }
-  | { type: "stopNav" }
-  | { type: "setCarPosition"; position: LngLat; heading: number; follow: boolean };
+  /** Draws one route line to a target bay; null clears it. */
+  | { type: "setRoute"; route: LngLat[] | null; targetId: string | null }
+  | { type: "setCarPosition"; position: LngLat; heading: number };
 
 export type MapToApp =
   | { type: "mapReady" }
-  | { type: "spotTapped"; segmentId: string }
+  | { type: "spotTapped"; id: string }
   | { type: "cameraChanged"; center: LngLat; zoom: number; pitch: number; bearing: number }
   | { type: "mapError"; message: string };
 

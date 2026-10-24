@@ -1,5 +1,5 @@
 import { ink, status } from "../../config/tokens";
-import { CURB_PAINT_LAYERS, ROUTE_LAYERS, STALL_LAYERS } from "../curbLayers";
+import { PALETTE, ROUTE_LAYERS, STALL_FILL_ID, SUPPLY_LAYERS, ZONE_LAYER_ID } from "../curbLayers";
 import {
   BASEMAP_STATIC_CONFIG,
   HOME_CAMERA,
@@ -7,7 +7,6 @@ import {
   INTRO_DURATION_MS,
   MAPBOX_GL_VERSION,
   MAX_PIXEL_RATIO,
-  NAV_CAMERA,
   STYLE_URL,
 } from "../mapConfig";
 import { EGO_LAYER, EGO_MODEL, HEADING_TO_ROTATION, MODELS } from "../modelLayers";
@@ -20,7 +19,7 @@ export type MapHtmlOptions = {
   reduceMotion: boolean;
 };
 
-// Map callouts and the destination pin: flat, white, black type, one small status
+// Map callouts: flat, white, black type, one small status
 // chip. The map-side half of the design system; keep in step with config/tokens.ts.
 const MARKER_CSS = `
   /* Mapbox positions .pin with an inline transform; scale the inner wrapper instead. */
@@ -34,32 +33,26 @@ const MARKER_CSS = `
   .tail { width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
     border-top: 6px solid ${ink.white}; margin-top: -1px; filter: drop-shadow(0 2px 1px rgba(0,0,0,.08)); }
   .pin:focus-visible .callout { outline: 2px solid ${ink.black}; outline-offset: 2px; }
-  .chip { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; box-sizing: border-box;
-    font: 800 12px/1 Overpass, -apple-system, sans-serif; color: ${ink.white}; padding-top: 2px; }
-  .chip-free { background: ${status.open}; }
-  .chip-metered { background: ${ink.white}; border: 2px dashed ${status.open}; border-radius: 50%; width: 14px; height: 14px; margin: 0 2px; padding: 0; }
-  .chip-driveway { background: ${status.driveway}; padding: 0; }
+  .chip { display: inline-grid; place-items: center; width: 16px; height: 16px; box-sizing: border-box; flex: none; }
+  /* Shapes carry meaning alongside color: solid dot, ringed dot, hollow dashed ring, locked square. */
+  .chip-fresh { border-radius: 50%; background: ${status.fresh}; }
+  .chip-aging { border-radius: 50%; border: 2.5px solid ${status.aging}; }
+  .chip-aging::after { content: ""; width: 5px; height: 5px; border-radius: 50%; background: ${status.aging}; }
+  .chip-stale { border-radius: 50%; border: 2px dashed ${status.stale}; }
+  .chip-driveway { border-radius: 4px; background: ${status.driveway}; color: ${ink.white}; width: 18px; height: 18px; }
   .pin.is-selected .callout { background: ${ink.black}; color: ${ink.white}; }
   .pin.is-selected .tail { border-top-color: ${ink.black}; }
-  .pin.is-selected .chip-metered { background: ${ink.black}; }
   /* Night: callouts invert so the selected one is the brightest thing on the map. */
   .night .callout { background: ${ink.grey900}; color: ${ink.white}; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
   .night .tail { border-top-color: ${ink.grey900}; }
-  .night .chip-metered { background: ${ink.grey900}; }
+  .night .chip-fresh { background: ${status.freshNight}; }
+  .night .chip-aging { border-color: ${status.agingNight}; }
+  .night .chip-aging::after { background: ${status.agingNight}; }
+  .night .chip-stale { border-color: ${status.staleNight}; }
+  .night .chip-driveway { background: ${status.drivewayNight}; }
   .night .pin.is-selected .callout { background: ${ink.white}; color: ${ink.black}; }
   .night .pin.is-selected .tail { border-top-color: ${ink.white}; }
-  .night .pin.is-selected .chip-metered { background: ${ink.white}; }
-
-  .dest { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
-  .dest-label { font: 700 13px/1 Overpass, -apple-system, sans-serif; color: ${ink.white}; background: ${ink.black};
-    padding: 7px 9px 5px; border-radius: 6px; margin-bottom: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
-  .dest-pin { width: 16px; height: 16px; background: ${ink.black}; display: grid; place-items: center;
-    box-shadow: 0 1px 4px rgba(0,0,0,.3); }
-  .dest-dot { width: 6px; height: 6px; background: ${ink.white}; }
-  .night .dest-label, .night .dest-pin { background: ${ink.white}; color: ${ink.black}; }
-  .night .dest-dot { background: ${ink.black}; }
 `;
-
 /** Builds the full HTML document loaded into the map WebView. */
 export function buildMapHtml({ token, mood, reduceMotion }: MapHtmlOptions): string {
   const config = {
@@ -73,8 +66,10 @@ export function buildMapHtml({ token, mood, reduceMotion }: MapHtmlOptions): str
     introCamera: INTRO_CAMERA,
     introDurationMs: INTRO_DURATION_MS,
     moodTransitionMs: MOOD_TRANSITION_MS,
-    navCamera: NAV_CAMERA,
-    curbLayers: CURB_PAINT_LAYERS.concat(STALL_LAYERS),
+    supplyLayers: SUPPLY_LAYERS,
+    palette: PALETTE,
+    zoneLayerId: ZONE_LAYER_ID,
+    stallFillId: STALL_FILL_ID,
     routeLayers: ROUTE_LAYERS,
     models: MODELS,
     egoLayer: EGO_LAYER,

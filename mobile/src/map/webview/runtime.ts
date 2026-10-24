@@ -53,8 +53,6 @@ export const MAP_RUNTIME_JS = String.raw`
   window.__map = map;
   document.body.classList.toggle("night", night > 0.5);
 
-  // --- geo helpers ------------------------------------------------------------------
-
   function lerpAngle(a, b, t) {
     var d = ((b - a + 540) % 360) - 180;
     return (a + d * t + 360) % 360;
@@ -63,23 +61,17 @@ export const MAP_RUNTIME_JS = String.raw`
     return { type: "Feature", id: id, properties: Object.assign({ id: id }, props || {}), geometry: { type: "Point", coordinates: pos } };
   }
 
-  // --- per-segment animation ----------------------------------------------------
-  // fade (after an update) and sel (selection) ease toward targets and are written
-  // to the segment's curb line and its bays.
+  // --- per-bay animation --------------------------------------------------------
+  // fade (new opening), sel (selection) and pulse (route target) are eased per
+  // bay and written to feature-state on the "stalls" source.
 
-  var feats = {};   // segmentId -> { fade, sel, selT }
-  var segments = {};
-  var bayIds = {};  // segmentId -> [stall ids]
+  var bays = {};    // id -> { fade, sel, selT }
   var target = null;
-  var navOn = false;
   var animating = false;
   var lastT = 0;
   var pulseStart = 0;
 
-  function fs(id, obj) {
-    map.setFeatureState({ source: "curbs", id: id }, obj);
-    (bayIds[id] || []).forEach(function (sid) { map.setFeatureState({ source: "stalls", id: sid }, obj); });
-  }
+  function fs(id, obj) { map.setFeatureState({ source: "stalls", id: id }, obj); }
 
   function kick() {
     if (animating) return;
@@ -93,19 +85,19 @@ export const MAP_RUNTIME_JS = String.raw`
     lastT = now;
     var k = reduceMotion ? 1 : 1 - Math.exp(-dt / 140);
     var busy = false;
-    Object.keys(feats).forEach(function (id) {
-      var f = feats[id], out = null;
-      if (f.fade < 1) {
-        f.fade = reduceMotion ? 1 : Math.min(1, f.fade + dt / 500);
-        (out = out || {}).fade = f.fade;
+    Object.keys(bays).forEach(function (id) {
+      var b = bays[id], out = null;
+      if (b.fade < 1) {
+        b.fade = reduceMotion ? 1 : Math.min(1, b.fade + dt / 450);
+        (out = out || {}).fade = b.fade;
       }
-      if (f.sel !== f.selT) {
-        f.sel = Math.abs(f.selT - f.sel) < 0.01 ? f.selT : f.sel + (f.selT - f.sel) * k;
-        (out = out || {}).sel = f.sel;
+      if (b.sel !== b.selT) {
+        b.sel = Math.abs(b.selT - b.sel) < 0.01 ? b.selT : b.sel + (b.selT - b.sel) * k;
+        (out = out || {}).sel = b.sel;
       }
       if (out) { fs(id, out); busy = true; }
     });
-    if (navOn && target && !reduceMotion) {
+    if (target && bays[target] && !reduceMotion) {
       fs(target, { pulse: ((now - pulseStart) % 1600) / 1600 });
       busy = true;
     }
@@ -125,9 +117,19 @@ export const MAP_RUNTIME_JS = String.raw`
   }
   function ease(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
 
+  function stallColors(g) {
+    var P = C.palette, pick = function (c) { return mix(c.day, c.night, g); };
+    return ["match", ["get", "kind"], "fresh", pick(P.fresh), "aging", pick(P.aging), "stale", pick(P.stale), pick(P.driveway)];
+  }
+
   function setNight(g) {
     night = g;
-    Object.keys(feats).forEach(function (id) { fs(id, { glow: g }); });
+    if (map.getLayer(C.zoneLayerId)) {
+      map.setPaintProperty(C.zoneLayerId, "line-color", mix(C.palette.legal.day, C.palette.legal.night, g));
+      map.setPaintProperty(C.stallFillId, "fill-color", stallColors(g));
+      map.setPaintProperty("stall-pulse", "line-color", stallColors(g));
+      map.setPaintProperty("stall-select", "line-color", mix(C.palette.select.day, C.palette.select.night, g));
+    }
     map.setFeatureState({ source: "route", id: "route" }, { glow: g });
     document.body.classList.toggle("night", g > 0.5);
   }
@@ -169,49 +171,31 @@ export const MAP_RUNTIME_JS = String.raw`
     cancelMoodTween = function () { cancelAnimationFrame(raf); };
   }
 
-  // --- curb data ------------------------------------------------------------------
+  // --- supply ---------------------------------------------------------------------
 
-  /** Segment lines: drawn only as painted red / white curb edges. */
-  function setSegments(list) {
-    var features = list.map(function (s) {
-      var prev = segments[s.id];
-      var f = feats[s.id];
-      if (!f) {
-        f = feats[s.id] = { fade: 0, sel: 0, selT: 0 };
-      } else if (prev && (prev.status !== s.status || (s.lastSeenSeconds || 0) < (prev.lastSeenSeconds || 0))) {
-        f.fade = 0; // fresh sighting: fades back in
-      }
-      segments[s.id] = s;
-      return {
-        type: "Feature",
-        properties: { id: s.id, status: s.status, sideSign: s.side === "right" ? 1 : -1 },
-        geometry: { type: "LineString", coordinates: s.coordinates },
-      };
+  function setZones(zones) {
+    map.getSource("zones").setData({
+      type: "FeatureCollection",
+      features: zones.map(function (z) {
+        return { type: "Feature", properties: { id: z.id }, geometry: { type: "LineString", coordinates: z.coordinates } };
+      }),
     });
-    map.getSource("curbs").setData({ type: "FeatureCollection", features: features });
-    syncStates();
   }
 
-  /** Bays for open, likely and driveway spots (see map/curbScene.ts). */
   function setStalls(stalls) {
-    bayIds = {};
+    var next = {};
+    stalls.forEach(function (st) {
+      // New openings fade in; existing ones keep their animation state.
+      next[st.id] = bays[st.id] || { fade: 0, sel: st.id === selected ? 1 : 0, selT: st.id === selected ? 1 : 0 };
+    });
+    bays = next;
     map.getSource("stalls").setData({
       type: "FeatureCollection",
       features: stalls.map(function (st) {
-        (bayIds[st.segmentId] = bayIds[st.segmentId] || []).push(st.id);
-        return {
-          type: "Feature",
-          properties: { id: st.id, segmentId: st.segmentId, kind: st.kind, lastSeenSeconds: st.lastSeenSeconds },
-          geometry: { type: "Polygon", coordinates: [st.ring] },
-        };
+        return { type: "Feature", properties: { id: st.id, kind: st.kind }, geometry: { type: "Polygon", coordinates: [st.ring] } };
       }),
     });
-    syncStates();
-  }
-
-  function syncStates() {
-    Object.keys(feats).forEach(function (id) { fs(id, { glow: night, fade: feats[id].fade, sel: feats[id].sel }); });
-    if (target) fs(target, { target: 1 });
+    Object.keys(bays).forEach(function (id) { fs(id, { fade: bays[id].fade, sel: bays[id].sel, target: id === target ? 1 : 0 }); });
     kick();
   }
 
@@ -219,37 +203,40 @@ export const MAP_RUNTIME_JS = String.raw`
 
   var LOCK = '<svg width="9" height="10" viewBox="0 0 11 12" aria-hidden="true"><rect x="1" y="5" width="9" height="7" rx="1.6" fill="currentColor"/><path d="M3 5V3.6a2.5 2.5 0 0 1 5 0V5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
 
+  /** Shape per meaning: solid dot, ringed dot, hollow ring, locked square. */
   function chipHtml(kind) {
-    if (kind === "free") return '<span class="chip chip-free">P</span>';
-    if (kind === "metered") return '<span class="chip chip-metered"></span>';
-    return '<span class="chip chip-driveway">' + LOCK + "</span>";
+    if (kind === "driveway") return '<span class="chip chip-driveway">' + LOCK + "</span>";
+    return '<span class="chip chip-' + kind + '"></span>';
   }
 
-  var pills = {}; // segmentId -> { marker, el }
+  var pills = {}; // id -> { marker, el }
   var selected = null;
 
   function setPills(list) {
     var keep = {};
     list.forEach(function (p) {
-      keep[p.segmentId] = true;
-      var entry = pills[p.segmentId];
+      keep[p.id] = true;
+      var entry = pills[p.id];
       if (!entry) {
         var el = document.createElement("button");
         el.className = "pin";
         el.innerHTML = '<div class="pin-inner"><div class="callout"></div><div class="tail"></div></div>';
         el.addEventListener("click", function (e) {
           e.stopPropagation();
-          post({ type: "spotTapped", segmentId: p.segmentId });
+          post({ type: "spotTapped", id: p.id });
         });
         var marker = new mapboxgl.Marker({ element: el, anchor: "bottom" }).setLngLat(p.position).addTo(map);
-        entry = pills[p.segmentId] = { marker: marker, el: el };
+        entry = pills[p.id] = { marker: marker, el: el, kind: null, label: null };
       }
       entry.marker.setLngLat(p.position);
-      entry.el.dataset.kind = p.kind;
-      entry.el.setAttribute("aria-label", p.label);
-      var text = p.kind === "free" ? p.label.replace(/^P\s*/, "") : p.label;
-      entry.el.querySelector(".callout").innerHTML = chipHtml(p.kind) + "<span>" + text + "</span>";
-      entry.el.classList.toggle("is-selected", p.segmentId === selected);
+      if (entry.kind !== p.kind || entry.label !== p.label) {
+        entry.kind = p.kind;
+        entry.label = p.label;
+        entry.el.dataset.kind = p.kind;
+        entry.el.setAttribute("aria-label", p.label);
+        entry.el.querySelector(".callout").innerHTML = chipHtml(p.kind) + "<span>" + p.label + "</span>";
+      }
+      entry.el.classList.toggle("is-selected", p.id === selected);
     });
     Object.keys(pills).forEach(function (id) {
       if (!keep[id]) { pills[id].marker.remove(); delete pills[id]; }
@@ -259,28 +246,16 @@ export const MAP_RUNTIME_JS = String.raw`
 
   function refreshPillVisibility() {
     Object.keys(pills).forEach(function (id) {
-      pills[id].el.style.display = navOn && id !== target ? "none" : "";
+      pills[id].el.style.display = target && id !== target ? "none" : "";
     });
   }
 
   function selectSpot(id) {
-    if (selected && feats[selected]) feats[selected].selT = 0;
+    if (selected && bays[selected]) bays[selected].selT = 0;
     selected = id;
-    if (id && feats[id]) feats[id].selT = 1;
+    if (id && bays[id]) bays[id].selT = 1;
     Object.keys(pills).forEach(function (pid) { pills[pid].el.classList.toggle("is-selected", pid === id); });
     kick();
-  }
-
-  var destMarker = null;
-  function setDestination(pos, label) {
-    if (!destMarker) {
-      var el = document.createElement("div");
-      el.className = "dest";
-      el.innerHTML = '<div class="dest-label"></div><div class="dest-pin"><div class="dest-dot"></div></div>';
-      destMarker = new mapboxgl.Marker({ element: el, anchor: "bottom" }).setLngLat(pos).addTo(map);
-    }
-    destMarker.setLngLat(pos);
-    destMarker.getElement().querySelector(".dest-label").textContent = label;
   }
 
   function updatePinScale() {
@@ -297,9 +272,7 @@ export const MAP_RUNTIME_JS = String.raw`
     return [0, 0, heading * C.headingToRotation.scale + C.headingToRotation.offset];
   }
 
-  var ego = null; // { pos, heading } as drawn
-  var egoFrom = null, egoTo = null, egoT0 = 0, egoDur = 1, egoDrawn = false;
-  var follow = false, followLockedAt = 0, lastCarMsg = 0;
+  var ego = null, egoFrom = null, egoTo = null, egoT0 = 0, egoDur = 1, egoDrawn = false, lastCarMsg = 0;
 
   function drawEgo() {
     var src = map.getSource("ego");
@@ -307,9 +280,6 @@ export const MAP_RUNTIME_JS = String.raw`
     // Incremental update once the feature exists, so the source isn't re-tiled every frame.
     if (egoDrawn && src.updateData) src.updateData(data);
     else { src.setData(data); egoDrawn = true; }
-    if (follow && performance.now() >= followLockedAt) {
-      map.jumpTo({ center: ego.pos, bearing: ego.heading, zoom: C.navCamera.zoom, pitch: C.navCamera.pitch, padding: C.navCamera.padding });
-    }
   }
 
   function egoTick(now) {
@@ -323,20 +293,11 @@ export const MAP_RUNTIME_JS = String.raw`
     if (t < 1) requestAnimationFrame(egoTick);
   }
 
-  function setCarPosition(pos, heading, wantFollow) {
+  /** Location updates glide instead of jumping. */
+  function setCarPosition(pos, heading) {
     var now = performance.now();
     var next = { pos: pos, heading: heading };
-    if (wantFollow && !follow) {
-      // Glide onto the car once, then lock to it every frame.
-      follow = true;
-      followLockedAt = now + (reduceMotion ? 0 : 1200);
-      var cam = { center: pos, bearing: heading, zoom: C.navCamera.zoom, pitch: C.navCamera.pitch, padding: C.navCamera.padding };
-      if (reduceMotion) map.jumpTo(cam);
-      else map.flyTo(Object.assign(cam, { duration: 1200, curve: 1.1 }));
-    } else if (!wantFollow) {
-      follow = false;
-    }
-    if (!ego || reduceMotion || now - lastCarMsg > 600) {
+    if (!ego || reduceMotion || now - lastCarMsg > 2000) {
       ego = next;
       egoTo = null;
       drawEgo();
@@ -344,36 +305,28 @@ export const MAP_RUNTIME_JS = String.raw`
       egoFrom = ego;
       egoTo = next;
       egoT0 = now;
-      egoDur = Math.max(60, Math.min(400, now - lastCarMsg));
+      egoDur = Math.max(80, Math.min(1000, now - lastCarMsg));
       requestAnimationFrame(egoTick);
     }
     lastCarMsg = now;
   }
 
-  // --- navigation ------------------------------------------------------------------
+  // --- route -------------------------------------------------------------------------
 
-  function startNav(route, targetId) {
-    navOn = true;
+  function setRoute(route, targetId) {
     if (target) fs(target, { target: 0, pulse: 0 });
-    target = targetId;
-    fs(target, { target: 1, pulse: reduceMotion ? 0.3 : 0 });
-    pulseStart = performance.now();
+    target = route ? targetId : null;
     map.getSource("route").setData({
       type: "FeatureCollection",
-      features: [{ type: "Feature", properties: { id: "route" }, geometry: { type: "LineString", coordinates: route } }],
+      features: route ? [{ type: "Feature", properties: { id: "route" }, geometry: { type: "LineString", coordinates: route } }] : [],
     });
     map.setFeatureState({ source: "route", id: "route" }, { glow: night });
+    if (target) {
+      fs(target, { target: 1, pulse: reduceMotion ? 0.3 : 0 });
+      pulseStart = performance.now();
+    }
     refreshPillVisibility();
     kick();
-  }
-
-  function stopNav() {
-    navOn = false;
-    follow = false;
-    if (target) fs(target, { target: 0, pulse: 0 });
-    target = null;
-    map.getSource("route").setData({ type: "FeatureCollection", features: [] });
-    refreshPillVisibility();
   }
 
   // --- camera ------------------------------------------------------------------------
@@ -391,7 +344,6 @@ export const MAP_RUNTIME_JS = String.raw`
   }
 
   map.on("moveend", function () {
-    if (navOn) return;
     var c = map.getCenter();
     post({ type: "cameraChanged", center: [c.lng, c.lat], zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() });
   });
@@ -401,21 +353,20 @@ export const MAP_RUNTIME_JS = String.raw`
   });
 
   map.on("load", function () {
-    ["route", "curbs", "stalls"].forEach(function (id) {
+    ["route", "zones", "stalls"].forEach(function (id) {
       map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
     });
     map.addSource("ego", { type: "geojson", data: { type: "FeatureCollection", features: [] }, dynamic: true });
-    C.routeLayers.concat(C.curbLayers).forEach(function (layer) { map.addLayer(layer); });
+    C.routeLayers.concat(C.supplyLayers).forEach(function (layer) { map.addLayer(layer); });
 
     Object.keys(C.models).forEach(function (id) { map.addModel(id, C.models[id]); });
     map.addLayer(C.egoLayer);
     map.setLayoutProperty("ego-car", "model-id", night > 0.5 ? C.egoModel.night : C.egoModel.day);
+    setNight(night);
 
-    C.curbLayers.filter(function (l) { return l.source === "stalls"; }).forEach(function (layer) {
-      map.on("click", layer.id, function (e) {
-        var f = e.features && e.features[0];
-        if (f) post({ type: "spotTapped", segmentId: f.properties.segmentId });
-      });
+    map.on("click", C.stallFillId, function (e) {
+      var f = e.features && e.features[0];
+      if (f) post({ type: "spotTapped", id: f.properties.id });
     });
 
     ready = true;
@@ -432,20 +383,18 @@ export const MAP_RUNTIME_JS = String.raw`
     switch (msg.type) {
       case "setMood": return setMood(msg.mood, msg.animate);
       case "setReduceMotion": reduceMotion = msg.reduceMotion; return;
-      case "setSegments": return setSegments(msg.segments);
+      case "setZones": return setZones(msg.zones);
       case "setStalls": return setStalls(msg.stalls);
       case "setPills": return setPills(msg.pills);
-      case "setDestination": return setDestination(msg.position, msg.label);
-      case "selectSpot": return selectSpot(msg.segmentId);
+      case "selectSpot": return selectSpot(msg.id);
       case "flyTo": return flyTo(msg.camera);
       case "setPadding":
         padding = msg.padding;
         // Keep the Mapbox logo and attribution visible above native chrome.
         document.documentElement.style.setProperty("--curb-bottom", padding.bottom + "px");
         return;
-      case "startNav": return startNav(msg.route, msg.targetSegmentId);
-      case "stopNav": return stopNav();
-      case "setCarPosition": return setCarPosition(msg.position, msg.heading, msg.follow);
+      case "setRoute": return setRoute(msg.route, msg.targetId);
+      case "setCarPosition": return setCarPosition(msg.position, msg.heading);
     }
   }
 

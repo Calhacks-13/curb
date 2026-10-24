@@ -46,12 +46,6 @@ export const BASEMAP_STATIC_CONFIG = {
 /** Camera when a spot is selected on the home sheet. */
 export const SPOT_CAMERA = { zoom: 17.6, pitch: 58, durationMs: 1300 } as const;
 
-/** Follow camera while driving. Padding keeps the car in the lower third. */
-export const NAV_CAMERA = {
-  zoom: 18.5,
-  pitch: 62,
-  padding: { top: 320, bottom: 60, left: 0, right: 0 },
-} as const;
 
 // --- performance budget (the map runs in a WebView on phones) ----------------
 

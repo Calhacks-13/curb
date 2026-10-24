@@ -11,17 +11,26 @@ export const ink = {
   live: "#E5372B",
 } as const;
 
+/**
+ * Parking semantics from the MVP spec (section 7.3). Color is always paired with
+ * a label and a distinct shape; never rely on color alone.
+ */
 export const status = {
-  open: "#1F8F4E",
-  openNight: "#3BE08A",
-  noParking: "#D93025",
-  noParkingNight: "#FF5A4F",
-  driveway: "#2F6BDE",
-  drivewayNight: "#5B8DFF",
-  loading: "#FFFFFF",
-  loadingOutline: "#8E8E93",
-  full: "#A3A19C",
-  fullNight: "#55575E",
+  /** Legal now, availability unknown. */
+  legal: "#2F6BDE",
+  legalNight: "#5B8DFF",
+  /** Seen open within 90 s: "Likely open". */
+  fresh: "#1F8F4E",
+  freshNight: "#3BE08A",
+  /** 90 s to 3 min: "May still be open". */
+  aging: "#C99400",
+  agingNight: "#F2C230",
+  /** 3 to 5 min: "Stale observation". */
+  stale: "#8E8E93",
+  staleNight: "#7C7C82",
+  /** Private driveway, guaranteed after payment. */
+  driveway: "#7A3FE0",
+  drivewayNight: "#A07BFF",
 } as const;
 
 export const radius = {

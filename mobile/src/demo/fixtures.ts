@@ -109,7 +109,7 @@ export function buildDemoFixture(now: Date) {
   // Private driveway on Fillmore, just north of Chestnut.
   const fA = INTERSECTIONS["Chestnut|Fillmore"] as LngLat;
   const fB = INTERSECTIONS["Francisco|Fillmore"] as LngLat;
-  const drivewayPos = offsetPoint(lerp(fA, fB, 0.34), bearingDeg(fA, fB) - 90, CURB_M + 4.5);
+  const drivewayPos = offsetPoint(lerp(fA, fB, 0.68), bearingDeg(fA, fB) - 90, CURB_M + 4.5);
   const token = process.env.EXPO_PUBLIC_MAPBOX_TOKEN ?? "";
   const driveway: Driveway = {
     id: DEMO_IDS.driveway,

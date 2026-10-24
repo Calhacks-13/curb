@@ -18,98 +18,66 @@ Expo Go and Expo CLI must be signed in to the same Expo account.
 
 ```
 src/
-  app/index.tsx            Find parking + navigation screen (one screen, two modes)
-  components/              Native UI: SearchBar, OptionsSheet, TimeSlider, SharingLivePip,
-                           MoodToggle, SpotIcon, nav/NavBanner, nav/NavBottomCard,
-                           map/CurbMap (the WebView host)
+  app/index.tsx            Find screen
+  api/types.ts             Backend contract (spec sections 11-13); swap for @curb/contracts
+  api/client.ts            CurbApi interface + HTTP client; getApi() picks live or demo
+  realtime/reducer.ts      Pure versioned event reducer (never rolls an entity back)
+  realtime/webPubSub.ts    Azure Web PubSub client with fresh-URL reconnect
+  features/find/           Freshness rules, option ranking, parking-state hook, clock
+  demo/                    Demo replay adapter, fixture, and the required badge
+  lib/laTime.ts            America/Los_Angeles wall-clock helpers
+  components/              Native UI (NearbySheet, MapLegend, MoodToggle, map/CurbMap, ...)
   config/tokens.ts         Design tokens (black/white chrome, status colors, radii, Overpass)
   map/
     messages.ts            Typed app <-> map bridge (AppToMap / MapToApp)
     moods.ts               Day / dusk / night basemap presets
     mapConfig.ts           Style, camera presets, basemap config
-    curbLayers.ts          Mapbox layer specs for curbs and the route (plain data)
-    curbScene.ts           Turns segments into the bays shown on the map
+    curbLayers.ts          Layer specs for zones, bays and the route (plain data)
     modelLayers.ts         The user's car as a 3D model layer
     models/generated.ts    glTF car model as data URIs (run scripts/build-models.mjs)
-    webview/mapHtml.ts     Builds the WebView document (also holds the spot pill CSS)
+    webview/mapHtml.ts     Builds the WebView document (callout CSS lives here)
     webview/runtime.ts     JS that runs inside the WebView
-  data/
-    types.ts               CurbSegment, the shared contract
-    provider.ts            CurbDataProvider + RoutingProvider interfaces and factories
-    prediction.ts          pOpen interpolation, confidence by age, labels
-    spots.ts               Picks the three sheet options
-    mock/                  Mock Marina data, live-update simulator, grid router
+  data/                    Geometry helpers and Marina street grid for the fixture
 ```
 
 The map only talks to the app through `map/messages.ts`. To move to native
 `@rnmapbox/maps` later, write a component that implements `MapController` and
 handles the same messages; nothing in `components/` or `app/` needs to change.
 
-## How curbs are drawn
+## How parking is drawn
 
-Flat and quiet, closer to a ride-hailing map than a dashboard: color only appears
-where you can park. `map/curbScene.ts` turns segments into bays: open spots are
-solid green bays (lighter when the sighting is older), likely spots are green
-outlines, driveways are a blue bay. Taken curb isn't drawn. No-parking and loading
-curbs are thin painted edges (red / white), like real SF curbs. Callouts are white
-with black type and a small status chip; the selected one inverts. Layer specs
-live in `map/curbLayers.ts`, callout CSS in `map/webview/mapHtml.ts`.
+Semantics follow the MVP spec (section 7.3); color is always paired with a label
+and a chip shape:
 
-## Plugging in real data (backend / CV / payments)
+| On the map | Meaning | Shape |
+|---|---|---|
+| Blue curb line | Legal to park now, availability unknown | line |
+| Green bay, "Likely open" | Seen open within 90 s | solid dot |
+| Yellow bay, "May be open" | Seen 90 s to 3 min ago | ringed dot |
+| Gray bay, "Stale" | 3 to 5 min old; hidden after 5 min | dashed ring |
+| Purple bay, "$8 · Reserve" | Private driveway, guaranteed after payment | locked square |
 
-Everything the UI reads comes through `src/data/provider.ts`:
+Occupied stalls and zones that aren't legal now are never drawn. Freshness ages
+locally every second (`features/find/freshness.ts`), so markers change color and
+disappear on time without a server event. Map payloads are built in
+`features/find/options.ts`; layer specs live in `map/curbLayers.ts`, callout CSS
+in `map/webview/mapHtml.ts`.
 
-```ts
-export interface CurbDataProvider {
-  getSegments(bounds: Bounds): Promise<CurbSegment[]>;
-  subscribe(bounds: Bounds, onChange: (segments: CurbSegment[]) => void): () => void;
-}
-export interface RoutingProvider {
-  routeTo(from: LngLat, heading: number, target: CurbSegment): Promise<Route>;
-}
-```
+## Connecting the real backend
 
-1. Implement `CurbDataProvider` against the server, e.g. `src/data/api/apiProvider.ts`.
-   `subscribe` should call `onChange` with the **full current list** for the bounds
-   every time something changes (a WebSocket or SSE push, or polling every few
-   seconds). The map diffs by `id`; changed segments fade in automatically.
-2. Return it from `getCurbProvider()` in `provider.ts`. That's the only line the UI depends on.
-3. Do the same for `getRoutingProvider()` when a directions service exists.
-   `Route` is `{ line: [lng, lat][], lengthM, steps: { atM, maneuver, street }[] }`.
+Set `EXPO_PUBLIC_API_URL` (and `EXPO_PUBLIC_PAYMENTS_URL` if the payment service
+is separate) in `mobile/.env`. `getApi()` then uses the HTTP client against the
+routes in the plan's "Locked External Contracts" table, and realtime comes from
+`POST /v1/realtime/negotiate` + Web PubSub. Without it, the app runs the in-memory
+**Demo replay** adapter and shows the Demo replay badge; never present that data
+as live.
 
-The segment shape (`src/data/types.ts`):
+Field names in `src/api/types.ts` follow the spec exactly. When
+`packages/contracts` lands, replace that file with re-exports from
+`@curb/contracts`.
 
-```ts
-type CurbSegment = {
-  id: string;                      // stable across updates
-  coordinates: [number, number][]; // lng, lat along the block
-  side: "left" | "right";          // which curb, relative to coordinate direction
-  status: "open" | "likely" | "no_parking" | "loading" | "driveway" | "full";
-  price?: string;                  // "Free", "$3.50/hr", "$8"
-  rule?: string;                   // "2 hr, until 6 PM"
-  lastSeenSeconds?: number;        // age of the last CV sighting
-  predicted?: { minutesAhead: number; pOpen: number }[]; // e.g. 15, 30, 60
-};
-```
-
-Notes for producers:
-
-- **Geometry.** Send the street centerline for the block (or anything within a
-  couple of meters of it) and set `side`. The map pushes the line 5.2 m to that
-  side with `line-offset` (`CURB_OFFSET_M` in `map/curbLayers.ts`). For very wide
-  streets (Lombard) shift the coordinates toward the curb yourself; see `widen` in
-  `data/mock/marina.ts`.
-- **`side`** is relative to the order of `coordinates`: `right` is the right-hand
-  curb when walking from the first coordinate to the last.
-- **Confidence.** Lines fade as `lastSeenSeconds` grows, using `CONFIDENCE_BY_AGE`
-  in `data/prediction.ts`. Leave it undefined for purely predicted segments.
-- **Predictions.** Only `open`, `likely` and `full` change with the time slider.
-  "Now" uses the status itself; `predicted` covers future minutes, and the UI
-  interpolates between points.
-- **Payments.** Driveway rentals only need `status: "driveway"`, `price` and `rule`
-  for now. Booking will hook into the "Go to this spot" CTA in `OptionsSheet`.
-- **Sharing live.** `SharingLivePip` is a stub; its `onPress` is where the CV
-  team's camera screen opens.
+Run the tests with `npm test` (freshness boundaries, out-of-order realtime
+events, version conflicts, idempotent payment, DST).
 
 ## 3D car
 
