@@ -1,0 +1,13 @@
+.env
+.env.*
+__pycache__
+.pytest_cache
+.venv
+tests
+test_*.py
+deploy
+*.jpg
+*.jpeg
+*.png
+*.mov
+*.mp4

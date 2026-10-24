@@ -15,15 +15,15 @@ function deferred<T>() {
 const flush = () => Promise.resolve().then(() => Promise.resolve());
 
 describe("CaptureController", () => {
-  it("samples no faster than twice a second", async () => {
+  it("samples no faster than five times a second", async () => {
     const capture = jest.fn(async () => "file://frame.jpg");
     const c = new CaptureController({ capture, upload: async () => {}, discard: () => {} });
     c.start();
     for (let i = 0; i < 4; i++) {
-      jest.advanceTimersByTime(500);
+      jest.advanceTimersByTime(200);
       await flush();
     }
-    expect(capture).toHaveBeenCalledTimes(4); // 2 s at 2 fps
+    expect(capture).toHaveBeenCalledTimes(4); // 800 ms at 5 fps
     c.stop();
   });
 
@@ -33,12 +33,12 @@ describe("CaptureController", () => {
     const upload = jest.fn(() => pending.promise);
     const c = new CaptureController({ capture, upload, discard: () => {} });
     c.start();
-    jest.advanceTimersByTime(500);
+    jest.advanceTimersByTime(200);
     await flush();
-    jest.advanceTimersByTime(1500); // three more ticks while the first upload hangs
+    jest.advanceTimersByTime(1800); // nine more ticks while the first upload hangs
     await flush();
     expect(upload).toHaveBeenCalledTimes(1);
-    expect(c.stats.dropped).toBe(3);
+    expect(c.stats.dropped).toBe(9);
     pending.resolve();
     await flush();
     c.stop();
