@@ -65,5 +65,14 @@ export function useParkingState(center: LngLat | null, onEvent?: (event: Realtim
   const load: ParkingLoad = everLoaded ? "ready" : result?.key === fetchKey ? (result.ok ? "ready" : "error") : "loading";
   const refresh = useCallback(() => setAttempt((a) => a + 1), []);
 
-  return { state, load, realtime, refresh, mode: api.mode };
+  /** Inject a synthetic realtime event (e.g. from a frame upload self-feedback). */
+  const dispatchEvent = useCallback(
+    (event: RealtimeEvent) => {
+      dispatch({ type: "event", event });
+      onEventRef.current?.(event);
+    },
+    [],
+  );
+
+  return { state, load, realtime, refresh, dispatchEvent, mode: api.mode };
 }

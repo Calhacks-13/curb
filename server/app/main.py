@@ -46,7 +46,9 @@ from app.routes.ws import router as ws_router
 from app.routes.spots import router as spots_router
 from app.routes.signs import router as signs_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.v1 import router as v1_router
 
+app.include_router(v1_router)
 app.include_router(ws_router)
 app.include_router(spots_router)
 app.include_router(signs_router)
@@ -74,14 +76,19 @@ async def viewer_page():
 @app.get("/health")
 async def health():
     from app.cv.detector import _vehicle_model, _sign_model_available, _seg_model_available
-    from app.cv.depth import is_available as depth_is_available
+    from app.cv.depth import is_available as depth_is_available, is_metric as depth_is_metric
+    from app.cv.pipeline import get_pipeline
 
+    pipeline = get_pipeline()
     return {
         "status": "ok",
         "vehicle_model_loaded": _vehicle_model is not None,
         "seg_model_available": _seg_model_available or False,
         "sign_model_available": _sign_model_available or False,
         "depth_model_available": depth_is_available(),
+        "depth_metric": depth_is_metric(),
         "cosmos_configured": cosmos._is_configured(),
         "signalr_configured": signalr._is_configured(),
+        "webpubsub_configured": signalr._webpubsub_configured(),
+        "spots_in_memory": pipeline.spots_in_memory,
     }

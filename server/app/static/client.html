@@ -187,6 +187,7 @@ let ws = null;
 let streaming = false;
 let frameTimer = null;
 let gpsPos = { lat: 0, lng: 0, heading: 0, speed: 0, camera_pitch: 0 };
+let cameraHfov = null;  // horizontal FOV in degrees, read from camera capabilities
 let gpsWatchId = null;
 let wakeLock = null;
 let reconnectDelay = 1000;
@@ -204,6 +205,28 @@ async function startCamera() {
   captureCanvas.width = CAPTURE_W;
   captureCanvas.height = CAPTURE_H;
   resizeOverlay();
+
+  // Read horizontal FOV from camera capabilities (if supported)
+  try {
+    const track = stream.getVideoTracks()[0];
+    if (track && track.getCapabilities) {
+      const caps = track.getCapabilities();
+      // Some browsers expose fieldOfView (Chrome Android)
+      if (caps.fieldOfView) {
+        cameraHfov = caps.fieldOfView;
+      }
+    }
+    // Fallback: read from settings (ImageCapture API)
+    if (!cameraHfov && typeof ImageCapture !== 'undefined') {
+      const ic = new ImageCapture(stream.getVideoTracks()[0]);
+      const settings = await ic.getPhotoSettings().catch(() => null);
+      // Some devices expose sensor info via getPhotoCapabilities
+      const photoCaps = await ic.getPhotoCapabilities().catch(() => null);
+      if (photoCaps && photoCaps.fieldOfView) {
+        cameraHfov = photoCaps.fieldOfView;
+      }
+    }
+  } catch (e) { /* FOV detection not supported — server uses default */ }
 }
 
 function resizeOverlay() {
@@ -296,6 +319,7 @@ function sendFrame() {
       speed: gpsPos.speed,
       timestamp: new Date().toISOString(),
       camera_pitch: gpsPos.camera_pitch,
+      hfov: cameraHfov,
     });
 
     pendingSendTime = performance.now();

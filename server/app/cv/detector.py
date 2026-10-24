@@ -66,7 +66,7 @@ def get_sign_model() -> YOLO | None:
     return _sign_model
 
 
-def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0) -> dict:
+def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float | None = None) -> dict:
     """
     Run detection on a single frame.
 
@@ -205,13 +205,23 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0) -> dict:
         depth_map = estimate_depth(image)
         if depth_map is not None:
             used_depth = True
-            # Apply BEV if we have camera pitch
+            # Apply BEV if we have camera pitch — re-find gaps in top-down view
             bev_masks = None
             if used_segmentation and vehicle_masks is not None and abs(camera_pitch) > 1.0:
                 bev_masks = _perspective_to_bev(vehicle_masks, camera_pitch, img_w, img_h)
 
-            for gbbox in gap_bboxes:
-                width_m = measure_gap_width_meters(depth_map, gbbox, img_w)
+            # Use BEV-based gap bboxes when available (more accurate top-down geometry)
+            measure_bboxes = gap_bboxes
+            measure_width = img_w
+            if bev_masks is not None and bev_masks.any():
+                bev_size = settings.bev_output_size
+                bev_gap_bboxes = _gaps_from_segmentation(bev_masks, bev_size, bev_size)
+                if bev_gap_bboxes:
+                    measure_bboxes = bev_gap_bboxes
+                    measure_width = bev_size
+
+            for gbbox in measure_bboxes:
+                width_m = measure_gap_width_meters(depth_map, gbbox, measure_width, camera_hfov_deg=hfov)
                 is_valid = width_m is not None and width_m >= settings.min_gap_meters
                 gap_measurements.append(GapMeasurement(
                     bbox=gbbox,
@@ -252,8 +262,8 @@ def detect_from_frame(image_bytes: bytes, camera_pitch: float = 0.0) -> dict:
     }
 
 
-async def detect_from_frame_async(image_bytes: bytes, camera_pitch: float = 0.0) -> dict:
-    return await asyncio.to_thread(detect_from_frame, image_bytes, camera_pitch)
+async def detect_from_frame_async(image_bytes: bytes, camera_pitch: float = 0.0, hfov: float | None = None) -> dict:
+    return await asyncio.to_thread(detect_from_frame, image_bytes, camera_pitch, hfov)
 
 
 def _crop_bbox(image: Image.Image, bbox: list[float]) -> bytes:

@@ -29,16 +29,50 @@ export function parseRealtimeEvent(raw: unknown): RealtimeEvent | null {
 }
 
 const MAX_BACKOFF_MS = 10_000;
+const POLL_INTERVAL_MS = 2_000;
+const POLL_FALLBACK_AFTER = 3; // switch to polling after this many consecutive WS failures
 
 export function connectWebPubSub(
   negotiate: () => Promise<string>,
   onEvent: (e: RealtimeEvent) => void,
   onStatus?: (s: RealtimeStatus) => void,
+  pollUrl?: string,
 ): RealtimeConnection {
   let ws: WebSocket | null = null;
   let closed = false;
   let attempt = 0;
   let retry: ReturnType<typeof setTimeout> | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let lastSeq = 0;
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function startPolling() {
+    if (pollTimer || closed || !pollUrl) return;
+    onStatus?.("open"); // polling is a degraded "open"
+    pollTimer = setInterval(async () => {
+      if (closed) { stopPolling(); return; }
+      try {
+        const res = await fetch(`${pollUrl}?since=${lastSeq}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const events: unknown[] = data?.events ?? [];
+        for (const raw of events) {
+          const seq = (raw as Record<string, unknown>)?.seq;
+          if (typeof seq === "number" && seq > lastSeq) lastSeq = seq;
+          const event = parseRealtimeEvent(raw);
+          if (event) onEvent(event);
+        }
+      } catch {
+        // Network error during poll — keep trying on next interval.
+      }
+    }, POLL_INTERVAL_MS);
+  }
 
   async function open() {
     if (closed) return;
@@ -46,9 +80,11 @@ export function connectWebPubSub(
     try {
       const url = await negotiate();
       if (closed) return;
+      if (!url) throw new Error("negotiate returned null url");
       ws = new WebSocket(url, "json.webpubsub.azure.v1");
       ws.onopen = () => {
         attempt = 0;
+        stopPolling(); // WS connected — stop polling if active
         onStatus?.("open");
       };
       ws.onmessage = (msg) => {
@@ -71,6 +107,11 @@ export function connectWebPubSub(
   function schedule() {
     if (closed) return;
     attempt++;
+    if (attempt >= POLL_FALLBACK_AFTER) {
+      // WS has failed multiple times — fall back to polling
+      startPolling();
+      return;
+    }
     const delay = Math.min(MAX_BACKOFF_MS, 500 * 2 ** attempt);
     retry = setTimeout(open, delay);
     onStatus?.("reconnecting");
@@ -82,6 +123,7 @@ export function connectWebPubSub(
     close() {
       closed = true;
       if (retry) clearTimeout(retry);
+      stopPolling();
       ws?.close();
       onStatus?.("closed");
     },

@@ -51,8 +51,8 @@ export class CaptureController {
       if (!this.running) return; // stopped while capturing: don't upload
       await this.deps.upload(uri);
       this.stats.sent++;
-    } catch {
-      // Offline, timeout, or camera hiccup: drop this frame, keep the preview going.
+    } catch (err) {
+      console.warn("[CaptureController] frame failed:", err);
       this.stats.failed++;
     } finally {
       if (uri) this.deps.discard(uri);

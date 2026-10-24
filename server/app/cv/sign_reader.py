@@ -2,7 +2,7 @@
 Claude Vision sign interpreter.
 
 Async client with confidence scoring. Takes a cropped sign image,
-sends to Claude Vision API, returns structured SignRules.
+sends to Claude Vision API, returns structured SignRules or SignPoleReading.
 """
 
 import base64
@@ -10,7 +10,7 @@ import json
 import anthropic
 
 from app.config import settings
-from app.models import SignRules
+from app.models import SignRules, SignPoleReading, SignReading
 
 _client: anthropic.AsyncAnthropic | None = None
 
@@ -47,7 +47,7 @@ async def read_sign(image_bytes: bytes) -> SignRules:
 
     try:
         response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=512,
             messages=[
                 {
@@ -111,6 +111,122 @@ def _parse_and_score(raw_text: str) -> SignRules:
     rules.confidence_score = round(score, 2)
     rules.flagged = score < settings.sign_read_confidence_threshold
     return rules
+
+
+SIGN_POLE_PROMPT = (
+    "This image shows one or more parking/traffic signs, possibly stacked on a single pole. "
+    "For EACH individual sign visible, extract a JSON object with these fields:\n"
+    '- "sign_type": one of "parking", "no_parking", "street_cleaning", "meter", '
+    '"time_limit", "permit", "loading_zone", "other"\n'
+    '- "raw_text": exact text on this sign\n'
+    '- "hours": when this sign\'s rules apply (e.g. "Mon-Sat 8am-6pm") or null\n'
+    '- "max_duration_min": max parking minutes or null\n'
+    '- "price_per_hour": hourly price string or null\n'
+    '- "permit_zone": permit zone identifier or null\n'
+    '- "restrictions": array of special restrictions\n'
+    '- "arrow_direction": "left", "right", "both", or null\n\n'
+    "Then synthesize ALL signs into a combined rule set. Return a JSON object:\n"
+    "{\n"
+    '  "signs": [<array of individual sign objects above>],\n'
+    '  "combined_summary": "<plain English one-liner of the combined parking rules>",\n'
+    '  "combined_hours": "<when rules apply overall>",\n'
+    '  "combined_max_duration_min": <int or null>,\n'
+    '  "combined_price": "<price string or null>",\n'
+    '  "combined_restrictions": [<merged restrictions>],\n'
+    '  "arrow_direction": "<left/right/both/null>"\n'
+    "}\n"
+    "Return ONLY the JSON, no markdown."
+)
+
+
+async def read_sign_pole(image_bytes: bytes) -> SignPoleReading:
+    """
+    Send cropped pole image (one or more signs) to Claude Vision.
+    Returns SignPoleReading with per-sign structured rules.
+    """
+    client = get_client()
+    b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+
+    try:
+        response = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": b64,
+                            },
+                        },
+                        {"type": "text", "text": SIGN_POLE_PROMPT},
+                    ],
+                }
+            ],
+        )
+    except anthropic.APIError:
+        return SignPoleReading(
+            combined_summary="API error reading sign pole",
+            confidence_score=0.0,
+            flagged=True,
+        )
+
+    raw_text = response.content[0].text
+    return _parse_pole_reading(raw_text)
+
+
+def _parse_pole_reading(raw_text: str) -> SignPoleReading:
+    """Parse Claude response into SignPoleReading with confidence scoring."""
+    try:
+        data = json.loads(raw_text)
+        json_parsed = True
+    except json.JSONDecodeError:
+        data = {}
+        json_parsed = False
+
+    signs = []
+    for s in data.get("signs", []):
+        signs.append(SignReading(
+            sign_type=s.get("sign_type", "other"),
+            raw_text=s.get("raw_text", ""),
+            hours=s.get("hours"),
+            max_duration_min=s.get("max_duration_min"),
+            price_per_hour=s.get("price_per_hour"),
+            permit_zone=s.get("permit_zone"),
+            restrictions=s.get("restrictions", []),
+            arrow_direction=s.get("arrow_direction"),
+        ))
+
+    reading = SignPoleReading(
+        signs=signs,
+        combined_summary=data.get("combined_summary", raw_text[:200] if not json_parsed else ""),
+        combined_hours=data.get("combined_hours"),
+        combined_max_duration_min=data.get("combined_max_duration_min"),
+        combined_price=data.get("combined_price"),
+        combined_restrictions=data.get("combined_restrictions", []),
+        arrow_direction=data.get("arrow_direction"),
+    )
+
+    # Confidence scoring
+    score = 0.0
+    if json_parsed:
+        score += 0.3
+    if signs:
+        score += 0.2
+    if reading.combined_summary and len(reading.combined_summary) > 10:
+        score += 0.2
+    if reading.combined_hours:
+        score += 0.15
+    if reading.combined_price or reading.combined_max_duration_min:
+        score += 0.15
+
+    reading.confidence_score = round(score, 2)
+    reading.flagged = score < settings.sign_read_confidence_threshold
+    return reading
 
 
 async def close_client() -> None:

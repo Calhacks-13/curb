@@ -123,7 +123,13 @@ export type FrameMetadata = {
   session_id: string;
 };
 
-export type FrameAccepted = { frame_id: string; accepted: boolean };
+export type FrameAccepted = {
+  frame_id: string;
+  accepted: boolean;
+  /** Present when the server confirmed a spot from this frame. */
+  space?: ParkingSpace;
+  zone?: CurbZone;
+};
 
 export type RealtimeEventType =
   | "space.opened"

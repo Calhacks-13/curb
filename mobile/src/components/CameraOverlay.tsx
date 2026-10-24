@@ -6,6 +6,7 @@ import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-nati
 import { font, ink, radius, shadow } from "@/config/tokens";
 import { CaptureController } from "@/features/capture/CaptureController";
 import { discardFrame, uploadFrame, type FrameContext } from "@/features/capture/frameUpload";
+import type { FrameAccepted } from "@/api/types";
 
 type Props = {
   /** Find is focused and the app is in the foreground. The preview unmounts otherwise. */
@@ -15,6 +16,12 @@ type Props = {
   /** Latest metadata for each frame (location, heading, ids). */
   frameContext: () => FrameContext | null;
   reduceMotion: boolean;
+  /** Called when the server confirms a spot from a scanned frame. */
+  onSpotConfirmed?: (result: FrameAccepted) => void;
+  /** Called when the user taps "Start Scanning" to begin frame uploads. */
+  onStartScan?: () => void;
+  /** Called when the user taps "Stop" to end frame uploads. */
+  onStopScan?: () => void;
 };
 
 /** Prefer 720p; fall back to whatever the device offers. */
@@ -44,13 +51,14 @@ type LiveCameraProps = {
   frameContext: () => FrameContext | null;
   onFrameSent: () => void;
   onCapturing: (capturing: boolean) => void;
+  onSpotConfirmed?: (result: FrameAccepted) => void;
 };
 
 /**
  * The preview itself. Mounted only while Find is active, so camera readiness and
  * the sampler start fresh every time the screen comes back.
  */
-function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing }: LiveCameraProps) {
+function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing, onSpotConfirmed }: LiveCameraProps) {
   const camera = useRef<CameraView>(null);
   const [ready, setReady] = useState(false);
   const [pictureSize, setPictureSize] = useState<string | undefined>();
@@ -72,7 +80,8 @@ function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing }: LiveCa
       upload: async (uri) => {
         const ctx = ctxRef.current();
         if (!ctx) throw new Error("no location yet");
-        await uploadFrame(uri, ctx);
+        const result = await uploadFrame(uri, ctx);
+        if (result.space) onSpotConfirmed?.(result);
         onFrameSent();
       },
       discard: discardFrame,
@@ -82,7 +91,7 @@ function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing }: LiveCa
       controller.stop();
       onCapturing(false);
     };
-  }, [capturing, onCapturing, onFrameSent]);
+  }, [capturing, onCapturing, onFrameSent, onSpotConfirmed]);
 
   const onReady = async () => {
     setReady(true);
@@ -107,7 +116,7 @@ function LiveCamera({ sampling, frameContext, onFrameSent, onCapturing }: LiveCa
 }
 
 /** Floating live camera card on Find: preview, scanning indicator, frame sampling. */
-export function CameraOverlay({ active, sampling, frameContext, reduceMotion }: Props) {
+export function CameraOverlay({ active, sampling, frameContext, reduceMotion, onSpotConfirmed, onStartScan, onStopScan }: Props) {
   const [permission, requestPermission] = useCameraPermissions();
   const [sent, setSent] = useState(0);
   const [capturing, setCapturing] = useState(false);
@@ -143,17 +152,36 @@ export function CameraOverlay({ active, sampling, frameContext, reduceMotion }: 
     <View
       style={styles.card}
       accessible
-      accessibilityLabel={sampling ? `Scanning the curb. ${sent} frames shared.` : "Camera preview. Demo replay, not uploading."}
+      accessibilityLabel={sampling ? `Scanning the curb. ${sent} frames shared.` : "Camera preview. Tap Start Scanning to begin."}
     >
       <View style={styles.preview}>
-        {active && <LiveCamera sampling={sampling} frameContext={frameContext} onFrameSent={onFrameSent} onCapturing={setCapturing} />}
+        {active && <LiveCamera sampling={sampling} frameContext={frameContext} onFrameSent={onFrameSent} onCapturing={setCapturing} onSpotConfirmed={onSpotConfirmed} />}
         <View style={styles.liveTag}>
           <LiveDot on={live} reduceMotion={reduceMotion} />
           <Text style={styles.liveText}>{live ? "Live" : "Preview"}</Text>
         </View>
       </View>
-      <Text style={styles.caption}>{sampling ? "Scanning curb" : "Camera on"}</Text>
-      <Text style={styles.sub}>{sampling ? `${sent} frames shared` : "Not uploading"}</Text>
+      {sampling ? (
+        <>
+          <Text style={styles.caption}>Scanning curb</Text>
+          <Text style={styles.sub}>{sent} frames shared</Text>
+          <Pressable
+            onPress={onStopScan}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.stopButton, pressed && { opacity: 0.8 }]}
+          >
+            <Text style={styles.stopText}>Stop</Text>
+          </Pressable>
+        </>
+      ) : (
+        <Pressable
+          onPress={onStartScan}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.startButton, pressed && { opacity: 0.8 }]}
+        >
+          <Text style={styles.startText}>Start Scanning</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -178,4 +206,8 @@ const styles = StyleSheet.create({
   liveText: { fontFamily: font.bold, fontSize: 10, color: ink.white, marginTop: 2 },
   caption: { fontFamily: font.semibold, fontSize: 12, color: ink.white, marginTop: 5, marginLeft: 2 },
   sub: { fontFamily: font.regular, fontSize: 11, color: ink.grey300, marginLeft: 2, marginBottom: 1 },
+  startButton: { marginTop: 5, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.live, alignItems: "center", justifyContent: "center" },
+  startText: { fontFamily: font.bold, fontSize: 11, color: ink.white, marginTop: 1 },
+  stopButton: { marginTop: 4, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.grey900, alignItems: "center", justifyContent: "center" },
+  stopText: { fontFamily: font.bold, fontSize: 11, color: ink.grey300, marginTop: 1 },
 });

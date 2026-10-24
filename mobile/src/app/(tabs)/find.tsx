@@ -4,7 +4,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi } from "@/api/client";
-import { FIND_RADIUS_M, type RealtimeEvent } from "@/api/types";
+import { FIND_RADIUS_M, type FrameAccepted, type RealtimeEvent } from "@/api/types";
 import { AccountMenu } from "@/components/AccountMenu";
 import { CurbMap } from "@/components/map/CurbMap";
 import { MapErrorCard } from "@/components/map/MapErrorCard";
@@ -58,16 +58,19 @@ export default function FindScreen() {
   const focused = useScreenFocused();
   const appActive = useAppActive();
   const live = getApi().mode === "live";
+  const [scanActive, setScanActive] = useState(false);
 
   // Live: the device's location. Demo replay: the fixture driver on the calibrated block.
   const location = useDriverLocation(live && focused);
   const driver = useMemo(
     () =>
-      live && location.position ? { position: location.position, heading: location.heading ?? 0 } : DEMO_DRIVER,
-    [live, location.position, location.heading],
+      location.position ? { position: location.position, heading: location.heading ?? 0 } : DEMO_DRIVER,
+    [location.position, location.heading],
   );
   // Search area: the spec's fixed 0.5 mi around the driver (live) or the demo block.
-  const searchCenter = live ? location.position : HOME_CAMERA.center;
+  // Fall back to the Marina demo area when GPS hasn't delivered a fix yet,
+  // so the map and nearby query work immediately even indoors.
+  const searchCenter = location.position ?? HOME_CAMERA.center;
   const area = useMemo<SearchArea | null>(() => (searchCenter ? { center: searchCenter, radiusM: FIND_RADIUS_M } : null), [searchCenter]);
 
   // New-opening alerts. Realtime events arrive outside render, so the handler
@@ -85,7 +88,7 @@ export default function FindScreen() {
   }, []);
   const dismissAlert = useCallback(() => setSpotAlert(null), []);
 
-  const { state, load, refresh, mode, realtime } = useParkingState(searchCenter, onRealtimeEvent);
+  const { state, load, refresh, dispatchEvent, mode, realtime } = useParkingState(searchCenter, onRealtimeEvent);
   const userId = useSession().session?.user.id ?? null;
   const now = useFreshnessClock();
   const options = useMemo(() => findOptions(state, now, driver.position, userId, area), [state, now, driver.position, userId, area]);
@@ -98,16 +101,33 @@ export default function FindScreen() {
     getDeviceId().then(setDeviceId);
   }, []);
   const frameContext = useCallback((): FrameContext | null => {
-    if (!location.position || !deviceId) return null;
+    if (!deviceId) return null;
+    const pos = location.position ?? DEMO_DRIVER.position;
     return {
-      lat: location.position[1],
-      lng: location.position[0],
+      lat: pos[1],
+      lng: pos[0],
       accuracy_m: location.accuracyM,
-      heading: location.heading,
+      heading: location.heading ?? DEMO_DRIVER.heading,
       device_id: deviceId,
       session_id: captureSession,
     };
   }, [location.position, location.accuracyM, location.heading, deviceId, captureSession]);
+
+  /** Self-feedback: server confirmed a spot in the frame upload response → inject into reducer. */
+  const onSpotConfirmed = useCallback(
+    (result: FrameAccepted) => {
+      if (!result.space) return;
+      dispatchEvent({
+        type: "space.opened",
+        entity_id: result.space.id,
+        entity_version: result.space.version,
+        occurred_at: new Date().toISOString(),
+        payload: result.space as unknown as Record<string, unknown>,
+      });
+    },
+    [dispatchEvent],
+  );
+
   const signature = mapSignature(options);
 
   const [sheetState, setSheet] = useState<Sheet>({ mode: "list" });
@@ -293,9 +313,12 @@ export default function FindScreen() {
       >
         <CameraOverlay
           active={focused && appActive}
-          sampling={live && location.status === "granted"}
+          sampling={live && scanActive}
           frameContext={frameContext}
           reduceMotion={reduceMotion}
+          onSpotConfirmed={onSpotConfirmed}
+          onStartScan={() => setScanActive(true)}
+          onStopScan={() => setScanActive(false)}
         />
       </DraggablePip>
 

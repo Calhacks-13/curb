@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     # Segmentation model (same ultralytics API, pixel-precise masks)
     seg_model_path: str = "yolov8m-seg.pt"
 
-    # Depth estimation (Depth Anything V2)
-    depth_model_id: str = "depth-anything/Depth-Anything-V2-Small"
+    # Depth estimation (ZoeDepth-NK preferred, DA2 fallback)
+    depth_model_id: str = "depth-anything/Depth-Anything-V2-Small"  # DA2 fallback only
     default_camera_hfov_deg: float = 70.0  # horizontal FOV for phone camera
 
     # Bird's Eye View
@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # Sign confidence
     sign_read_confidence_threshold: float = 0.5
 
+    # Sign tracking & deduplication
+    sign_track_confirm_hits: int = 3
+    sign_default_distance_m: float = 8.0
+    sign_dedup_radius_m: float = 15.0
+
     # Block-level snapping (3 decimal places ~ 111m)
     grid_precision: int = 3
 
@@ -70,11 +75,16 @@ class Settings(BaseSettings):
     cosmos_key: str = ""
     cosmos_database: str = "curb"
     cosmos_blocks_container: str = "blocks"
+    cosmos_spots_container: str = "spots"
     cosmos_signs_container: str = "signs"
 
-    # Azure SignalR / Web PubSub
+    # Azure SignalR (legacy web client)
     signalr_connection_string: str = ""
     signalr_hub: str = "spots"
+
+    # Azure Web PubSub (mobile app realtime)
+    webpubsub_connection_string: str = ""
+    webpubsub_hub: str = "curb"
 
     # Anthropic
     anthropic_api_key: str = ""

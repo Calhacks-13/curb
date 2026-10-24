@@ -17,7 +17,7 @@ from app.cv.pipeline import get_pipeline
 
 router = APIRouter()
 _frame_selector = FrameSelector()
-_viewers: set[WebSocket] = set()
+viewers: set[WebSocket] = set()
 
 
 @router.websocket("/ws/stream")
@@ -47,6 +47,8 @@ async def stream(ws: WebSocket):
                 lng=metadata.lng,
                 session_id=session_id,
                 camera_pitch=metadata.camera_pitch,
+                heading=metadata.heading,
+                hfov=metadata.hfov,
             )
 
             # 5. Respond
@@ -59,16 +61,16 @@ async def stream(ws: WebSocket):
             await ws.send_text(response_json)
 
             # 6. Relay to viewers
-            if _viewers:
+            if viewers:
                 dead = []
-                for v in _viewers:
+                for v in viewers:
                     try:
                         await v.send_bytes(frame_bytes)
                         await v.send_text(response_json)
                     except Exception:
                         dead.append(v)
                 for v in dead:
-                    _viewers.discard(v)
+                    viewers.discard(v)
 
     except WebSocketDisconnect:
         pass
@@ -80,11 +82,11 @@ async def stream(ws: WebSocket):
 @router.websocket("/ws/viewer")
 async def viewer(ws: WebSocket):
     await ws.accept()
-    _viewers.add(ws)
+    viewers.add(ws)
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        _viewers.discard(ws)
+        viewers.discard(ws)

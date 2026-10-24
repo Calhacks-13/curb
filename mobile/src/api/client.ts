@@ -2,6 +2,8 @@
 // Contracts"). getApi() returns the live HTTP client when EXPO_PUBLIC_API_URL is
 // set, otherwise the in-memory demo replay adapter.
 
+import * as FileSystem from "expo-file-system/legacy";
+
 import { createDemoApi } from "@/demo/demoApi";
 import { ApiError } from "./errors";
 import { connectWebPubSub } from "@/realtime/webPubSub";
@@ -76,15 +78,32 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
       call("POST", `/v1/driveways/${encodeURIComponent(id)}/recover`, { expected_version }),
     executePayment: (bookingId) => call("POST", `/v1/payments/${encodeURIComponent(bookingId)}/execute`, undefined, paymentsUrl),
     booking: (id) => call("GET", `/v1/bookings/${encodeURIComponent(id)}`),
-    uploadFrame(jpegUri, meta) {
-      const form = new FormData();
-      // React Native's FormData accepts { uri, name, type } file parts.
-      form.append("frame", { uri: jpegUri, name: "frame.jpg", type: "image/jpeg" } as unknown as Blob);
-      form.append("metadata", JSON.stringify(meta));
-      return call("POST", "/v1/vision/frames", form);
+    async uploadFrame(jpegUri, meta) {
+      // Use native FileSystem upload — React Native's fetch+FormData is unreliable for file uploads.
+      const result = await FileSystem.uploadAsync(
+        `${baseUrl}/v1/vision/frames`,
+        jpegUri,
+        {
+          httpMethod: "POST",
+          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+          fieldName: "frame",
+          mimeType: "image/jpeg",
+          parameters: { metadata: JSON.stringify(meta) },
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        },
+      );
+      if (result.status < 200 || result.status >= 300) {
+        throw new ApiError(result.status, `POST /v1/vision/frames failed (${result.status})`);
+      }
+      return JSON.parse(result.body) as FrameAccepted;
     },
     connectRealtime(onEvent, onStatus) {
-      return connectWebPubSub(async () => (await call<{ url: string }>("POST", "/v1/realtime/negotiate")).url, onEvent, onStatus);
+      return connectWebPubSub(
+        async () => (await call<{ url: string }>("POST", "/v1/realtime/negotiate")).url,
+        onEvent,
+        onStatus,
+        `${baseUrl}/v1/realtime/events`,
+      );
     },
   };
   return api;
