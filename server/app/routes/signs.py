@@ -5,7 +5,6 @@ REST endpoints for sign queries and manual sign reading.
 from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Query
 
-from app.cv.sign_reader import read_sign, read_sign_pole
 from app.cv.sign_localizer import make_road_segment_id, _haversine_m
 from app.azure import cosmos
 
@@ -136,6 +135,7 @@ def _evaluate_parking_now(pole_reading: dict) -> bool | None:
 
 @router.post("/read")
 async def read_sign_upload(file: UploadFile = File(...)):
+    from app.cv.sign_reader import read_sign
     """Manual sign image upload for testing."""
     image_bytes = await file.read()
     rules = await read_sign(image_bytes)
@@ -146,5 +146,7 @@ async def read_sign_upload(file: UploadFile = File(...)):
 async def read_pole_upload(file: UploadFile = File(...)):
     """Manual pole image upload for testing — returns structured per-sign rules."""
     image_bytes = await file.read()
+    from app.cv.sign_reader import read_sign_pole
+
     reading = await read_sign_pole(image_bytes)
     return reading.model_dump(mode="json")

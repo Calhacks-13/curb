@@ -80,9 +80,8 @@ export default function FindScreen() {
     [location.position, location.heading],
   );
   // Search area: the spec's fixed 0.5 mi around the driver (live) or the demo block.
-  // Fall back to the Marina demo area when GPS hasn't delivered a fix yet,
-  // so the map and nearby query work immediately even indoors.
-  const searchCenter = location.position ?? HOME_CAMERA.center;
+  // Fixture coordinates belong only to explicitly labeled Demo replay mode.
+  const searchCenter = live ? location.position : HOME_CAMERA.center;
   const area = useMemo<SearchArea | null>(() => (searchCenter ? { center: searchCenter, radiusM: FIND_RADIUS_M } : null), [searchCenter]);
 
   // New-opening alerts. Realtime events arrive outside render, so the handler
@@ -102,8 +101,11 @@ export default function FindScreen() {
 
   const { state, load, refresh, dispatchEvent, mode, realtime } = useParkingState(searchCenter, onRealtimeEvent);
   const userId = useSession().session?.user.id ?? null;
-  const now = useFreshnessClock();
-  const options = useMemo(() => findOptions(state, now, driver.position, userId, area), [state, now, driver.position, userId, area]);
+  const now = useFreshnessClock(state.spaces);
+  const options = useMemo(
+    () => searchCenter ? findOptions(state, now, driver.position, userId, area) : [],
+    [state, now, driver.position, userId, area, searchCenter],
+  );
   // Booked driveways are map context only; never list them or offer them as a replacement.
   const offered = useMemo(() => options.filter((o) => !o.booked), [options]);
   const reservation = myReservation(options);
@@ -183,8 +185,8 @@ export default function FindScreen() {
   // --- push state to the map (only when what's drawn changes) ---------------
 
   useEffect(() => {
-    send({ type: "setZones", zones: mapZones(state.zones, area) });
-  }, [state.zones, area, send, mapGen]);
+    send({ type: "setZones", zones: searchCenter ? mapZones(state.zones, area) : [] });
+  }, [state.zones, area, searchCenter, send, mapGen]);
 
   useEffect(() => {
     send({ type: "setStalls", stalls: mapStalls(offered) });
@@ -194,8 +196,9 @@ export default function FindScreen() {
   }, [signature, send, mapGen]);
 
   useEffect(() => {
+    if (live && !location.position) return;
     send({ type: "setCarPosition", position: driver.position, heading: driver.heading });
-  }, [driver, send, mapGen]);
+  }, [driver, live, location.position, send, mapGen]);
 
   // Live: center on the driver once, at the first location fix.
   const centered = useRef(false);

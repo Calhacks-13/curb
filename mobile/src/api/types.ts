@@ -56,6 +56,8 @@ export type Driveway = {
   availability_start: string;
   availability_end: string;
   availability_timezone: "America/Los_Angeles";
+  /** Live API's dated UTC bounds; wall-clock fields above remain display/edit values. */
+  availability_window?: { start: string; end: string };
   state: DrivewayState;
   held_by_user_id: string | null;
   /** The live server's summary of the hold or booking, when there is one. */
@@ -117,7 +119,8 @@ export type SignRuleView = {
 
 export type SpaceDetail = {
   space: ParkingSpace;
-  zone: CurbZone;
+  /** Replay includes zone geometry; the canonical detail response does not. */
+  zone?: CurbZone;
   rule: SignRuleView | null;
 };
 

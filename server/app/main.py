@@ -11,6 +11,11 @@ from app.azure import cosmos, signalr
 from app.config import settings
 from app.routes.bookings import router as bookings_router
 from app.routes.driveways import router as driveways_router
+from app.routes.parking import router as parking_router
+from app.routes.sessions import router as sessions_router
+from app.repositories.cosmos import CosmosParkingRepository
+from app.repositories.memory import InMemoryParkingRepository
+from app.seed.loader import load_seed
 from app.wiring import build_driveway_service, resolve_actor
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -18,6 +23,15 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    repository = getattr(app.state, "parking_repository", None)
+    if repository is None:
+        repository = (
+            await CosmosParkingRepository.connect(
+                settings.cosmos_endpoint, settings.cosmos_key, settings.cosmos_database
+            ) if cosmos._is_configured() else InMemoryParkingRepository()
+        )
+        app.state.parking_repository = repository
+    await load_seed(repository)
     # Startup: preload models, init Azure clients
     from app.cv.detector import get_vehicle_model, get_sign_model, get_seg_model
     from app.cv.depth import load_depth_model
@@ -36,6 +50,8 @@ async def lifespan(app: FastAPI):
     await close_client()
     await cosmos.close()
     await signalr.close()
+    if isinstance(repository, CosmosParkingRepository):
+        await repository.close()
 
 
 app = FastAPI(title="Curb API", version="0.2.0", lifespan=lifespan)
@@ -61,6 +77,8 @@ from app.routes.signs import router as signs_router
 from app.routes.v1 import router as v1_router
 
 app.include_router(v1_router)
+app.include_router(sessions_router)
+app.include_router(parking_router)
 app.include_router(ws_router)
 app.include_router(signs_router)
 app.include_router(driveways_router)
