@@ -47,6 +47,10 @@ it("advances time, expires dated driveway pins and ages curb pins despite contin
         expect(freshnessOf(space.last_observed_at, result.current.now)).toBe(expected);
         expect(result.current.options.find((o) => o.id === "space")?.kind ?? "expired").toBe(expected);
       }
+      if ([1000, 150_000, 300_000, 300_500].includes(elapsed)) {
+        const expected = { 1000: 94, 150_000: 47, 300_000: 0, 300_500: undefined }[elapsed];
+        expect(result.current.options.find((o) => o.id === "space")?.confidencePercent).toBe(expected);
+      }
     }
     await unmount();
   } finally { jest.useRealTimers(); }

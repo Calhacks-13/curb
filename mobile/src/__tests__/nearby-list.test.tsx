@@ -17,4 +17,12 @@ describe("NearbyList", () => {
 
     expect(view.getByRole("button", { name: "Spot 5. Newly found nearby opening. 250 ft" })).toBeTruthy();
   });
+
+  it("leads a curb row with its percentage and no second availability subtitle", async () => {
+    const curb: FindOption = { ...options[0], title: "82% open", detail: "Seen 18 sec ago • 2 min walk", confidencePercent: 82 };
+    const view = await render(<NearbyList options={[curb]} load="ready" onOpen={() => {}} onRetry={() => {}} />);
+
+    expect(view.getByRole("button", { name: "82% open. Seen 18 sec ago • 2 min walk. 50 ft" })).toBeTruthy();
+    expect(view.queryByText(/Likely open/)).toBeNull();
+  });
 });

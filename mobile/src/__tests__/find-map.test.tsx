@@ -230,6 +230,38 @@ describe("Find map from the live typed client", () => {
     expect(latest("setRoute").targetId).toBe("fresh");
   });
 
+  it("shows one rounded score on the list, map, details, and route, decaying locally each second", async () => {
+    const pill = () => latest("setPills").pills.find((p) => p.id === "fresh")?.label;
+    await mount();
+    expect(screen.getByRole("button", { name: /^65% open\. Seen 1 min ago/ })).toBeTruthy();
+    expect(pill()).toBe("65% open");
+
+    await fireEvent.press(screen.getByRole("button", { name: /^65% open\./ }));
+    await screen.findByText("Two-hour parking allowed now.");
+    expect(screen.getByLabelText("Chance the spot is open: 65 percent")).toBeTruthy();
+
+    // 89.65 s old at 93%: crosses 64.5% between two and three seconds later.
+    for (let s = 0; s < 3; s += 1) await tick(1_000);
+    expect(screen.getByLabelText("Chance the spot is open: 64 percent")).toBeTruthy();
+    expect(pill()).toBe("64% open");
+
+    await fireEvent.press(screen.getByText("Route here"));
+    await act(async () => {});
+    expect(screen.getByText("64% open")).toBeTruthy();
+    const status = () => screen.getByText(/Still showing open|Confidence is falling/);
+    expect(status().props.children).toBe("Still showing open.");
+
+    for (let s = 0; s < 4; s += 1) await tick(1_000);
+    expect(screen.getByText("63% open")).toBeTruthy();
+    expect(pill()).toBe("63% open");
+    const announced = status().props.children;
+    expect(announced).toMatch(/Confidence is falling/);
+    await tick(1_000);
+    expect(status().props.children).toBe(announced);
+    expect(status().props.accessibilityLiveRegion).toBe("polite");
+    expect(mockFetch.mock.calls.filter(([url]) => url.includes("/nearby"))).toHaveLength(1);
+  });
+
   it("expands the camera through its existing draggable host", async () => {
     await mount();
     expect(mockPipExpanded).toBe(false);

@@ -44,7 +44,7 @@ it("normalizes canonical nearby supply into curb and driveway map pins with LA d
   const nearby = await getApi().nearby(37.79932, -122.43597);
   const options = findOptions(fromNearby(emptyParkingState, nearby), NOW, point.coordinates);
   expect(mapPills(options)).toEqual([
-    expect.objectContaining({ id: "space-1", kind: "fresh", label: "Likely open" }),
+    expect.objectContaining({ id: "space-1", kind: "fresh", label: "88% open" }),
     expect.objectContaining({ id: "driveway-1", kind: "driveway", label: "$8.50 • Reserve" }),
   ]);
   expect(options[1].detail).toBe("8 AM to 10 PM • 50 ft");
