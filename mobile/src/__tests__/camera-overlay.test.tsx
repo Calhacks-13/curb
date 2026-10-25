@@ -253,6 +253,28 @@ it("stops uploading on permission loss and suppresses an in-flight confirmation"
   expect(mockFetch).toHaveBeenCalledTimes(1);
 });
 
+it("keeps a full-screen close control when camera permission is lost", async () => {
+  const view = await render(<CameraOverlay {...defaults} />);
+  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  mockPermission = { ...mockPermission, hasPermission: false, status: "denied" };
+  await view.rerender(<CameraOverlay {...defaults} />);
+
+  expect(screen.getByText("Camera off")).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText("Close full-screen camera"));
+  expect(screen.queryByLabelText("Close full-screen camera")).toBeNull();
+});
+
+it("keeps a full-screen close control when the camera becomes unavailable", async () => {
+  const view = await render(<CameraOverlay {...defaults} />);
+  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  mockDevice = undefined;
+  await view.rerender(<CameraOverlay {...defaults} />);
+
+  expect(screen.getByText("Camera unavailable")).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText("Close full-screen camera"));
+  expect(screen.queryByLabelText("Close full-screen camera")).toBeNull();
+});
+
 it("keeps one upload in flight through Stop/Start and uses fresh metadata and callback", async () => {
   const pending = deferred<FrameAccepted>();
   mockFetch.mockImplementationOnce(async () => ({ ok: true, json: () => pending.promise }));

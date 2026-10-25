@@ -84,6 +84,7 @@ export function DraggablePip({ children, areaWidth, areaHeight, topInset, bottom
           if (!expanded) setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
         }}
         accessibilityHint="Drag to move"
+        accessibilityViewIsModal={expanded}
       >
         {children}
       </Animated.View>

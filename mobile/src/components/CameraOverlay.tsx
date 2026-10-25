@@ -170,9 +170,20 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
     if (active && !hasPermission && canRequestPermission && status === "not-determined") void requestPermission();
   }, [active, hasPermission, canRequestPermission, status, requestPermission]);
 
+  const fullScreenCloseButton = (
+    <Pressable
+      onPress={() => changeExpanded(false)}
+      accessibilityRole="button"
+      accessibilityLabel="Close full-screen camera"
+      style={({ pressed }) => [styles.closeButton, pressed && { opacity: 0.72 }]}
+    >
+      <Text style={styles.closeText}>×</Text>
+    </Pressable>
+  );
+
   if (!hasPermission) {
     const blocked = !canRequestPermission;
-    return (
+    const permissionCard = (
       <Pressable
         onPress={() => (blocked ? Linking.openSettings() : requestPermission())}
         accessibilityRole="button"
@@ -186,9 +197,22 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         <Text style={styles.sub}>{blocked ? "Open Settings" : "Share open spots"}</Text>
       </Pressable>
     );
+    return expanded ? (
+      <View style={styles.fullScreen}>
+        <View style={styles.fallbackCenter}>{permissionCard}</View>
+        {fullScreenCloseButton}
+      </View>
+    ) : permissionCard;
   }
 
-  if (!device) return <CameraUnavailable />;
+  if (!device) {
+    return expanded ? (
+      <View style={styles.fullScreen}>
+        <View style={styles.fallbackCenter}><CameraUnavailable /></View>
+        {fullScreenCloseButton}
+      </View>
+    ) : <CameraUnavailable />;
+  }
 
   const visibleInference = enabled && latestInference?.session === session ? latestInference.result : null;
 
@@ -245,14 +269,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
               </Pressable>
             </View>
           )}
-          <Pressable
-            onPress={() => changeExpanded(false)}
-            accessibilityRole="button"
-            accessibilityLabel="Close full-screen camera"
-            style={({ pressed }) => [styles.closeButton, pressed && { opacity: 0.72 }]}
-          >
-            <Text style={styles.closeText}>×</Text>
-          </Pressable>
+          {fullScreenCloseButton}
         </>
       ) : (
         <>
@@ -310,6 +327,7 @@ const styles = StyleSheet.create({
   stopButton: { marginTop: 4, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.grey900, alignItems: "center", justifyContent: "center" },
   stopText: { fontFamily: font.bold, fontSize: 11, color: ink.grey300, marginTop: 1 },
   fullScreen: { flex: 1, backgroundColor: ink.black },
+  fallbackCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   fullScreenPreview: { ...StyleSheet.absoluteFill, overflow: "hidden", backgroundColor: ink.black },
   fullScreenHeader: {
     position: "absolute",
