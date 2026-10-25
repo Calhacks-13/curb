@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, within } from "@testing-library/react-native";
 import { useState } from "react";
 import { Linking, Platform } from "react-native";
 import type { Frame, UseFrameOutputProps } from "react-native-vision-camera";
@@ -155,8 +155,10 @@ it("shows processed detections and moves the single live camera into a full-scre
       nativeEvent: { layout: { width: 128, height: 72 } },
     });
   });
-  expect(screen.getByLabelText("car, 90% confidence")).toBeTruthy();
+  const detection = screen.getByLabelText("car, 90% confidence");
+  expect(detection).toBeTruthy();
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+  expect(within(screen.getByLabelText("Expand live camera preview")).queryByLabelText("car, 90% confidence")).toBeNull();
 
   await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
   expect(screen.getByText("On-device vision")).toBeTruthy();
@@ -165,6 +167,25 @@ it("shows processed detections and moves the single live camera into a full-scre
   await fireEvent.press(screen.getByLabelText("Close full-screen camera"));
   expect(screen.queryByText("On-device vision")).toBeNull();
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+});
+
+it("surfaces a full-screen scanner failure and lets the user stop scanning", async () => {
+  function RecoverableCamera() {
+    const [sampling, setSampling] = useState(true);
+    return <CameraOverlay {...defaults} sampling={sampling} onStopScan={() => setSampling(false)} onStartScan={() => setSampling(true)} />;
+  }
+  await render(<RecoverableCamera />);
+  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  mockDetect.mockImplementation(() => { throw new Error("CoreML prediction failed"); });
+
+  await emitFrame();
+  await flushRN();
+
+  expect(screen.getByText("Scanner stopped")).toBeTruthy();
+  expect(screen.getAllByText("CoreML prediction failed").length).toBeGreaterThan(0);
+  await fireEvent.press(screen.getByText("Close and stop scanning"));
+  expect(screen.queryByText("On-device vision")).toBeNull();
+  expect(screen.getByText("Start Scanning")).toBeTruthy();
 });
 
 it("keeps preview active through Stop and Start while toggling inference and submissions", async () => {

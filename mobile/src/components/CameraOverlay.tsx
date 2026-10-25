@@ -201,6 +201,14 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         <LiveDot on={enabled} reduceMotion={reduceMotion} />
         <Text style={styles.liveText}>{enabled ? "Live" : "Preview"}</Text>
       </View>
+      {!fullScreen && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Expand live camera preview"
+          onPress={() => setExpanded(true)}
+          style={({ pressed }) => [styles.expandHitTarget, pressed && styles.previewPressed]}
+        />
+      )}
     </View>
   );
 
@@ -210,14 +218,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         style={styles.card}
         accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Expand live camera preview"
-          onPress={() => setExpanded(true)}
-          style={({ pressed }) => pressed && styles.previewPressed}
-        >
-          {!expanded && cameraSurface(false)}
-        </Pressable>
+        {!expanded && cameraSurface(false)}
         {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
         {sampling ? (
           <>
@@ -257,6 +258,19 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
                 <Text style={styles.fullScreenSubtitle}>Frames stay on this iPhone</Text>
               </View>
             </View>
+            {scannerError && (
+              <View style={styles.fullScreenError}>
+                <Text style={styles.errorTitle}>Scanner stopped</Text>
+                <Text accessibilityRole="alert" style={styles.errorMessage}>{scannerError}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => { setExpanded(false); onStopScan?.(); }}
+                  style={({ pressed }) => [styles.errorButton, pressed && { opacity: 0.8 }]}
+                >
+                  <Text style={styles.errorButtonText}>Close and stop scanning</Text>
+                </Pressable>
+              </View>
+            )}
             <Pressable
               onPress={() => setExpanded(false)}
               accessibilityRole="button"
@@ -276,6 +290,7 @@ const styles = StyleSheet.create({
   card: { width: 104, padding: 5, borderRadius: radius.button, backgroundColor: ink.black, ...shadow.floating },
   preview: { height: 72, borderRadius: 8, overflow: "hidden", backgroundColor: ink.grey900 },
   previewPressed: { opacity: 0.88 },
+  expandHitTarget: { ...StyleSheet.absoluteFill },
   previewEmpty: { alignItems: "center", justifyContent: "center" },
   liveTag: {
     position: "absolute",
@@ -310,6 +325,26 @@ const styles = StyleSheet.create({
   },
   fullScreenTitle: { fontFamily: font.bold, fontSize: 16, color: ink.white },
   fullScreenSubtitle: { marginTop: 2, fontFamily: font.regular, fontSize: 11, color: ink.grey300 },
+  fullScreenError: {
+    position: "absolute",
+    left: 24,
+    right: 24,
+    bottom: 48,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: "rgba(11,11,12,0.9)",
+  },
+  errorTitle: { fontFamily: font.bold, fontSize: 18, color: ink.white },
+  errorMessage: { marginTop: 6, fontFamily: font.regular, fontSize: 13, color: ink.grey300 },
+  errorButton: {
+    marginTop: 14,
+    minHeight: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ink.live,
+  },
+  errorButtonText: { fontFamily: font.bold, fontSize: 13, color: ink.white },
   closeButton: {
     position: "absolute",
     top: 56,

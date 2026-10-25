@@ -50,3 +50,16 @@ it("clears stale boxes when the latest processed frame has no detections", async
   expect(screen.queryByLabelText("car, 90% confidence")).toBeNull();
   expect(screen.getByText("No detections")).toBeTruthy();
 });
+
+it.each([
+  { viewport: { width: 50, height: 100 }, expected: { left: -15, top: 20, width: 60, height: 40 } },
+  { viewport: { width: 100, height: 25 }, expected: { left: 30, top: -2.5, width: 30, height: 20 } },
+])("reprojects boxes after a $viewport.width × $viewport.height relayout", async ({ viewport, expected }) => {
+  await render(<DetectionOverlay result={populated} />);
+
+  await act(async () => {
+    screen.getByTestId("detection-overlay").props.onLayout({ nativeEvent: { layout: viewport } });
+  });
+
+  expect(screen.getByLabelText("car, 90% confidence")).toHaveStyle(expected);
+});
