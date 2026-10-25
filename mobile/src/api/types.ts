@@ -40,6 +40,7 @@ export type ParkingSpace = {
   internal_state: SpaceState;
   last_observed_at: string | null;
   base_confidence: number;
+  detection_confidence: number;
   version: number;
 };
 

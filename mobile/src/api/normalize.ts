@@ -3,7 +3,7 @@
 import type { DrivewayView, NearbyParkingResponse as WireNearby, SpaceDetail as WireDetail } from "@curb/contracts/domain";
 
 import { laParts } from "@/lib/laTime";
-import type { Driveway, NearbyParkingResponse, SpaceDetail } from "./types";
+import type { Driveway, NearbyParkingResponse, ParkingSpace, SpaceDetail } from "./types";
 
 function laHhmm(iso: string): string {
   const { hour, minute } = laParts(new Date(iso));
@@ -21,17 +21,31 @@ export function normalizeDriveway(wire: DrivewayView | Driveway): Driveway {
   };
 }
 
+export function normalizeParkingSpace(
+  wire: ParkingSpace | WireNearby["spaces"][number],
+): ParkingSpace {
+  return {
+    ...wire,
+    detection_confidence: wire.detection_confidence ?? 0,
+  } as ParkingSpace;
+}
+
 export function normalizeNearby(wire: WireNearby | NearbyParkingResponse): NearbyParkingResponse {
   // Zone/space identity, coordinates, observation times and versions already
   // match. The server's additional ranking/freshness fields can pass through.
-  return { ...wire, driveways: wire.driveways.map(normalizeDriveway) };
+  return {
+    ...wire,
+    spaces: wire.spaces.map(normalizeParkingSpace),
+    driveways: wire.driveways.map(normalizeDriveway),
+  };
 }
 
 export function normalizeSpaceDetail(wire: WireDetail | SpaceDetail): SpaceDetail {
-  if ("space" in wire) return wire;
+  if ("space" in wire) return { ...wire, space: normalizeParkingSpace(wire.space) };
   const { sign_rule: rule, current_rules, max_minutes, next_change_at, ...space } = wire;
+  if (!rule) return { space: normalizeParkingSpace(space), rule: null };
   return {
-    space,
+    space: normalizeParkingSpace(space),
     rule: {
       id: rule.id,
       summary: current_rules,

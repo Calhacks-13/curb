@@ -39,6 +39,7 @@ from app.cv.tracker import (
     gap_candidates,
     _iou,
 )
+from app.cv.confidence import GapConfidence, choose_gap_evidence
 from app.cv.sign_reader import read_sign_pole
 from app.cv.sign_localizer import (
     estimate_sign_bearing,
@@ -200,6 +201,7 @@ class SpotManager:
         lat: float,
         lng: float,
         gap: TrackedGap,
+        gap_confidence: GapConfidence,
         session_id: str,
         sign_rules: SignPoleReading | None = None,
         is_seed: bool = False,
@@ -217,7 +219,8 @@ class SpotManager:
             segment_id=segment_id,
             status="open",
             gap_count=1,
-            confidence=1.0,
+            confidence=gap_confidence.base_confidence,
+            detection_confidence=gap_confidence.detection_confidence,
             width_meters=round(gap.median_width_meters, 2) if gap.median_width_meters else None,
             location={"type": "Point", "coordinates": [lng, lat]},
             lat=lat,
@@ -256,10 +259,19 @@ class SpotManager:
     async def refresh_spot(
         self,
         spot: SpotDocument,
+        gap: TrackedGap,
+        gap_confidence: GapConfidence,
         sign_rules: SignPoleReading | None = None,
     ) -> None:
         """Re-sighting of an existing OPEN spot — bump version, reset freshness."""
         spot.last_seen_at = datetime.utcnow()
+        spot.confidence = gap_confidence.base_confidence
+        spot.detection_confidence = gap_confidence.detection_confidence
+        spot.width_meters = (
+            round(gap.median_width_meters, 2)
+            if gap.median_width_meters is not None
+            else None
+        )
         spot.version += 1
         spot.last_transition_reason = "gap_reobserved"
         if sign_rules is not None:
@@ -372,6 +384,7 @@ def _spot_payload(spot: SpotDocument) -> dict:
         "internal_state": state,
         "last_observed_at": utc_iso(spot.last_seen_at),
         "base_confidence": spot.confidence,
+        "detection_confidence": spot.detection_confidence,
         "version": spot.version,
         "segment_id": spot.segment_id,
         "status": spot.status,
@@ -397,7 +410,7 @@ def _zone_payload(segment_id: str, lat: float, lng: float, sign_rules: SignPoleR
     return {
         "id": segment_id,
         "geometry": geometry,
-        "sign_rule_id": sign_rule_id,
+        "sign_rule_id": sign_rule_id if has_curb_evidence(sign_rules) else None,
         "legal_status_now": legal_status,
         "next_change_at": utc_iso(next_change),
         "version": version,
@@ -622,49 +635,71 @@ class Pipeline:
                     segment_id, lat, lng,
                 )
 
-            existing_spot = self._spot_mgr.find_by_segment(segment_id)
-            if existing_spot is not None:
-                await self._spot_mgr.refresh_spot(existing_spot, sign_rules)
-                feedback_spot = existing_spot
-            else:
-                best_gap = max(newly_confirmed, key=lambda g: g.duration)
-                feedback_spot = await self._spot_mgr.open_spot(
-                    segment_id=segment_id,
-                    lat=lat,
-                    lng=lng,
-                    gap=best_gap,
-                    session_id=session_id,
-                    sign_rules=sign_rules,
-                    is_seed=self.mapping_mode,
-                )
             for gap in newly_confirmed:
                 session.confirmed_gap_segments[gap.gap_key] = segment_id
+            segment_gaps = [
+                gap for gap in all_gaps
+                if gap.gap_key in confirmed_keys
+                and session.confirmed_gap_segments.get(gap.gap_key) == segment_id
+            ]
+            selected = choose_gap_evidence(segment_gaps, visible_tracks)
+            if selected is None:
+                for gap in newly_confirmed:
+                    session.confirmed_gap_segments.pop(gap.gap_key, None)
+            else:
+                representative_gap, gap_confidence = selected
+                existing_spot = self._spot_mgr.find_by_segment(segment_id)
+                if existing_spot is not None:
+                    await self._spot_mgr.refresh_spot(
+                        existing_spot, representative_gap, gap_confidence, sign_rules,
+                    )
+                    feedback_spot = existing_spot
+                else:
+                    feedback_spot = await self._spot_mgr.open_spot(
+                        segment_id=segment_id,
+                        lat=lat,
+                        lng=lng,
+                        gap=representative_gap,
+                        gap_confidence=gap_confidence,
+                        session_id=session_id,
+                        sign_rules=sign_rules,
+                        is_seed=self.mapping_mode,
+                    )
 
-            # Also maintain legacy BlockObservation for backward compatibility.
-            confirmed = BlockObservation(
-                segment_id=segment_id,
-                gap_count=len(newly_confirmed),
-                confidence=1.0,
-                sign_rules=sign_rules,
-                confirmed_at=datetime.utcnow(),
-                ttl=-1 if self.mapping_mode else settings.default_ttl_sec,
-                lat=lat,
-                lng=lng,
-                location={"type": "Point", "coordinates": [lng, lat]},
-            )
-            self.recent_blocks.appendleft(confirmed.model_dump(mode="json"))
-            asyncio.create_task(_safe(cosmos.upsert_block(confirmed)))
-            asyncio.create_task(_safe(signalr.broadcast_block(confirmed)))
+                # Also maintain legacy BlockObservation for backward compatibility.
+                confirmed = BlockObservation(
+                    segment_id=segment_id,
+                    gap_count=len(newly_confirmed),
+                    confidence=gap_confidence.base_confidence,
+                    detection_confidence=gap_confidence.detection_confidence,
+                    sign_rules=sign_rules,
+                    confirmed_at=datetime.utcnow(),
+                    ttl=-1 if self.mapping_mode else settings.default_ttl_sec,
+                    lat=lat,
+                    lng=lng,
+                    location={"type": "Point", "coordinates": [lng, lat]},
+                )
+                self.recent_blocks.appendleft(confirmed.model_dump(mode="json"))
+                asyncio.create_task(_safe(cosmos.upsert_block(confirmed)))
+                asyncio.create_task(_safe(signalr.broadcast_block(confirmed)))
         elif scene_valid:
             # Re-sighting of existing confirmed gaps (still visible).
+            gaps_by_segment: dict[str, list[TrackedGap]] = {}
             for gap in all_gaps:
                 if gap.visible and gap.gap_key in confirmed_keys:
                     seg_id = session.confirmed_gap_segments.get(gap.gap_key)
                     if seg_id:
-                        existing = self._spot_mgr.find_by_segment(seg_id)
-                        if existing and (datetime.utcnow() - existing.last_seen_at).total_seconds() > 10:
-                            await self._spot_mgr.refresh_spot(existing)
-                            feedback_spot = existing
+                        gaps_by_segment.setdefault(seg_id, []).append(gap)
+            for seg_id, segment_gaps in gaps_by_segment.items():
+                existing = self._spot_mgr.find_by_segment(seg_id)
+                if existing and (datetime.utcnow() - existing.last_seen_at).total_seconds() > 10:
+                    selected = choose_gap_evidence(segment_gaps, visible_tracks)
+                    if selected is not None:
+                        representative_gap, gap_confidence = selected
+                        await self._spot_mgr.refresh_spot(
+                            existing, representative_gap, gap_confidence,
+                        )
+                        feedback_spot = existing
 
             pipeline_state = session.gap_tracker.get_state_string()
             if not pipeline_state or pipeline_state == "no gaps":

@@ -1,5 +1,5 @@
 import { buildDemoFixture } from "@/demo/fixtures";
-import { findOptions, mapPills, mapZones, myReservation } from "@/features/find/options";
+import { findOptions, mapPills, myReservation } from "@/features/find/options";
 import { emptyParkingState, fromNearby } from "@/realtime/reducer";
 
 // 2 PM PDT: inside the demo driveway's 7 AM to 3 AM window.
@@ -19,6 +19,43 @@ describe("findOptions", () => {
     expect(kinds.indexOf("driveway")).toBeGreaterThan(kinds.lastIndexOf("fresh"));
     expect(kinds.indexOf("aging")).toBeGreaterThan(kinds.indexOf("driveway"));
     expect(kinds).toEqual(expect.arrayContaining(["fresh", "aging", "stale", "driveway"]));
+  });
+
+  it("uses one current percentage for curb rows and map pills", () => {
+    const curb = findOptions(stateAt(NOW), NOW, from).filter((option) => option.kind !== "driveway");
+
+    for (const option of curb) {
+      expect(option.confidencePercent).toEqual(expect.any(Number));
+      expect(option.title).toBe(`${option.confidencePercent}% open`);
+      expect(option.detail).toMatch(/^Seen .+ ago • \d+ min walk$/);
+      expect(mapPills([option])[0].label).toBe(option.title);
+    }
+  });
+
+  it("ranks equal-freshness curb spaces by current confidence before distance", () => {
+    const state = stateAt(NOW);
+    const [low, high] = Object.values(state.spaces).filter((space) => space.internal_state === "OPEN").slice(0, 2);
+    const spaces = {
+      low: {
+        ...low,
+        id: "low",
+        location: { type: "Point" as const, coordinates: from },
+        last_observed_at: new Date(NOW).toISOString(),
+        base_confidence: 0.8,
+      },
+      high: {
+        ...high,
+        id: "high",
+        location: { type: "Point" as const, coordinates: [-122.4365, 37.7997] as [number, number] },
+        last_observed_at: new Date(NOW).toISOString(),
+        base_confidence: 0.9,
+      },
+    };
+
+    const ranked = findOptions({ ...state, spaces, driveways: {} }, NOW, from);
+
+    expect(ranked.map((option) => option.id)).toEqual(["high", "low"]);
+    expect(ranked.map((option) => option.confidencePercent)).toEqual([90, 80]);
   });
 
   it("shows the driveway late at night inside its overnight window", () => {
@@ -46,10 +83,25 @@ describe("findOptions", () => {
     expect(near.length).toBeLessThan(all.length);
   });
 
-  it("draws only zones that are legal now", () => {
-    const ids = mapZones(stateAt(NOW).zones).map((z) => z.id);
-    expect(ids).not.toContain("zone_demo_6");
-    expect(ids).toContain("zone_demo_1");
+  describe("unsigned curbs", () => {
+    const withZone = (patch: object) => {
+      const s = stateAt(NOW);
+      return { ...s, zones: { ...s.zones, zone_demo_1: { ...s.zones.zone_demo_1, ...patch } } };
+    };
+    const zoneOneFresh = (state: ReturnType<typeof stateAt>) =>
+      findOptions(state, NOW, from).filter((o) => state.spaces[o.id]?.zone_id === "zone_demo_1" && o.kind === "fresh");
+
+    it("labels a fresh opening with no sign read the same as a signed one", () => {
+      const signed = mapPills(zoneOneFresh(stateAt(NOW)));
+      const unsigned = mapPills(zoneOneFresh(withZone({ legal_status_now: "UNKNOWN", sign_rule_id: null })));
+      expect(unsigned.length).toBeGreaterThan(0);
+      expect(unsigned.map((p) => p.label)).toEqual(signed.map((p) => p.label));
+      expect(unsigned.every((p) => /^\d+% open$/.test(p.label))).toBe(true);
+    });
+
+    it("still hides openings on a curb known to be illegal", () => {
+      expect(zoneOneFresh(withZone({ legal_status_now: "ILLEGAL", sign_rule_id: null }))).toEqual([]);
+    });
   });
 
   describe("driveway ownership", () => {

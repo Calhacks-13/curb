@@ -73,7 +73,7 @@ async def persist_confirmed_scan(repository: ParkingRepository, block: BlockObse
         geometry=GeoLineString(type="LineString", coordinates=[
             (block.lng - line_d, block.lat), (block.lng + line_d, block.lat),
         ]),
-        sign_rule_id=rule_id,
+        sign_rule_id=rule_id if sign else None,
         legal_status_now=legal_status,
         current_rules=rule_summary(sign),
         next_change_at=next_change,
@@ -96,12 +96,14 @@ async def persist_confirmed_scan(repository: ParkingRepository, block: BlockObse
         internal_state=state,
         last_observed_at=observed_at,
         base_confidence=max(0.0, min(1.0, block.confidence)),
+        detection_confidence=block.detection_confidence,
         freshness=None,
         status_label=label,
         distance_m=0,
         version=spot.version if spot else 1,
     )
-    await repository.upsert("rules", rule)
+    if sign is not None:
+        await repository.upsert("rules", rule)
     await repository.upsert("zones", zone)
     await repository.upsert("spaces", space)
 
@@ -110,6 +112,6 @@ async def persist_confirmed_scan(repository: ParkingRepository, block: BlockObse
 async def persist_spot(repository: ParkingRepository, spot: SpotDocument, now: datetime | None = None) -> None:
     await persist_confirmed_scan(repository, BlockObservation(
         segment_id=spot.segment_id, gap_count=1 if spot.status == "open" else 0,
-        confidence=spot.confidence, sign_rules=spot.sign_rules,
+        confidence=spot.confidence, detection_confidence=spot.detection_confidence, sign_rules=spot.sign_rules,
         confirmed_at=spot.last_seen_at, lat=spot.lat, lng=spot.lng, location=spot.location,
     ), spot, now)

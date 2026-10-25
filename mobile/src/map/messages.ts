@@ -18,19 +18,15 @@ export type CameraTarget = {
   durationMs?: number;
 };
 
-/** A legal-now curb zone (blue line), already on the curb face. */
-export type MapZone = { id: string; coordinates: LngLat[] };
-
 /** A bay to fill: an opening (by freshness) or a driveway. `id` is the space or driveway id. */
 export type MapStall = { id: string; kind: StallKind; ring: LngLat[] };
 
-/** A callout. Text and chip shape carry the meaning, not color alone. */
+/** A callout. Curb labels carry the shared age-adjusted "N% open" value. */
 export type MapPill = { id: string; kind: StallKind; label: string; position: LngLat; mine?: boolean; muted?: boolean };
 
 export type AppToMap =
   | { type: "setMood"; mood: Mood; animate: boolean }
   | { type: "setReduceMotion"; reduceMotion: boolean }
-  | { type: "setZones"; zones: MapZone[] }
   | { type: "setStalls"; stalls: MapStall[] }
   | { type: "setPills"; pills: MapPill[] }
   | { type: "selectSpot"; id: string | null }

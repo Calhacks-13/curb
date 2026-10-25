@@ -4,7 +4,8 @@ from app.domain.driveways import DrivewayService, NotFoundError
 from app.domain.freshness import freshness_for
 from app.domain.ranking import distance_m, distance_to_line_m, rank_options
 from app.models.domain import (
-    DrivewayState, GeoPoint, NearbyParkingResponse, ParkingSpaceView, SpaceDetail,
+    CurbZoneView, DrivewayState, GeoPoint, NearbyParkingResponse, ParkingSpaceView,
+    SignRuleView, SpaceDetail,
 )
 from app.repositories.protocols import ParkingRepository
 from app.domain.sign_rules import evaluate_rule_text
@@ -24,9 +25,21 @@ class ParkingService:
             freshness, label = None, "Availability unknown"
         return space.model_copy(update={"freshness": freshness, "status_label": label, "distance_m": distance})
 
+    async def _zone_rule(self, zone: CurbZoneView | None) -> SignRuleView | None:
+        """Return the zone's validated sign rule, or None when no sign has been read for it."""
+        if zone is None or zone.sign_rule_id is None:
+            return None
+        rule = await self.repository.get_rule(zone.sign_rule_id)
+        return rule if rule is not None and rule.zone_id == zone.id else None
+
     async def nearby(
         self, origin: GeoPoint, radius_m: float, now: datetime, viewer_id: str | None = None
     ) -> NearbyParkingResponse:
+        """List observed curb openings and available driveways within the radius.
+
+        Availability is not a legality claim: openings appear whether or not a sign
+        has been read, but zones explicitly known to be illegal are excluded.
+        """
         zones = [zone for zone in await self.repository.list_zones()
                  if distance_to_line_m(origin, zone.geometry) <= radius_m]
         for index, zone in enumerate(zones):
@@ -39,10 +52,7 @@ class ParkingService:
         spaces = []
         for space in await self.repository.list_spaces():
             zone = by_id.get(space.zone_id)
-            if zone is None or zone.legal_status_now != "LEGAL" or zone.sign_rule_id is None:
-                continue
-            rule = await self.repository.get_rule(zone.sign_rule_id)
-            if rule is None or rule.zone_id != zone.id:
+            if zone is None or zone.legal_status_now == "ILLEGAL":
                 continue
             distance = distance_m(origin, space.location)
             view = self._space_view(space, now, distance)
@@ -80,18 +90,23 @@ class ParkingService:
         )
 
     async def detail(self, space_id: str, now: datetime) -> SpaceDetail | None:
+        """Return a space's detail, with a null sign rule when no sign has been read."""
         space = await self.repository.get_space(space_id)
         if space is None:
             return None
         zone = await self.repository.get_zone(space.zone_id)
-        rule = await self.repository.get_rule(zone.sign_rule_id) if zone and zone.sign_rule_id else None
-        if rule is None or rule.zone_id != space.zone_id:
+        if zone is None:
             return None
-        if rule.id.startswith("scan-rule:"):
+        rule = await self._zone_rule(zone)
+        summary = zone.current_rules
+        if rule is not None and rule.id.startswith("scan-rule:"):
             _, change = evaluate_rule_text(rule.evidence_text, now)
             zone = zone.model_copy(update={"next_change_at": change})
+            if rule.evidence_text:
+                summary = rule.evidence_text.splitlines()[0]
         return SpaceDetail(
             **self._space_view(space, now).model_dump(), sign_rule=rule,
-            current_rules=(rule.evidence_text.splitlines()[0] if rule.id.startswith("scan-rule:") and rule.evidence_text else zone.current_rules), max_minutes=rule.max_minutes,
+            current_rules=summary,
+            max_minutes=rule.max_minutes if rule else None,
             next_change_at=zone.next_change_at,
         )

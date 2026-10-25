@@ -2,6 +2,7 @@
 // the map can age markers locally without waiting for a server event.
 
 import type { CurbZone, ParkingSpace } from "@/api/types";
+import { currentOpenConfidence } from "./confidence";
 
 export type Freshness = "fresh" | "aging" | "stale" | "expired";
 
@@ -35,15 +36,24 @@ export type VisibleSpace = {
 };
 
 /**
- * Openings a driver may see: observed open, in a zone whose validated rule is
- * legal now, and not yet expired. Occupied and unknown stalls stay hidden.
+ * True unless the curb is explicitly known to be illegal now. Availability is
+ * shown for curbs with no sign read yet; it never implies parking is legal.
+ */
+export function showsOpenings(zone: CurbZone | undefined): zone is CurbZone {
+  return !!zone && zone.legal_status_now !== "ILLEGAL";
+}
+
+/**
+ * Openings a driver may see: observed open, not on a curb known to be illegal,
+ * and not yet expired. Occupied and unknown stalls stay hidden.
  */
 export function visibleSpaces(spaces: ParkingSpace[], zones: Record<string, CurbZone>, now: number): VisibleSpace[] {
   const out: VisibleSpace[] = [];
   for (const space of spaces) {
     if (space.internal_state !== "OPEN") continue;
     const zone = zones[space.zone_id];
-    if (!zone || zone.legal_status_now !== "LEGAL" || !zone.sign_rule_id) continue;
+    if (!showsOpenings(zone)) continue;
+    if (currentOpenConfidence(space, now) === null) continue;
     const freshness = freshnessOf(space.last_observed_at, now);
     if (freshness === "expired") continue;
     out.push({ space, zone, freshness, ageSeconds: ageSeconds(space.last_observed_at, now) });

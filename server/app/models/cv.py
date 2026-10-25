@@ -129,6 +129,7 @@ class BlockObservation(BaseModel):
     segment_id: str
     gap_count: int
     confidence: float
+    detection_confidence: float = Field(default=0, ge=0, le=1)
     sign_rules: SignPoleReading | None = None
     confirmed_at: datetime = Field(default_factory=datetime.utcnow)
     ttl: int = 1800
@@ -144,6 +145,7 @@ class SpotDocument(BaseModel):
     status: str = "open"  # open | occupied | expired
     gap_count: int = 1
     confidence: float = 0.0
+    detection_confidence: float = Field(default=0, ge=0, le=1)
     width_meters: float | None = None
     location: dict = {}  # GeoJSON Point
     lat: float = 0.0

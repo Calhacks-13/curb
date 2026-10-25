@@ -51,7 +51,7 @@ const accepted: FrameAccepted = {
   space: {
     id: "spot", zone_id: "zone", location: { type: "Point", coordinates: [-122.4, 37.8] },
     stall_geometry: { type: "Polygon", coordinates: [] }, internal_state: "OPEN",
-    last_observed_at: "2026-10-24T21:00:00.000Z", base_confidence: 0.9, version: 1,
+    last_observed_at: "2026-10-24T21:00:00.000Z", base_confidence: 0.9, detection_confidence: 0.88, version: 1,
   },
 };
 const mockFetch = jest.fn(async () => ({ ok: true, json: async () => accepted }));

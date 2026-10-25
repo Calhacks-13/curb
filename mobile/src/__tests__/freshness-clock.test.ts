@@ -10,7 +10,7 @@ const NOW = Date.parse("2026-10-24T21:00:00Z");
 const space: ParkingSpace = {
   id: "space", zone_id: "zone", location: { type: "Point", coordinates: [-122.43597, 37.79932] },
   stall_geometry: { type: "Polygon", coordinates: [] }, internal_state: "OPEN",
-  last_observed_at: new Date(NOW).toISOString(), base_confidence: 0.94, version: 1,
+  last_observed_at: new Date(NOW).toISOString(), base_confidence: 0.94, detection_confidence: 0.92, version: 1,
 };
 const driveway: Driveway = {
   id: "driveway", owner_id: "owner", location: space.location, photo_url: null, price_usdc: "8.00",
@@ -46,6 +46,10 @@ it("advances time, expires dated driveway pins and ages curb pins despite contin
         const expected = elapsed <= 90_000 ? "fresh" : elapsed <= 180_000 ? "aging" : elapsed <= 300_000 ? "stale" : "expired";
         expect(freshnessOf(space.last_observed_at, result.current.now)).toBe(expected);
         expect(result.current.options.find((o) => o.id === "space")?.kind ?? "expired").toBe(expected);
+      }
+      if ([1000, 150_000, 300_000, 300_500].includes(elapsed)) {
+        const expected = { 1000: 94, 150_000: 47, 300_000: 0, 300_500: undefined }[elapsed];
+        expect(result.current.options.find((o) => o.id === "space")?.confidencePercent).toBe(expected);
       }
     }
     await unmount();

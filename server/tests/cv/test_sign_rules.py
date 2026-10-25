@@ -10,6 +10,7 @@ from app.azure import cosmos, signalr
 from app.cv.pipeline import Pipeline, SignDeduplicator
 from app.cv.sign_reader import _parse_pole_reading
 from app.cv.tracker import TrackedGap
+from app.cv.confidence import GapConfidence
 from app.domain.sign_rules import assess_reading, evaluate_rule_text, has_curb_evidence, rule_text
 from app.models.cv import SignDetection, SignDocument, SignPoleReading, SignReading
 from app.models.cv import SpotDocument
@@ -167,7 +168,7 @@ async def test_rule_correction_and_time_change_do_not_refresh_availability(memor
     pipeline = Pipeline()
     repository = InMemoryParkingRepository()
     pipeline.set_repository(repository)
-    spot = await pipeline._spot_mgr.open_spot("37.8,-122.44,E", 37.8, -122.44, TrackedGap(1, 2, [200, 0, 600, 600]), "walk")
+    spot = await pipeline._spot_mgr.open_spot("37.8,-122.44,E", 37.8, -122.44, TrackedGap(1, 2, [200, 0, 600, 600]), GapConfidence(0.9, 0.9), "walk")
     observed_at = spot.last_seen_at
     before = datetime(2026, 11, 17, 10, 59, tzinfo=LA)
     await pipeline._spot_mgr.update_rules(spot, parking_reading(), now=before)

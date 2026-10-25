@@ -192,6 +192,7 @@ class ParkingSpaceView(ContractModel):
     internal_state: InternalSpaceState
     last_observed_at: UtcDateTime | None
     base_confidence: float = Field(ge=0, le=1)
+    detection_confidence: float = Field(default=0, ge=0, le=1)
     freshness: Freshness | None
     status_label: str = Field(min_length=1)
     distance_m: float = Field(ge=0)
@@ -199,7 +200,7 @@ class ParkingSpaceView(ContractModel):
 
 
 class SpaceDetail(ParkingSpaceView):
-    sign_rule: SignRuleView
+    sign_rule: SignRuleView | None
     current_rules: str = Field(min_length=1)
     max_minutes: int | None = Field(gt=0)
     next_change_at: UtcDateTime | None

@@ -11,13 +11,13 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.azure import cosmos, signalr
 from app.domain.detections import DetectionSubmission
 from app.domain.scan_state import persist_confirmed_scan as _persist_confirmed_scan
 from app.domain.scan_state import utc_iso
-from app.domain.sign_rules import rule_text, evaluate_rule_text
+from app.domain.sign_rules import has_curb_evidence, rule_text, evaluate_rule_text
 from app.models.cv import SignPoleReading
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ class ParkingSpace(BaseModel):
     internal_state: str = "UNKNOWN"
     last_observed_at: str | None = None
     base_confidence: float = 0.0
+    detection_confidence: float = Field(default=0, ge=0, le=1)
     version: int = 1
 
 
@@ -123,6 +124,7 @@ def _block_to_space(block: dict) -> ParkingSpace:
         internal_state=state,
         last_observed_at=last_observed,
         base_confidence=block.get("confidence", 0.0),
+        detection_confidence=block.get("detection_confidence", 0.0),
         version=1,
     )
 
@@ -160,6 +162,7 @@ def _spot_to_space(spot: dict) -> ParkingSpace:
         internal_state=state,
         last_observed_at=utc_iso(last_seen),
         base_confidence=spot.get("confidence", 0.0),
+        detection_confidence=spot.get("detection_confidence", 0.0),
         version=spot.get("version", 1),
     )
 
@@ -186,7 +189,7 @@ def _block_to_zone(block: dict, signs: list[dict]) -> CurbZone:
     return CurbZone(
         id=seg_id,
         geometry=geometry,
-        sign_rule_id=sign_rule_id,
+        sign_rule_id=sign_rule_id if has_curb_evidence(reading) else None,
         legal_status_now=legal_status,
         next_change_at=next_change.isoformat() if next_change else None,
         version=1,

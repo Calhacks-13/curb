@@ -5,7 +5,7 @@ import type { LngLat, ParkingSpace, RealtimeEvent } from "@/api/types";
 import { distanceM } from "@/data/geo";
 import type { ParkingState } from "@/realtime/reducer";
 
-import { freshnessOf } from "./freshness";
+import { freshnessOf, showsOpenings } from "./freshness";
 import { inArea, type SearchArea } from "./options";
 
 export type SpotAlert = { ids: string[]; at: number };
@@ -15,8 +15,8 @@ export const ALERT_MERGE_MS = 5000;
 
 /**
  * A realtime event announces a new opening when it's `space.opened` (not a
- * re-sighting), the stall's zone is legal now under a validated rule, the
- * sighting is fresh, and it's inside the search area.
+ * re-sighting), the stall's curb isn't known to be illegal, the sighting is
+ * fresh, and it's inside the search area.
  */
 export function newOpening(event: RealtimeEvent, state: ParkingState, area: SearchArea | null, now: number): { id: string; position: LngLat } | null {
   if (event.type !== "space.opened") return null;
@@ -24,7 +24,7 @@ export function newOpening(event: RealtimeEvent, state: ParkingState, area: Sear
   const space = { ...(known ?? {}), ...event.payload } as Partial<ParkingSpace>;
   const position = space.location?.coordinates;
   const zone = space.zone_id ? state.zones[space.zone_id] : undefined;
-  if (!position || !zone || zone.legal_status_now !== "LEGAL" || !zone.sign_rule_id) return null;
+  if (!position || !showsOpenings(zone)) return null;
   if (freshnessOf(space.last_observed_at ?? event.occurred_at, now) !== "fresh") return null;
   if (!inArea(position, area)) return null;
   return { id: event.entity_id, position };

@@ -113,6 +113,7 @@ export const ParkingSpaceViewSchema = z.strictObject({
   internal_state: InternalSpaceStateSchema,
   last_observed_at: UtcDateTimeSchema.nullable(),
   base_confidence: z.number().min(0).max(1),
+  detection_confidence: z.number().min(0).max(1).default(0),
   freshness: FreshnessSchema.nullable(),
   status_label: z.string().min(1),
   distance_m: z.number().nonnegative(),
@@ -126,7 +127,7 @@ export const ActiveBookingSummarySchema = z.strictObject({
 });
 
 export const SpaceDetailSchema = ParkingSpaceViewSchema.extend({
-  sign_rule: SignRuleViewSchema,
+  sign_rule: SignRuleViewSchema.nullable(),
   current_rules: z.string().min(1),
   max_minutes: z.number().int().positive().nullable(),
   next_change_at: UtcDateTimeSchema.nullable(),

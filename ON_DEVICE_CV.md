@@ -287,8 +287,9 @@ weekly, and single nth-weekday monthly time windows are evaluated in
 `America/Los_Angeles`, including the observed third-Tuesday 11 AM–1 PM restriction.
 The restriction is not stored as an all-day ban. Ambiguous clocks, multiple distinct
 windows, permit eligibility, holidays, last-weekday and other unsupported schedules
-remain unknown. No validated parking sign also means legality is unknown; the map
-only offers spaces whose legal status is known. Nearby reads, details, and realtime
+remain unknown. No validated parking sign also means legality is unknown. The map
+can show observed unsigned openings as availability estimates; known illegal zones
+are excluded, and unsigned details make no legality claim. Nearby reads, details, and realtime
 zone payloads share this interpretation; maintenance publishes time-boundary changes
 while a spot is fresh.
 

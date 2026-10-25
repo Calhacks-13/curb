@@ -1,6 +1,5 @@
 // Mapbox GL layer specs for parking supply and the route. Plain data, handed to
 // the WebView as JSON. Semantics follow the MVP spec (section 7.3):
-//   legal zone  blue curb line: legal now, availability unknown
 //   fresh       green bay   "Likely open"        (seen <= 90 s ago)
 //   aging       yellow bay  "May still be open"  (<= 3 min)
 //   stale       gray bay    "Stale observation"  (<= 5 min)
@@ -28,7 +27,6 @@ export type StallKind = "fresh" | "aging" | "stale" | "driveway";
 
 /** Day and night color per semantic; the runtime cross-fades between them. */
 export const PALETTE = {
-  legal: { day: S.legal, night: S.legalNight },
   fresh: { day: S.fresh, night: S.freshNight },
   aging: { day: S.aging, night: S.agingNight },
   stale: { day: S.stale, night: S.staleNight },
@@ -36,7 +34,6 @@ export const PALETTE = {
   select: { day: ink.black, night: ink.white },
 } as const;
 
-export const ZONE_LAYER_ID = "zone-legal";
 export const STALL_FILL_ID = "stall-fill";
 
 /** Builds the kind -> color match for a given mood mix (0 day .. 1 night). */
@@ -56,20 +53,6 @@ export function stallColorExpr(pick: (c: { day: string; night: string }) => stri
 
 export const SUPPLY_LAYERS: Layer[] = [
   {
-    id: ZONE_LAYER_ID,
-    type: "line",
-    source: "zones",
-    slot: "middle",
-    layout: { "line-cap": "butt", "line-join": "round" },
-    paint: {
-      "line-color": PALETTE.legal.day,
-      "line-width": hairline(2.6, 0.45),
-      "line-opacity": 0.9,
-      // Keeps colors true under the night light preset; it doesn't glow.
-      "line-emissive-strength": 1,
-    },
-  },
-  {
     id: STALL_FILL_ID,
     type: "fill",
     source: "stalls",
@@ -77,6 +60,7 @@ export const SUPPLY_LAYERS: Layer[] = [
     paint: {
       "fill-color": stallColorExpr((c) => c.day),
       "fill-opacity": ["*", 0.95, state("fade", 1)],
+      // Keeps colors true under the night light preset; it doesn't glow.
       "fill-emissive-strength": 1,
     },
   },

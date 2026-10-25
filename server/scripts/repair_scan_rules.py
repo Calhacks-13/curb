@@ -38,7 +38,7 @@ async def repair_scan_rules(repository, lat: float, lng: float, radius_m: float)
         if _haversine_m(lat, lng, slat, slng) > radius_m:
             continue
         zone = await repository.get_zone(space.zone_id)
-        if zone is None or not zone.sign_rule_id or not zone.sign_rule_id.startswith("scan-rule:"):
+        if zone is None or (zone.sign_rule_id is not None and not zone.sign_rule_id.startswith("scan-rule:")):
             continue
         raw = await cosmos.get_spot_by_segment(space.zone_id)
         if raw is None:
@@ -55,7 +55,7 @@ async def repair_scan_rules(repository, lat: float, lng: float, radius_m: float)
             continue
         spot = SpotDocument.model_validate(raw)
         resolved = await dedup.find_rules_for_segment(spot.segment_id, spot.lat, spot.lng)
-        rule = await repository.get_rule(zone.sign_rule_id)
+        rule = await repository.get_rule(zone.sign_rule_id) if zone.sign_rule_id else None
         status, next_change = evaluate_rule_text(rule_text(resolved))
         if (resolved == spot.sign_rules and rule is not None and rule.evidence_text == rule_text(resolved)
                 and rule.interpretation_confidence == (resolved.confidence_score if resolved else 0)
