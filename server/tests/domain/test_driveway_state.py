@@ -160,6 +160,37 @@ async def test_failed_payment_stays_held_and_driver_can_cancel():
 
 
 @pytest.mark.asyncio
+async def test_simultaneous_repeated_cancel_is_idempotent():
+    class BarrierRepository(InMemoryDrivewayRepository):
+        def __init__(self, driveways):
+            super().__init__(driveways)
+            self.arrivals = 0
+            self.ready = asyncio.Event()
+
+        async def compare_and_swap_pair(self, *args, **kwargs):
+            self.arrivals += 1
+            if self.arrivals == 2:
+                self.ready.set()
+            await self.ready.wait()
+            return await super().compare_and_swap_pair(*args, **kwargs)
+
+    repository = BarrierRepository([make_driveway()])
+    publisher = CommitCheckingPublisher(repository)
+    service = DrivewayService(repository, publisher)
+    booking = await service.start_hold("driveway_demo_1", "driver_demo", 1, NOW)
+
+    results = await asyncio.gather(
+        service.cancel_hold(booking.id, "driver_demo", NOW),
+        service.cancel_hold(booking.id, "driver_demo", NOW),
+        return_exceptions=True,
+    )
+
+    assert all(isinstance(result, Driveway) for result in results)
+    assert all(result.state == DrivewayState.AVAILABLE for result in results)
+    assert [event.type for event in publisher.events].count("driveway.released") == 1
+
+
+@pytest.mark.asyncio
 async def test_confirmed_booking_never_reports_driveway_available():
     service, _, _ = make_service()
     booking = await service.start_hold("driveway_demo_1", "driver_demo", 1, NOW)

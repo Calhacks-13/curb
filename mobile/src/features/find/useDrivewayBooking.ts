@@ -3,7 +3,7 @@
 // failure keeps the hold so the driver can retry or cancel. Holds have no
 // automatic timeout, so there's no countdown.
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { getApi } from "@/api/client";
 import { ApiError } from "@/api/errors";
@@ -22,6 +22,7 @@ const initial: Checkout = { phase: "detail", booking: null, error: null };
 export function useDrivewayBooking(onConfirmed?: (booking: Booking) => void) {
   const api = getApi();
   const [checkout, setCheckout] = useState<Checkout>(initial);
+  const activeAction = useRef<"pay" | "cancel" | null>(null);
 
   const reserve = useCallback(
     async (driveway: Driveway) => {
@@ -42,8 +43,10 @@ export function useDrivewayBooking(onConfirmed?: (booking: Booking) => void) {
   );
 
   const pay = useCallback(async () => {
+    if (activeAction.current) return;
     const booking = checkout.booking;
     if (!booking) return;
+    activeAction.current = "pay";
     setCheckout({ phase: "processing", booking, error: null });
     try {
       // Retries reuse the same booking intent; the service never charges twice.
@@ -67,21 +70,28 @@ export function useDrivewayBooking(onConfirmed?: (booking: Booking) => void) {
           ? "Not enough USDC in the wallet. Add test USDC, then retry. Your hold is still in place."
           : "Payment didn't go through. Your hold is still in place.",
       });
+    } finally {
+      if (activeAction.current === "pay") activeAction.current = null;
     }
   }, [api, checkout.booking, onConfirmed]);
 
   const cancel = useCallback(
     async (driveway: Driveway) => {
+      if (activeAction.current) return false;
       const booking = checkout.booking;
+      activeAction.current = "cancel";
       if (booking) {
         try {
           await api.cancelHold(driveway.id, booking.id);
         } catch {
           setCheckout((c) => ({ ...c, error: "Couldn't cancel the hold right now. Try again." }));
-          return;
+          activeAction.current = null;
+          return false;
         }
       }
       setCheckout(initial);
+      activeAction.current = null;
+      return true;
     },
     [api, checkout.booking],
   );

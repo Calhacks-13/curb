@@ -437,7 +437,9 @@ export default function FindScreen() {
                 step={paymentStep}
                 onTopUp={checkoutWallet.requestTopUp}
                 onPay={pay}
-                onCancel={() => cancel(driveway)}
+                onCancel={async () => {
+                  if (await cancel(driveway)) closeSheet();
+                }}
               />
             ) : (
               <DrivewayDetailSheet

@@ -142,6 +142,10 @@ def test_hold_failure_cancel_and_booking_receipt_flow():
     assert released.status_code == 200
     assert released.json()["state"] == "AVAILABLE"
 
+    repeated = client.delete(f"/v1/driveways/driveway_demo_1/holds/{booking['id']}")
+    assert repeated.status_code == 200
+    assert repeated.json()["state"] == "AVAILABLE"
+
     receipt = client.get(f"/v1/bookings/{booking['id']}")
     assert receipt.status_code == 200
     assert receipt.json()["state"] == "CANCELLED"

@@ -380,15 +380,35 @@ class DrivewayService:
         driveway = await self._driveway(booking.driveway_id)
         if booking.driver_id != driver_id:
             raise PermissionDeniedError("only the holding driver can cancel")
+        # DELETE is idempotent: a repeated request may be the client's recovery
+        # from a successful cancellation whose response was lost.
+        if booking.state == BookingState.CANCELLED:
+            return driveway
         if booking.state != BookingState.PENDING_PAYMENT:
             raise InvalidTransitionError("booking cannot be cancelled in its current state")
         released, cancelled = self._release(driveway, booking)
-        await self.repository.compare_and_swap_pair(
-            released,
-            cancelled,
-            expected_driveway_version=driveway.version,
-            expected_booking_version=booking.version,
-        )
+        try:
+            await self.repository.compare_and_swap_pair(
+                released,
+                cancelled,
+                expected_driveway_version=driveway.version,
+                expected_booking_version=booking.version,
+            )
+        except VersionConflictError:
+            # An overlapping DELETE may have committed the same cancellation.
+            # Confirm that outcome instead of reporting a false failure.
+            current_booking = await self._booking(booking_id)
+            current_driveway = await self._driveway(booking.driveway_id)
+            if (
+                current_booking.state == BookingState.CANCELLED
+                and current_booking.driver_id == driver_id
+                and (
+                    expected_driveway_id is None
+                    or current_booking.driveway_id == expected_driveway_id
+                )
+            ):
+                return current_driveway
+            raise
         await self._publish_released(released, now)
         return released
 

@@ -125,6 +125,7 @@ export function PaymentSheet(props: Props) {
   const processing = phase === "processing";
   const amount = `${Number(booking.amount_usdc).toFixed(2)} USDC`;
   const short = !!wallet && Number(wallet.payer.usdc_balance) < Number(booking.amount_usdc);
+  const paymentDisabled = phase === "review" && short;
   const payee = wallet && !demo ? `Owner ${shortHash(wallet.payee.address)}` : "Driveway owner";
 
   return (
@@ -160,10 +161,10 @@ export function PaymentSheet(props: Props) {
         <>
           <Pressable
             onPress={onPay}
-            disabled={short}
+            disabled={paymentDisabled}
             accessibilityRole="button"
-            accessibilityState={{ disabled: short }}
-            style={({ pressed }) => [styles.cta, short && styles.ctaDisabled, pressed && { opacity: 0.85 }]}
+            accessibilityState={{ disabled: paymentDisabled }}
+            style={({ pressed }) => [styles.cta, paymentDisabled && styles.ctaDisabled, pressed && { opacity: 0.85 }]}
           >
             <Text style={styles.ctaText}>{phase === "failed" ? "Retry payment" : `Approve ${amount}`}</Text>
           </Pressable>

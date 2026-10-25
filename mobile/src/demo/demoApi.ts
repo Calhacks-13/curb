@@ -187,8 +187,12 @@ export function createDemoApi(): CurbApi {
     async cancelHold(id, bookingId) {
       const d = driveway(id);
       const b = state.bookings.get(bookingId);
+      if (!b || b.driveway_id !== id) throw new ApiError(404, "Booking not found for driveway");
+      if (b.driver_id !== user.id) throw new ApiError(403, "Only the holding driver can cancel");
+      if (b.state === "CANCELLED") return d;
       if (b?.state === "PROCESSING") throw new ApiError(409, "Payment is processing");
-      if (b) state.putBooking({ ...b, state: "CANCELLED", version: b.version + 1 });
+      if (b.state !== "PENDING_PAYMENT") throw new ApiError(409, "Booking cannot be cancelled");
+      state.putBooking({ ...b, state: "CANCELLED", version: b.version + 1 });
       const next: Driveway = { ...d, state: "AVAILABLE", held_by_user_id: null, version: d.version + 1 };
       state.putDriveway(next, "driveway.released");
       return next;

@@ -22,6 +22,17 @@ describe("demo nearby query", () => {
 });
 
 describe("demo driveway marketplace", () => {
+  it("treats repeated cancellation as the same release", async () => {
+    const { api, d } = await freshDriveway();
+    const booking = await api.holdDriveway(d.id, d.version);
+
+    const released = await api.cancelHold(d.id, booking.id);
+    const repeated = await api.cancelHold(d.id, booking.id);
+
+    expect(repeated).toEqual(released);
+    expect(repeated.state).toBe("AVAILABLE");
+  });
+
   it("goes AVAILABLE -> HELD -> BOOKED and pays only once for repeated requests", async () => {
     const { api, d } = await freshDriveway();
     const booking = await api.holdDriveway(d.id, d.version);

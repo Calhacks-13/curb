@@ -50,6 +50,18 @@ describe("PaymentSheet", () => {
     expect(props.onTopUp).toHaveBeenCalled();
   });
 
+  it("keeps retry payment enabled after a failed attempt with a short balance", async () => {
+    const { props } = await renderSheet({
+      phase: "failed",
+      error: "Not enough USDC in the wallet.",
+      wallet: wallet("0.2"),
+    });
+
+    await fireEvent.press(screen.getByText("Retry payment"));
+
+    expect(props.onPay).toHaveBeenCalledTimes(1);
+  });
+
   it("walks the settlement steps while processing", async () => {
     await renderSheet({ phase: "processing", step: "signed" });
     await screen.findByText("Paying the owner");

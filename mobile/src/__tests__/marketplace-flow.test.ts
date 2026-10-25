@@ -13,6 +13,24 @@ async function currentDriveway(): Promise<Driveway> {
 }
 
 describe("driver driveway checkout", () => {
+  it("reports a successful cancellation so the reservation sheet can close", async () => {
+    const { result } = await renderHook(() => useDrivewayBooking());
+    const driveway = await currentDriveway();
+
+    await act(async () => {
+      await result.current.reserve(driveway);
+    });
+
+    let cancelled = false;
+    await act(async () => {
+      cancelled = await result.current.cancel(driveway);
+    });
+
+    expect(cancelled).toBe(true);
+    expect(result.current.checkout.phase).toBe("detail");
+    expect((await currentDriveway()).state).toBe("AVAILABLE");
+  });
+
   it("holds, fails without losing the hold, retries once, and confirms", async () => {
     const api = getApi();
     const onConfirmed = jest.fn();
