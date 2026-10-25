@@ -66,6 +66,13 @@ def make_vehicles():
     ]
 
 
+def make_vehicles_with_confidence(left: float, right: float):
+    return [
+        VehicleDetection(bbox=[500, 20, 700, 300], cls="truck", confidence=right),
+        VehicleDetection(bbox=[50, 30, 300, 350], cls="car", confidence=left),
+    ]
+
+
 async def submit(
     pipeline, vehicles=None, signs=None, width=1000, height=600,
     session_id="drive", heading=90.0,
@@ -204,6 +211,103 @@ async def test_confirmed_space_inherits_rules_from_previously_recorded_sign(
     assert result["confirmed_block"].sign_rules == recorded_rules
     assert spot.sign_rules == recorded_rules
     assert stored_spot["sign_rules"]["combined_summary"] == "Previously recorded rules"
+
+
+@pytest.mark.asyncio
+async def test_confirmed_and_refreshed_space_publish_measured_gap_evidence(
+    local_services, monkeypatch,
+):
+    from app.cv import tracker
+    from app.cv.pipeline import Pipeline
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    pipeline = Pipeline()
+
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
+        now[0] = stamp
+        opened = await submit(pipeline, make_vehicles_with_confidence(0.81, 0.93))
+    await flush_background_tasks()
+
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    assert opened["confirmed_block"].confidence == pytest.approx(0.768)
+    assert opened["confirmed_block"].detection_confidence == pytest.approx(0.81)
+    assert spot.confidence == pytest.approx(0.768)
+    assert spot.detection_confidence == pytest.approx(0.81)
+    assert cosmos._mem_spots[spot.id]["confidence"] == pytest.approx(0.768)
+    assert cosmos._mem_spots[spot.id]["detection_confidence"] == pytest.approx(0.81)
+    opened_event = next(
+        event for event in signalr.get_recent_events() if event["type"] == "space.opened"
+    )
+    assert opened_event["payload"]["base_confidence"] == pytest.approx(0.768)
+    assert opened_event["payload"]["detection_confidence"] == pytest.approx(0.81)
+
+    spot.last_seen_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=11)
+    now[0] = 105.0
+    await submit(pipeline, make_vehicles_with_confidence(0.95, 0.96))
+    await flush_background_tasks()
+
+    assert spot.confidence == pytest.approx(0.92)
+    assert spot.detection_confidence == pytest.approx(0.95)
+    assert cosmos._mem_spots[spot.id]["confidence"] == pytest.approx(0.92)
+    assert cosmos._mem_spots[spot.id]["detection_confidence"] == pytest.approx(0.95)
+    refreshed_event = next(
+        event for event in reversed(signalr.get_recent_events())
+        if event["type"] == "space.refreshed"
+    )
+    assert refreshed_event["payload"]["base_confidence"] == pytest.approx(0.92)
+    assert refreshed_event["payload"]["detection_confidence"] == pytest.approx(0.95)
+
+
+@pytest.mark.asyncio
+async def test_multiple_confirmed_gaps_publish_strongest_representative(
+    local_services, monkeypatch,
+):
+    from app.cv import tracker
+    from app.cv.pipeline import Pipeline
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(settings, "max_edge_gap_fraction", 0.5)
+    pipeline = Pipeline()
+    vehicles = [
+        VehicleDetection(bbox=[200, 20, 300, 300], cls="car", confidence=0.6),
+        VehicleDetection(bbox=[500, 20, 600, 300], cls="car", confidence=0.95),
+    ]
+
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
+        now[0] = stamp
+        result = await submit(pipeline, vehicles)
+    await flush_background_tasks()
+
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    assert result["confirmed_block"].gap_count == 3
+    assert result["confirmed_block"].detection_confidence == pytest.approx(0.95)
+    assert result["confirmed_block"].confidence == pytest.approx(0.88)
+    assert spot.detection_confidence == pytest.approx(0.95)
+    assert spot.confidence == pytest.approx(0.88)
+
+
+@pytest.mark.asyncio
+async def test_unscorable_confirmed_gap_publishes_no_opening(local_services, monkeypatch):
+    from app.cv import pipeline as module
+    from app.cv import tracker
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(module, "choose_gap_evidence", lambda gaps, tracks: None, raising=False)
+    pipeline = module.Pipeline()
+
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
+        now[0] = stamp
+        result = await submit(pipeline, make_vehicles())
+    await flush_background_tasks()
+
+    assert result["confirmed_block"] is None
+    assert pipeline.spots_in_memory == 0
+    assert cosmos._mem_spots == {}
+    assert cosmos._mem_blocks == {}
+    assert signalr.get_recent_events() == []
 
 
 @pytest.mark.asyncio
