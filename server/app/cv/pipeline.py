@@ -5,11 +5,14 @@ Orchestrates object tracker (IoU-based), gap tracker (track-pair confirmation),
 sign tracker (IoU + GPS accumulation),
 sign localizer (triangulation), and sign_reader (Claude Vision).
 
-Spot lifecycle: OPEN -> REFRESHED -> OCCUPIED (via gap disappearance)
+Spot lifecycle: OPEN -> REFRESHED; OCCUPIED needs observed vehicle evidence.
+Unseen spots age into EXPIRED without implying occupancy.
 """
 
 import asyncio
 import logging
+import json
+import hashlib
 import uuid
 from collections import deque
 from datetime import UTC, datetime
@@ -44,6 +47,8 @@ from app.cv.sign_localizer import (
     _haversine_m,
 )
 from app.azure import cosmos, signalr
+from app.domain.scan_state import persist_spot, utc_iso
+from app.domain.sign_rules import assess_reading, has_curb_evidence, merge_curb_readings, reading_identity, rule_text, evaluate_rule_text
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,7 @@ class SignDeduplicator:
         lng: float,
         radius_m: float | None = None,
         road_segment_id: str | None = None,
+        reading: SignPoleReading | None = None,
     ) -> SignDocument | None:
         if radius_m is None:
             radius_m = settings.sign_dedup_radius_m
@@ -80,7 +86,7 @@ class SignDeduplicator:
                 if doc is not None and (
                     target_direction is None
                     or doc.road_segment_id.rsplit(",", 1)[-1] == target_direction
-                ):
+                ) and (reading is None or reading_identity(doc.pole_reading) == reading_identity(reading)):
                     return doc
 
         # Fall back to Cosmos
@@ -92,11 +98,14 @@ class SignDeduplicator:
             ):
                 continue
             if "pole_reading" in document:
-                return SignDocument(**document)
+                candidate = SignDocument(**document)
+                if reading is None or reading_identity(candidate.pole_reading) == reading_identity(reading):
+                    return candidate
 
         return None
 
     def register(self, sign_doc: SignDocument) -> None:
+        self._positions = [position for position in self._positions if position[2] != sign_doc.id]
         self._cache[sign_doc.id] = sign_doc
         self._positions.append((sign_doc.lat, sign_doc.lng, sign_doc.id))
 
@@ -133,7 +142,7 @@ class SignDeduplicator:
             if not reading_data:
                 continue
             reading = SignPoleReading.model_validate(reading_data)
-            if reading.sign_category in ("garage", "lot"):
+            if not has_curb_evidence(reading):
                 continue
             document_lat = document.get("lat", 0.0)
             document_lng = document.get("lng", 0.0)
@@ -154,6 +163,29 @@ class SpotManager:
     def __init__(self):
         # segment_id -> SpotDocument (only OPEN spots)
         self._spots: dict[str, SpotDocument] = {}
+        self._known_spots: dict[str, SpotDocument] = {}
+        self.repository = None
+        self.transitions: deque[dict] = deque(maxlen=500)
+        self._rule_states: dict[str, str] = {}
+
+    def record(self, event: str, reason: str, spot: SpotDocument | None = None, **details):
+        entry = {"occurred_at": datetime.now(UTC).isoformat(), "event": event, "reason": reason, **details}
+        if spot is not None:
+            entry.update(spot_id=spot.id, segment_id=spot.segment_id, status=spot.status, version=spot.version)
+        self.transitions.append(entry)
+        logging.getLogger("uvicorn.error.curb.lifecycle").info("cv_transition %s", json.dumps(entry))
+
+    async def _persist(self, spot, now: datetime | None = None):
+        await cosmos.upsert_spot(spot)
+        if self.repository is not None:
+            await persist_spot(self.repository, spot, now)
+        self._rule_states[spot.id] = evaluate_rule_text(rule_text(spot.sign_rules), now)[0]
+        self._known_spots[spot.segment_id] = spot
+        # Persisted identities can be recovered after evicting old inactive records.
+        if len(self._known_spots) > 1000:
+            retired = next((key for key in self._known_spots if key not in self._spots), None)
+            if retired is not None:
+                self._known_spots.pop(retired)
 
     @property
     def spot_count(self) -> int:
@@ -174,8 +206,14 @@ class SpotManager:
     ) -> SpotDocument:
         """Create a new OPEN spot and broadcast space.opened + sign_rule.updated."""
         now = datetime.utcnow()
+        previous = self._known_spots.get(segment_id)
+        if previous is None:
+            stored = await cosmos.get_spot_by_segment(segment_id)
+            if stored is not None:
+                previous = SpotDocument.model_validate(stored)
+        is_seed = is_seed or bool(previous and previous.is_seed)
         spot = SpotDocument(
-            id=f"spot_{uuid.uuid4()}",
+            id=previous.id if previous else f"spot_{uuid.uuid5(uuid.NAMESPACE_URL, 'curb:space:' + segment_id)}",
             segment_id=segment_id,
             status="open",
             gap_count=1,
@@ -187,13 +225,14 @@ class SpotManager:
             sign_rules=sign_rules,
             opened_at=now,
             last_seen_at=now,
-            version=1,
+            version=previous.version + 1 if previous else 1,
             ttl=-1 if is_seed else settings.default_ttl_sec,
             source_session_id=session_id,
             is_seed=is_seed,
+            last_transition_reason="gap_reobserved" if previous else "gap_confirmed",
         )
         self._spots[segment_id] = spot
-        asyncio.create_task(_safe(cosmos.upsert_spot(spot)))
+        await self._persist(spot)
         asyncio.create_task(_safe(signalr.broadcast_realtime_event(
             event_type="space.opened",
             entity_id=spot.id,
@@ -202,14 +241,16 @@ class SpotManager:
         )))
 
         # Broadcast zone so mobile has legal_status context for the new spot
-        zone_payload = _zone_payload(segment_id, lat, lng, sign_rules)
+        zone_payload = _zone_payload(segment_id, lat, lng, sign_rules, version=spot.version)
         asyncio.create_task(_safe(signalr.broadcast_realtime_event(
             event_type="sign_rule.updated",
             entity_id=segment_id,
             payload=zone_payload,
+            entity_version=spot.version,
         )))
 
         logger.info("Spot OPENED %s at (%.5f, %.5f) segment=%s", spot.id, lat, lng, segment_id)
+        self.record("space.opened", spot.last_transition_reason, spot, session_id=session_id)
         return spot
 
     async def refresh_spot(
@@ -220,10 +261,11 @@ class SpotManager:
         """Re-sighting of an existing OPEN spot — bump version, reset freshness."""
         spot.last_seen_at = datetime.utcnow()
         spot.version += 1
+        spot.last_transition_reason = "gap_reobserved"
         if sign_rules is not None:
             spot.sign_rules = sign_rules
         self._spots[spot.segment_id] = spot
-        asyncio.create_task(_safe(cosmos.upsert_spot(spot)))
+        await self._persist(spot)
         asyncio.create_task(_safe(signalr.broadcast_realtime_event(
             event_type="space.refreshed",
             entity_id=spot.id,
@@ -234,12 +276,14 @@ class SpotManager:
             asyncio.create_task(_safe(signalr.broadcast_realtime_event(
                 event_type="sign_rule.updated",
                 entity_id=spot.segment_id,
-                payload=_zone_payload(spot.segment_id, spot.lat, spot.lng, sign_rules),
+                payload=_zone_payload(spot.segment_id, spot.lat, spot.lng, sign_rules, version=spot.version),
+                entity_version=spot.version,
             )))
         logger.debug("Spot REFRESHED %s v=%d", spot.id, spot.version)
+        self.record("space.refreshed", spot.last_transition_reason, spot)
 
-    async def occupy_spot(self, segment_id: str) -> None:
-        """Gap disappeared — mark spot as occupied and broadcast."""
+    async def occupy_spot(self, segment_id: str, *, reason: str = "vehicle_observed") -> None:
+        """Only positive repeated vehicle evidence can mark a spot occupied."""
         spot = self._spots.get(segment_id)
         if spot is None:
             return
@@ -251,7 +295,8 @@ class SpotManager:
         spot.occupied_at = datetime.utcnow()
         spot.version += 1
         spot.ttl = 300  # short TTL for occupied spots
-        asyncio.create_task(_safe(cosmos.upsert_spot(spot)))
+        spot.last_transition_reason = reason
+        await self._persist(spot)
         asyncio.create_task(_safe(signalr.broadcast_realtime_event(
             event_type="space.occupied",
             entity_id=spot.id,
@@ -259,6 +304,45 @@ class SpotManager:
             entity_version=spot.version,
         )))
         logger.info("Spot OCCUPIED %s v=%d", spot.id, spot.version)
+        self.record("space.occupied", reason, spot)
+
+    async def update_rules(self, spot: SpotDocument, reading: SignPoleReading, *, reason="validated_sign_rule_updated", now=None):
+        spot.sign_rules = reading.model_copy(deep=True)
+        spot.version += 1
+        spot.last_transition_reason = reason
+        await self._persist(spot, now)
+        asyncio.create_task(_safe(signalr.broadcast_realtime_event(
+            "space.refreshed", spot.id, _spot_payload(spot), spot.version,
+        )))
+        asyncio.create_task(_safe(signalr.broadcast_realtime_event(
+            "sign_rule.updated", spot.segment_id,
+            _zone_payload(spot.segment_id, spot.lat, spot.lng, reading, version=spot.version, now=now), spot.version,
+        )))
+        self.record("sign_rule.updated", spot.last_transition_reason, spot)
+
+    async def refresh_rule_times(self, now: datetime | None = None):
+        for spot in list(self._spots.values()):
+            status, _ = evaluate_rule_text(rule_text(spot.sign_rules), now)
+            if spot.sign_rules is not None and status != self._rule_states.get(spot.id, status):
+                await self.update_rules(spot, spot.sign_rules, reason="rule_time_window_changed", now=now)
+
+    async def expire_stale(self, now: datetime | None = None):
+        now = now or datetime.utcnow()
+        if now.tzinfo is not None:
+            now = now.astimezone(UTC).replace(tzinfo=None)
+        for segment_id, spot in list(self._spots.items()):
+            observed = spot.last_seen_at.replace(tzinfo=None)
+            if spot.is_seed or (now - observed).total_seconds() <= settings.spot_freshness_sec:
+                continue
+            self._spots.pop(segment_id)
+            spot.status = "expired"
+            spot.version += 1
+            spot.last_transition_reason = "freshness_expired"
+            await self._persist(spot)
+            asyncio.create_task(_safe(signalr.broadcast_realtime_event(
+                "space.expired", spot.id, _spot_payload(spot), spot.version,
+            )))
+            self.record("space.expired", "freshness_expired", spot)
 
 
 def _spot_payload(spot: SpotDocument) -> dict:
@@ -279,14 +363,14 @@ def _spot_payload(spot: SpotDocument) -> dict:
             [lng - d, lat - d],
         ]],
     }
-    state = spot.status.upper()  # "open" -> "OPEN", "occupied" -> "OCCUPIED"
+    state = "UNKNOWN" if spot.status == "expired" else spot.status.upper()
     return {
         "id": spot.id,
         "zone_id": spot.segment_id,
         "location": spot.location or {"type": "Point", "coordinates": [lng, lat]},
         "stall_geometry": stall,
         "internal_state": state,
-        "last_observed_at": spot.last_seen_at.isoformat() if spot.last_seen_at else None,
+        "last_observed_at": utc_iso(spot.last_seen_at),
         "base_confidence": spot.confidence,
         "version": spot.version,
         "segment_id": spot.segment_id,
@@ -295,31 +379,28 @@ def _spot_payload(spot: SpotDocument) -> dict:
         "lat": lat,
         "lng": lng,
         "width_meters": spot.width_meters,
-        "opened_at": spot.opened_at.isoformat() if spot.opened_at else None,
-        "last_seen_at": spot.last_seen_at.isoformat() if spot.last_seen_at else None,
-        "occupied_at": spot.occupied_at.isoformat() if spot.occupied_at else None,
+        "opened_at": utc_iso(spot.opened_at),
+        "last_seen_at": utc_iso(spot.last_seen_at),
+        "occupied_at": utc_iso(spot.occupied_at),
     }
 
 
-def _zone_payload(segment_id: str, lat: float, lng: float, sign_rules: SignPoleReading | None) -> dict:
+def _zone_payload(segment_id: str, lat: float, lng: float, sign_rules: SignPoleReading | None, *, version: int = 1, now: datetime | None = None) -> dict:
     """Build a CurbZone-compatible dict for Web PubSub broadcast."""
     d = 0.00005  # ~5m LineString
     geometry = {
         "type": "LineString",
         "coordinates": [[lng - d, lat], [lng + d, lat]],
     }
-    sign_rule_id = segment_id
-    legal_status = "LEGAL"
-    if sign_rules and sign_rules.combined_summary:
-        s = sign_rules.combined_summary.lower()
-        if "no parking" in s or "no stopping" in s:
-            legal_status = "ILLEGAL"
+    sign_rule_id = f"scan-rule:{segment_id}"
+    legal_status, next_change = evaluate_rule_text(rule_text(sign_rules), now)
     return {
         "id": segment_id,
         "geometry": geometry,
         "sign_rule_id": sign_rule_id,
         "legal_status_now": legal_status,
-        "version": 1,
+        "next_change_at": utc_iso(next_change),
+        "version": version,
     }
 
 
@@ -344,6 +425,8 @@ class Pipeline:
         self._spot_mgr = SpotManager()
         self._sessions: dict[str, SessionState] = {}
         self.recent_blocks: deque[dict] = deque(maxlen=50)
+        self._reading_cache: dict[tuple[str, str], SignPoleReading] = {}
+        self._lock = asyncio.Lock()
         self.mapping_mode: bool = False  # when True, spots are saved as permanent seed
 
     @property
@@ -356,9 +439,41 @@ class Pipeline:
         return self._sessions[session_id]
 
     def cleanup_session(self, session_id: str):
-        self._sessions.pop(session_id, None)
+        state = self._sessions.pop(session_id, None)
+        if state is not None:
+            for gap in state.gap_tracker.invalidate("session_ended"):
+                self._record_gap_loss(session_id, state, gap)
 
-    async def process_detections(
+    def set_repository(self, repository):
+        self._spot_mgr.repository = repository
+
+    def _record_gap_loss(self, session_id, state, gap):
+        segment_id = state.confirmed_gap_segments.pop(gap.gap_key, None)
+        spot = self._spot_mgr.find_by_segment(segment_id) if segment_id else None
+        self._spot_mgr.record(
+            "gap.lost", gap.loss_reason or "observation_timeout", spot,
+            session_id=session_id, gap_key=list(gap.gap_key),
+            blocker_id=gap.blocker_id, evidence_hits=gap.blocked_hits,
+            evidence_duration_sec=(gap.blocked_last_seen - gap.blocked_since)
+            if gap.blocked_last_seen is not None and gap.blocked_since is not None else 0,
+        )
+        return segment_id
+
+    async def maintain(self, now: datetime | None = None):
+        async with self._lock:
+            for session_id, state in self._sessions.items():
+                for gap in state.gap_tracker.expire():
+                    self._record_gap_loss(session_id, state, gap)
+            await self._spot_mgr.expire_stale(now)
+            await self._spot_mgr.refresh_rule_times(now)
+
+    async def process_detections(self, *args, **kwargs):
+        # Sign reading and persistence await I/O; serialize lifecycle mutations
+        # across phones and the maintenance task to preserve event versions.
+        async with self._lock:
+            return await self._process_detections(*args, **kwargs)
+
+    async def _process_detections(
         self,
         vehicles: list[VehicleDetection],
         signs: list[SignDetection],
@@ -375,6 +490,18 @@ class Pipeline:
         """
         session = self._get_session(session_id)
         received_at = datetime.now(UTC).isoformat()
+        await self._spot_mgr.expire_stale()
+        feedback_spot = None
+        viewpoint_losses = []
+        previous = session.last_submission
+        if previous is not None:
+            heading_change = abs((heading - previous["heading"] + 180) % 360 - 180)
+            moved = _haversine_m(lat, lng, previous["lat"], previous["lng"])
+            changed_size = (frame_width, frame_height) != (previous["frame_width"], previous["frame_height"])
+            if changed_size or heading_change > settings.occupancy_max_heading_change or moved > settings.occupancy_max_motion_m:
+                viewpoint_losses = session.gap_tracker.invalidate("camera_view_changed")
+                session.vehicle_tracker.reset()
+
         sorted_vehicles = sorted(vehicles, key=lambda vehicle: vehicle.bbox[0])
         gap_bboxes = list(gap_candidates(
             [(index, vehicle.bbox) for index, vehicle in enumerate(sorted_vehicles, start=1)],
@@ -454,6 +581,7 @@ class Pipeline:
             current_tracks=current_tracks,
         )
 
+        expired_confirmed = viewpoint_losses + expired_confirmed
         confirmed_keys = session.gap_tracker._confirmed
         for gap in all_gaps:
             median_w = gap.median_width_meters
@@ -468,11 +596,16 @@ class Pipeline:
 
         # Remove expired support now, but decide occupancy only after registering
         # this submission's new confirmations for the same segment.
-        expired_segments = set()
+        occupied_segments = set()
         for gap in expired_confirmed:
-            seg_id = session.confirmed_gap_segments.pop(gap.gap_key, None)
-            if seg_id:
-                expired_segments.add(seg_id)
+            seg_id = self._record_gap_loss(session_id, session, gap)
+            if seg_id and gap.loss_reason == "vehicle_observed":
+                occupied_segments.add(seg_id)
+        for gap in all_gaps:
+            if gap.blocked_hits == 1:
+                seg_id = session.confirmed_gap_segments.get(gap.gap_key)
+                self._spot_mgr.record("occupancy.pending", "vehicle_in_gap", self._spot_mgr.find_by_segment(seg_id),
+                                      session_id=session_id, gap_key=list(gap.gap_key), blocker_id=gap.blocker_id)
 
         # --- Confirmation: new gaps → open or refresh ---
         if newly_confirmed:
@@ -481,7 +614,7 @@ class Pipeline:
             current_rules = sign_pole_reading
             sign_rules = (
                 current_rules
-                if current_rules and current_rules.sign_category not in ("garage", "lot")
+                if has_curb_evidence(current_rules)
                 else None
             )
             if sign_rules is None:
@@ -491,10 +624,11 @@ class Pipeline:
 
             existing_spot = self._spot_mgr.find_by_segment(segment_id)
             if existing_spot is not None:
-                asyncio.create_task(_safe(self._spot_mgr.refresh_spot(existing_spot, sign_rules)))
+                await self._spot_mgr.refresh_spot(existing_spot, sign_rules)
+                feedback_spot = existing_spot
             else:
                 best_gap = max(newly_confirmed, key=lambda g: g.duration)
-                await self._spot_mgr.open_spot(
+                feedback_spot = await self._spot_mgr.open_spot(
                     segment_id=segment_id,
                     lat=lat,
                     lng=lng,
@@ -524,12 +658,13 @@ class Pipeline:
         elif scene_valid:
             # Re-sighting of existing confirmed gaps (still visible).
             for gap in all_gaps:
-                if gap.gap_key in confirmed_keys:
+                if gap.visible and gap.gap_key in confirmed_keys:
                     seg_id = session.confirmed_gap_segments.get(gap.gap_key)
                     if seg_id:
                         existing = self._spot_mgr.find_by_segment(seg_id)
                         if existing and (datetime.utcnow() - existing.last_seen_at).total_seconds() > 10:
-                            asyncio.create_task(_safe(self._spot_mgr.refresh_spot(existing)))
+                            await self._spot_mgr.refresh_spot(existing)
+                            feedback_spot = existing
 
             pipeline_state = session.gap_tracker.get_state_string()
             if not pipeline_state or pipeline_state == "no gaps":
@@ -538,22 +673,25 @@ class Pipeline:
 
         # A stopped camera may never submit again. Enforce every session's gap
         # timeout before its mapping can count as support for a shared spot.
-        for state in self._sessions.values():
+        for other_session_id, state in self._sessions.items():
             for gap in state.gap_tracker.expire():
-                segment_id = state.confirmed_gap_segments.pop(gap.gap_key, None)
-                if segment_id:
-                    expired_segments.add(segment_id)
+                self._record_gap_loss(other_session_id, state, gap)
 
         supported_segments = {
             segment for state in self._sessions.values()
-            for segment in state.confirmed_gap_segments.values()
+            for key, segment in state.confirmed_gap_segments.items()
+            if (gap := state.gap_tracker._gaps.get(key)) is not None and gap.visible
         }
-        for segment_id in expired_segments - supported_segments:
+        for segment_id in occupied_segments - supported_segments:
             await self._spot_mgr.occupy_spot(segment_id)
+        for segment_id in occupied_segments & supported_segments:
+            self._spot_mgr.record("occupancy.suppressed", "open_observation_from_another_gap",
+                                  self._spot_mgr.find_by_segment(segment_id))
 
         previous_empty = (session.last_submission or {}).get("consecutive_empty_submissions", 0)
         session.last_submission = {
             "received_at": received_at,
+            "lat": lat, "lng": lng, "heading": heading,
             "frame_width": frame_width,
             "frame_height": frame_height,
             "vehicle_count": len(vehicles),
@@ -597,116 +735,89 @@ class Pipeline:
         return {
             "frame_result": frame_result,
             "confirmed_block": confirmed,
+            "confirmed_spot": feedback_spot.model_copy(deep=True) if feedback_spot else None,
         }
 
     async def _process_sign_tracks(
-        self,
-        ready_tracks: list[SignTrack],
-        heading: float,
+        self, ready_tracks: list[SignTrack], heading: float,
     ) -> SignPoleReading | None:
-        """
-        Triangulate, deduplicate, group into poles, call Claude Vision if needed.
-        Returns the SignPoleReading for the most relevant pole, or None.
-        """
-        result: SignPoleReading | None = None
-
-        poles = group_signs_into_poles(ready_tracks)
-
-        for pole_tracks in poles:
-            for t in pole_tracks:
-                t.read_requested = True
-
-            # Triangulate using the track with the most GPS observations
-            best_track = max(pole_tracks, key=lambda t: len(t.gps_observations))
-            observations = [
-                {
-                    "lat": obs.lat,
-                    "lng": obs.lng,
-                    "bearing_deg": estimate_sign_bearing(
-                        obs.heading, obs.bbox_center_x, obs.frame_w
-                    ),
-                }
-                for obs in best_track.gps_observations
-            ]
-
+        # Bound external reading work per submission. Each individual sign crop
+        # is read: selecting only the highest-confidence crop discarded the
+        # parking sign when a street-name plate shared the same pole.
+        selected = sorted(ready_tracks, key=lambda track: track.best_crop_area, reverse=True)[:2]
+        result = None
+        for pole_tracks in group_signs_into_poles(selected):
+            best_track = max(pole_tracks, key=lambda track: len(track.gps_observations))
+            observations = [{
+                "lat": obs.lat, "lng": obs.lng,
+                "bearing_deg": estimate_sign_bearing(obs.heading, obs.bbox_center_x, obs.frame_w),
+            } for obs in best_track.gps_observations]
             est_lat, est_lng, uncertainty = triangulate_sign(observations)
             road_seg_id = make_road_segment_id(est_lat, est_lng, heading)
 
-            # Dedup check
+            async def read_track(track):
+                track.read_requested = True
+                track.read_attempts += 1
+                track.read_confidence = track.best_crop_confidence
+                track.read_area = track.best_crop_area
+                track.read_hits = track.hits
+                key = (hashlib.sha256(track.best_crop_bytes).hexdigest(), road_seg_id.rsplit(",", 1)[-1])
+                reading = self._reading_cache.get(key)
+                if reading is None:
+                    reading = assess_reading(await read_sign_pole(track.best_crop_bytes))
+                    if not reading.flagged:
+                        self._reading_cache[key] = reading.model_copy(deep=True)
+                        if len(self._reading_cache) > 256:
+                            self._reading_cache.pop(next(iter(self._reading_cache)))
+                track.read_result = reading.model_copy(deep=True)
+                return reading
+
+            readings = await asyncio.gather(*(read_track(track) for track in pole_tracks))
+            parking = merge_curb_readings(readings)
+            pole_reading = parking or readings[0]
+            if result is None or has_curb_evidence(pole_reading) and not has_curb_evidence(result):
+                result = pole_reading
+            if parking is None and pole_reading.sign_category not in ("garage", "lot"):
+                self._spot_mgr.record("sign.rejected", "not_a_validated_curb_rule", category=pole_reading.sign_category,
+                                      summary=pole_reading.combined_summary, score=pole_reading.confidence_score)
+                continue
+
+            # Location alone cannot identify a sign: two different plates on
+            # the same pole may have entirely different meanings.
             existing = await self._sign_dedup.find_existing(
-                est_lat, est_lng, road_segment_id=road_seg_id,
+                est_lat, est_lng, road_segment_id=road_seg_id, reading=pole_reading,
             )
-            if existing is not None:
-                pole_reading = existing.pole_reading
-                if pole_reading is None:
-                    # Cosmos doc existed but had no reading — treat as new
-                    pass
-                else:
-                    for t in pole_tracks:
-                        t.read_result = pole_reading
-                    existing.last_confirmed = datetime.utcnow()
-                    asyncio.create_task(_safe(cosmos.upsert_sign_document(existing)))
-                    logger.info("Sign dedup hit at (%.5f, %.5f), reusing %s", est_lat, est_lng, existing.id)
-                    if result is None:
-                        result = pole_reading
-                    continue
-
-            # No existing sign — call Claude Vision once for the whole pole
-            best_crop_track = max(pole_tracks, key=lambda t: t.best_crop_confidence)
-            pole_reading = await read_sign_pole(best_crop_track.best_crop_bytes)
-
-            for t in pole_tracks:
-                t.read_result = pole_reading
-
-            sign_doc = SignDocument(
-                id=str(uuid.uuid4()),
-                road_segment_id=road_seg_id,
+            now = datetime.utcnow()
+            sign_doc = existing or SignDocument(
+                id=str(uuid.uuid4()), road_segment_id=road_seg_id,
                 location={"type": "Point", "coordinates": [est_lng, est_lat]},
-                lat=est_lat,
-                lng=est_lng,
-                uncertainty_m=uncertainty,
-                pole_reading=pole_reading,
+                lat=est_lat, lng=est_lng, uncertainty_m=uncertainty, pole_reading=pole_reading,
             )
+            sign_doc.pole_reading = pole_reading
+            sign_doc.last_confirmed = now
             self._sign_dedup.register(sign_doc)
-            asyncio.create_task(_safe(cosmos.upsert_sign_document(sign_doc)))
-
-            # Broadcast: street signs update zones, garage signs are POIs
-            if pole_reading.sign_category in ("garage", "lot"):
+            await cosmos.upsert_sign_document(sign_doc)
+            self._spot_mgr.record("sign.read", "curb_rule_validated" if parking else "parking_poi", sign_id=sign_doc.id,
+                                  summary=pole_reading.combined_summary, score=pole_reading.confidence_score)
+            if parking is not None:
+                # Correct already-open spots without pretending the gap was
+                # reobserved. Rule updates must not extend availability freshness.
+                for spot in list(self._spot_mgr._spots.values()):
+                    resolved = await self._sign_dedup.find_rules_for_segment(spot.segment_id, spot.lat, spot.lng)
+                    if resolved is not None and resolved != spot.sign_rules:
+                        await self._spot_mgr.update_rules(spot, resolved)
                 asyncio.create_task(_safe(signalr.broadcast_realtime_event(
-                    event_type="garage.detected",
-                    entity_id=sign_doc.id,
-                    payload={
-                        "id": sign_doc.id,
-                        "location": sign_doc.location,
-                        "lat": est_lat,
-                        "lng": est_lng,
-                        "name": pole_reading.garage_name,
-                        "summary": pole_reading.combined_summary,
-                        "price": pole_reading.combined_price,
-                        "arrow_direction": pole_reading.arrow_direction,
-                        "sign_category": pole_reading.sign_category,
-                        "version": 1,
-                    },
+                    "sign_rule.updated", road_seg_id, _zone_payload(road_seg_id, est_lat, est_lng, parking),
                 )))
-                logger.info(
-                    "GARAGE sign at (%.5f, %.5f) — %s, arrow=%s, segment=%s",
-                    est_lat, est_lng, pole_reading.garage_name or pole_reading.combined_summary,
-                    pole_reading.arrow_direction, road_seg_id,
-                )
             else:
                 asyncio.create_task(_safe(signalr.broadcast_realtime_event(
-                    event_type="sign_rule.updated",
-                    entity_id=road_seg_id,
-                    payload=_zone_payload(road_seg_id, est_lat, est_lng, pole_reading),
+                    "garage.detected", sign_doc.id, {
+                        "id": sign_doc.id, "location": sign_doc.location, "lat": sign_doc.lat, "lng": sign_doc.lng,
+                        "name": pole_reading.garage_name, "summary": pole_reading.combined_summary,
+                        "price": pole_reading.combined_price, "arrow_direction": pole_reading.arrow_direction,
+                        "sign_category": pole_reading.sign_category, "version": 1,
+                    },
                 )))
-                logger.info(
-                    "STREET sign at (%.5f, %.5f) uncertainty=%.1fm, %d signs on pole, segment=%s",
-                    est_lat, est_lng, uncertainty, len(pole_reading.signs), road_seg_id,
-                )
-
-            if result is None:
-                result = pole_reading
-
         return result
 
 

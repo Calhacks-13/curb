@@ -62,3 +62,12 @@ describe("spot detail rule card", () => {
     expect(screen.queryByText("No sign read for this curb yet")).toBeNull();
   });
 });
+
+
+it("shows the calendar date of a future restriction instead of a bare clock", async () => {
+  await renderSheet({ ...blankRule, summary: "Street cleaning on the third Tuesday, 11 AM–1 PM",
+    next_change_at: "2026-11-17T19:00:00Z" });
+  expect(screen.getByText("Next rule change")).toBeTruthy();
+  expect(screen.getByText("Tue, Nov 17, 2026 at 11 AM PT")).toBeTruthy();
+  expect(screen.queryByText("Changes")).toBeNull();
+});

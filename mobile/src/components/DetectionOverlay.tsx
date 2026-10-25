@@ -3,62 +3,54 @@ import type { LayoutChangeEvent, ViewStyle } from "react-native";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { DetectionBox, FrameAccepted, OnDeviceInference } from "@/api/types";
-import { font, ink } from "@/config/tokens";
+import { font } from "@/config/tokens";
+import { vision } from "@/config/vision";
 import type { DeepReadonly } from "@/features/capture/DetectionUploadController";
 
 type Size = { width: number; height: number };
-
 type Props = {
   result: OnDeviceInference | null;
   analysis?: DeepReadonly<FrameAccepted> | null;
+  compact?: boolean;
+  showSummary?: boolean;
+  showGaps?: boolean;
+  showLabels?: boolean;
 };
 
-function projectCoverBox(box: Readonly<DetectionBox>, frame: Size, viewport: Size): ViewStyle | null {
+export function projectCoverBox(box: Readonly<DetectionBox>, frame: Size, viewport: Size): ViewStyle | null {
   if (frame.width <= 0 || frame.height <= 0 || viewport.width <= 0 || viewport.height <= 0) return null;
   const scale = Math.max(viewport.width / frame.width, viewport.height / frame.height);
   const offsetX = (viewport.width - frame.width * scale) / 2;
   const offsetY = (viewport.height - frame.height * scale) / 2;
   const [x1, y1, x2, y2] = box;
-  const projected = {
-    left: x1 * scale + offsetX,
-    top: y1 * scale + offsetY,
-    width: (x2 - x1) * scale,
-    height: (y2 - y1) * scale,
-  };
-  return Object.values(projected).every(Number.isFinite) && projected.width > 0 && projected.height > 0
-    ? projected
-    : null;
+  const projected = { left: x1 * scale + offsetX, top: y1 * scale + offsetY,
+    width: (x2 - x1) * scale, height: (y2 - y1) * scale };
+  return Object.values(projected).every(Number.isFinite) && projected.width > 0 && projected.height > 0 ? projected : null;
 }
 
-function confidenceLabel(value: number) {
-  return `${Math.round(value * 100)}%`;
+function visibleArea(box: ViewStyle, viewport: Size) {
+  const left = Math.max(0, Number(box.left));
+  const top = Math.max(0, Number(box.top));
+  const width = Math.min(viewport.width, Number(box.left) + Number(box.width)) - left;
+  const height = Math.min(viewport.height, Number(box.top) + Number(box.height)) - top;
+  return { width, height, left: left - Number(box.left), top: top - Number(box.top) };
 }
 
-export function DetectionOverlay({ result, analysis }: Props) {
+/** Thin contours, distinct corner brackets, and labels anchored inside the visible image. */
+export function DetectionOverlay({ result, analysis, compact = false, showSummary = true, showGaps = true, showLabels = true }: Props) {
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
   const detections = useMemo(() => {
     if (!result) return [];
     const frame = { width: result.frameWidth, height: result.frameHeight };
     return [
-      ...result.vehicles.map((vehicle, index) => ({
-        key: `vehicle-${index}`,
-        label: vehicle.cls,
-        accessibilityLabel: `${vehicle.cls}, ${confidenceLabel(vehicle.confidence)} confidence`,
-        confidence: vehicle.confidence,
-        box: projectCoverBox(vehicle.bbox, frame, viewport),
-        tone: "vehicle" as const,
-      })),
-      ...result.signs.map((sign, index) => ({
-        key: `sign-${index}`,
-        label: "sign",
-        accessibilityLabel: `parking sign, ${confidenceLabel(sign.confidence)} confidence`,
-        confidence: sign.confidence,
-        box: projectCoverBox(sign.bbox, frame, viewport),
-        tone: "sign" as const,
-      })),
+      ...result.vehicles.map((vehicle, index) => ({ key: `vehicle-${index}`, label: vehicle.cls,
+        accessibilityLabel: `${vehicle.cls}, ${Math.round(vehicle.confidence * 100)}% confidence`,
+        confidence: vehicle.confidence, box: projectCoverBox(vehicle.bbox, frame, viewport), color: vision.vehicle })),
+      ...result.signs.map((sign, index) => ({ key: `sign-${index}`, label: "sign",
+        accessibilityLabel: `parking sign, ${Math.round(sign.confidence * 100)}% confidence`,
+        confidence: sign.confidence, box: projectCoverBox(sign.bbox, frame, viewport), color: vision.sign })),
     ];
   }, [result, viewport]);
-
   const onLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setViewport((current) => current.width === width && current.height === height ? current : { width, height });
@@ -67,80 +59,77 @@ export function DetectionOverlay({ result, analysis }: Props) {
     const tracked = analysis.tracked_gaps?.find((gap) => gap.bbox.every((value, axis) => value === bbox[axis]));
     const state = tracked?.confirmed ? "Confirmed" : "Candidate";
     const size = tracked?.median_width_meters != null ? `${tracked.median_width_meters.toFixed(1)} m` : `${Math.round(bbox[2] - bbox[0])} px`;
-    return {
-      box: projectCoverBox(bbox, { width: analysis.frame_width!, height: analysis.frame_height! }, viewport),
+    return { box: projectCoverBox(bbox, { width: analysis.frame_width!, height: analysis.frame_height! }, viewport),
       label: `Gap ${index + 1} · ${state} · ${size}${tracked ? ` · ${tracked.duration.toFixed(1)}s` : ""}`,
-      confirmed: tracked?.confirmed,
-    };
+      state, confirmed: tracked?.confirmed };
   }) : [];
-  const vehicleCount = result?.vehicles.length ?? 0;
-  const signCount = result?.signs.length ?? 0;
-  const status = result == null
-    ? "Waiting for detections"
-    : vehicleCount + signCount === 0
-      ? "No detections"
-      : `${vehicleCount} vehicle${vehicleCount === 1 ? "" : "s"} · ${signCount} sign${signCount === 1 ? "" : "s"}`;
+  const count = (value: number, name: string) => `${value} ${name}${value === 1 ? "" : "s"}`;
+  const status = !result ? "Waiting for detections" : result.vehicles.length + result.signs.length === 0 ? "No detections"
+    : `${count(result.vehicles.length, "vehicle")} · ${count(result.signs.length, "sign")}`;
 
-  return (
-    <View pointerEvents="none" testID="detection-overlay" onLayout={onLayout} style={StyleSheet.absoluteFill}>
-      {gaps.map((gap, index) => gap.box && (
-        <View key={`gap-${index}`} accessible accessibilityLabel={gap.label} style={[
-          styles.box, styles.gapBox, gap.confirmed && styles.confirmedGap, gap.box,
-        ]}>
-          <Text style={[styles.label, styles.gapLabel]}>{gap.label}</Text>
-        </View>
-      ))}
-      {detections.map((detection) => detection.box && (
-        <View
-          key={detection.key}
-          accessible
-          accessibilityLabel={detection.accessibilityLabel}
-          style={[
-            styles.box,
-            detection.tone === "sign" ? styles.signBox : styles.vehicleBox,
-            detection.box,
-          ]}
-        >
-          <Text style={[styles.label, detection.tone === "sign" ? styles.signLabel : styles.vehicleLabel]}>
-            {detection.label} {confidenceLabel(detection.confidence)}
-          </Text>
-        </View>
-      ))}
-      <View style={styles.statusPill}>
-        <Text style={styles.statusText}>{status}</Text>
-      </View>
-    </View>
-  );
+  return <View pointerEvents="none" testID="detection-overlay" onLayout={onLayout} style={StyleSheet.absoluteFill}>
+    {showGaps && gaps.map((gap, index) => {
+      if (!gap.box) return null;
+      const area = visibleArea(gap.box, viewport);
+      if (area.width <= 0 || area.height <= 0) return null;
+      return <View key={`gap-${index}`} accessible accessibilityLabel={gap.label}
+        style={[styles.gapBox, gap.confirmed && styles.confirmedGap, gap.box]}>
+        {!compact && <View style={[styles.measurement, { top: area.top + area.height * 0.52, left: area.left + 3, width: Math.max(0, area.width - 6) }]}>
+          <View style={styles.measureCap} /><View style={styles.measureLine} /><View style={styles.measureCap} />
+        </View>}
+        {!compact && area.width >= 66 && <View style={[styles.gapLabel, { top: area.top + area.height * 0.42,
+          left: area.left + Math.max(4, (area.width - 144) / 2), maxWidth: Math.max(0, area.width - 8) }]}>
+          <View style={styles.labelRow}><View style={[styles.dot, { backgroundColor: vision.gap }]} />
+            <Text style={styles.gapTitle}>{`GAP ${String(index + 1).padStart(2, "0")}`}</Text></View>
+          <Text style={[styles.gapState, gap.confirmed && styles.confirmedText]}>{gap.state.toUpperCase()}</Text>
+        </View>}
+      </View>;
+    })}
+    {detections.map((detection) => {
+      if (!detection.box) return null;
+      const area = visibleArea(detection.box, viewport);
+      if (area.width <= 0 || area.height <= 0) return null;
+      const corner = Math.max(3, Math.min(compact ? 9 : 19, Number(detection.box.width) / 3, Number(detection.box.height) / 3));
+      return <View key={detection.key} accessible accessibilityLabel={detection.accessibilityLabel}
+        style={[styles.box, { borderColor: `${detection.color}55` }, detection.box]}>
+        {([styles.topLeft, styles.topRight, styles.bottomLeft, styles.bottomRight]).map((position, index) =>
+          <View key={index} style={[styles.corner, position, { borderColor: detection.color, width: corner, height: corner }]} />)}
+        {showLabels && !compact && area.width >= 48 && area.height >= 28 && <View style={[styles.objectLabel,
+          { left: area.left + 5, top: area.top + 5, maxWidth: area.width - 10 }]}>
+          <View style={[styles.dot, { backgroundColor: detection.color }]} />
+          <Text numberOfLines={1} style={styles.objectName}>{detection.label.toUpperCase()}</Text>
+          {area.width >= 100 && <Text style={[styles.confidence, { color: detection.color }]}>{Math.round(detection.confidence * 100)}%</Text>}
+        </View>}
+      </View>;
+    })}
+    {showSummary && !compact && <View style={styles.statusPill}><Text style={styles.statusText}>{status}</Text></View>}
+  </View>;
 }
 
 const styles = StyleSheet.create({
-  box: { position: "absolute", borderWidth: 2 },
-  gapBox: { borderColor: "#66CFFF", backgroundColor: "rgba(102,207,255,0.14)", borderStyle: "dashed" },
-  confirmedGap: { borderStyle: "solid", backgroundColor: "rgba(102,207,255,0.28)" },
-  gapLabel: { top: "30%", left: 0, backgroundColor: "#66CFFF" },
-  vehicleBox: { borderColor: "#35F28B" },
-  signBox: { borderColor: "#FFD166" },
-  label: {
-    position: "absolute",
-    left: -2,
-    top: -18,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    fontFamily: font.bold,
-    fontSize: 10,
-    color: ink.black,
-  },
-  vehicleLabel: { backgroundColor: "#35F28B" },
-  signLabel: { backgroundColor: "#FFD166" },
-  statusPill: {
-    position: "absolute",
-    right: 6,
-    bottom: 6,
-    maxWidth: "80%",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: "rgba(0,0,0,0.68)",
-  },
-  statusText: { fontFamily: font.semibold, fontSize: 9, color: ink.white },
+  box: { position: "absolute", borderWidth: 0.75, borderRadius: 9, backgroundColor: "rgba(194,239,206,0.025)" },
+  corner: { position: "absolute", borderColor: vision.vehicle },
+  topLeft: { top: -0.5, left: -0.5, borderTopWidth: 2, borderLeftWidth: 2, borderTopLeftRadius: 9 },
+  topRight: { top: -0.5, right: -0.5, borderTopWidth: 2, borderRightWidth: 2, borderTopRightRadius: 9 },
+  bottomLeft: { bottom: -0.5, left: -0.5, borderBottomWidth: 2, borderLeftWidth: 2, borderBottomLeftRadius: 9 },
+  bottomRight: { bottom: -0.5, right: -0.5, borderBottomWidth: 2, borderRightWidth: 2, borderBottomRightRadius: 9 },
+  objectLabel: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 5, minHeight: 23,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, backgroundColor: "rgba(8,22,19,0.88)", borderWidth: 0.5, borderColor: "rgba(255,255,255,0.13)" },
+  objectName: { fontFamily: font.bold, fontSize: 9, letterSpacing: 0.8, color: vision.text, flexShrink: 1 },
+  confidence: { fontFamily: font.semibold, fontSize: 9, fontVariant: ["tabular-nums"] },
+  dot: { width: 4, height: 4, borderRadius: 2 },
+  gapBox: { position: "absolute", borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(138,220,244,0.7)", borderStyle: "dashed",
+    backgroundImage: "linear-gradient(to bottom, rgba(138,220,244,0), rgba(138,220,244,0.10), rgba(138,220,244,0))" },
+  confirmedGap: { borderStyle: "solid", borderColor: vision.gap },
+  gapLabel: { position: "absolute", minWidth: 60, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10,
+    gap: 4, backgroundColor: "rgba(8,25,26,0.9)", borderWidth: 1, borderColor: "rgba(138,220,244,0.35)" },
+  labelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  gapTitle: { fontFamily: font.bold, fontSize: 10, letterSpacing: 1.1, color: vision.gap },
+  gapState: { fontFamily: font.semibold, fontSize: 8, letterSpacing: 0.8, color: vision.muted },
+  confirmedText: { color: "#E3F7FF" },
+  measurement: { position: "absolute", flexDirection: "row", alignItems: "center" },
+  measureLine: { flex: 1, height: 1, backgroundColor: "rgba(138,220,244,0.7)" },
+  measureCap: { width: 1, height: 9, backgroundColor: vision.gap },
+  statusPill: { position: "absolute", right: 8, bottom: 8, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: vision.surface },
+  statusText: { fontFamily: font.semibold, fontSize: 10, color: vision.text },
 });

@@ -53,7 +53,7 @@ class SignPoleReading(BaseModel):
     combined_price: str | None = None
     combined_restrictions: list[str] = []
     arrow_direction: str | None = None
-    sign_category: str = "street"  # street | garage | lot
+    sign_category: str = "street"  # street | garage | lot | informational | unreadable
     garage_name: str | None = None
     confidence_score: float = 0.0
     flagged: bool = False
@@ -156,3 +156,4 @@ class SpotDocument(BaseModel):
     ttl: int = 1800
     source_session_id: str = ""
     is_seed: bool = False  # permanent mapped spot, no freshness expiry
+    last_transition_reason: str = "gap_confirmed"

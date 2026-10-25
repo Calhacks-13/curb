@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     # Gap confirmation (track-based)
     gap_confirm_sec: float = 2.0  # seconds gap must persist to confirm
     gap_expire_sec: float = 1.5  # seconds without seeing gap before it expires
+    occupancy_confirm_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    occupancy_confirm_hits: int = Field(default=3, ge=2)
+    occupancy_anchor_iou: float = Field(default=0.8, gt=0, le=1, allow_inf_nan=False)
+    occupancy_blocker_iou: float = Field(default=0.8, gt=0, le=1, allow_inf_nan=False)
+    occupancy_gap_overlap: float = Field(default=0.6, gt=0, le=1, allow_inf_nan=False)
+    occupancy_min_confidence: float = Field(default=0.6, gt=0, le=1, allow_inf_nan=False)
+    occupancy_max_heading_change: float = Field(default=10.0, gt=0, le=180, allow_inf_nan=False)
+    occupancy_max_motion_m: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    spot_freshness_sec: int = Field(default=300, ge=1)
 
     # Sign confidence
     sign_read_confidence_threshold: float = 0.5

@@ -186,9 +186,9 @@ def test_confirmed_scan_is_saved_to_the_canonical_map_repository(seed):
     response = nearby(client, lat=scan.lat, lng=scan.lng)
     assert response.status_code == 200
     body = response.json()
-    assert [space["id"] for space in body["spaces"]] == [scan.segment_id]
-    assert body["spaces"][0]["location"]["coordinates"] == [scan.lng, scan.lat]
-    assert body["zones"][0]["current_rules"].startswith("Scanner-confirmed")
+    assert body["spaces"] == []  # Physical availability does not establish parking legality.
+    assert body["zones"][0]["legal_status_now"] == "UNKNOWN"
+    assert body["zones"][0]["current_rules"].startswith("No validated parking sign")
 
 
 def test_sessions_are_idempotent_validate_profiles_and_do_not_refresh_seed(seed):

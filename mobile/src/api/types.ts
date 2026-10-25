@@ -167,7 +167,8 @@ export type SignFeedback = {
   required_observations: number;
   state: "gathering" | "unavailable" | "uncertain" | "read";
   reading: {
-    signs: { raw_text: string }[];
+    signs: { raw_text: string; sign_type?: string }[];
+    sign_category?: string;
     combined_summary: string;
     combined_hours: string | null;
     combined_max_duration_min: number | null;

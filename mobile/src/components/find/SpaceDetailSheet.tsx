@@ -6,7 +6,7 @@ import { font, ink, radius, SEP } from "@/config/tokens";
 import { formatAgeShort } from "@/features/find/freshness";
 import { formatDistance, walkMinutes, type FindOption } from "@/features/find/options";
 import type { DetailLoad } from "@/features/find/useSpaceDetail";
-import { formatLaClockShort } from "@/lib/laTime";
+import { formatLaChange } from "@/lib/laTime";
 
 import { OptionChip } from "../OptionIcon";
 
@@ -56,8 +56,8 @@ function RuleCard({ detail }: { detail: SpaceDetail }) {
   const rows: [string, string][] = [];
   if (rule.max_minutes) rows.push(["Max stay", formatMinutes(rule.max_minutes)]);
   if (rule.next_change_at) {
-    const at = formatLaClockShort(rule.next_change_at);
-    rows.push(["Changes", rule.next_change_summary ? `${at}${SEP}${rule.next_change_summary}` : at]);
+    const at = formatLaChange(rule.next_change_at);
+    if (at) rows.push(["Next rule change", rule.next_change_summary ? `${at}${SEP}${rule.next_change_summary}` : at]);
   }
   if (rule.payment_text) rows.push(["Payment", rule.payment_text]);
   if (rule.permit_text) rows.push(["Permit", rule.permit_text]);

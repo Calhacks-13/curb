@@ -7,6 +7,8 @@ from fastapi import APIRouter, UploadFile, File, Query
 
 from app.cv.sign_localizer import make_road_segment_id, _haversine_m
 from app.azure import cosmos
+from app.domain.sign_rules import has_curb_evidence, rule_text, evaluate_rule_text
+from app.models.cv import SignPoleReading
 
 router = APIRouter(prefix="/signs", tags=["signs"])
 
@@ -31,6 +33,8 @@ async def signs_nearby(
                 parts = seg_id.split(",")
                 if len(parts) == 3 and parts[2] == driver_dir:
                     filtered.append(s)
+                    continue
+                if len(parts) == 3:
                     continue
             # Keep signs without road_segment_id (legacy)
             filtered.append(s)
@@ -61,15 +65,17 @@ async def rules_here(
 
     same_side = []
     for s in signs:
+        reading = SignPoleReading.model_validate(s.get("pole_reading") or {})
+        if not has_curb_evidence(reading):
+            continue
         seg_id = s.get("road_segment_id", "")
-        if seg_id:
-            parts = seg_id.split(",")
-            if len(parts) == 3 and parts[2] != driver_dir:
-                continue
+        parts = seg_id.split(",")
+        if len(parts) != 3 or parts[2] != driver_dir:
+            continue
         same_side.append(s)
 
     if not same_side:
-        same_side = signs  # Fall back to all if no directional match
+        return {"rules": None, "can_park_now": None, "signs_found": 0}
 
     # Sort by distance, take closest
     same_side.sort(
@@ -93,44 +99,10 @@ async def rules_here(
     }
 
 
-def _evaluate_parking_now(pole_reading: dict) -> bool | None:
-    """
-    Evaluate whether parking is allowed right now based on stored rules.
-    Returns True/False/None (None = can't determine).
-    """
-    if not pole_reading:
-        return None
-
-    signs = pole_reading.get("signs", [])
-    if not signs:
-        return None
-
-    now = datetime.now()
-    hour = now.hour
-    weekday = now.weekday()  # 0=Mon, 6=Sun
-
-    for sign in signs:
-        sign_type = sign.get("sign_type", "other")
-
-        # Definitive no-parking signs
-        if sign_type == "no_parking":
-            hours_str = sign.get("hours")
-            if hours_str is None:
-                return False  # No parking anytime
-            # If hours are specified, we'd need to parse them
-            # For now, flag it as restricted
-            return False
-
-        if sign_type == "street_cleaning":
-            # Street cleaning means no parking during those hours
-            return None  # Would need hour parsing
-
-    # If we only see parking/meter signs, parking is generally allowed
-    has_parking = any(s.get("sign_type") in ("parking", "meter", "time_limit") for s in signs)
-    if has_parking:
-        return True
-
-    return None
+def _evaluate_parking_now(pole_reading: dict, now: datetime | None = None) -> bool | None:
+    reading = SignPoleReading.model_validate(pole_reading or {})
+    status, _ = evaluate_rule_text(rule_text(reading), now)
+    return True if status == "LEGAL" else False if status == "ILLEGAL" else None
 
 
 @router.post("/read")

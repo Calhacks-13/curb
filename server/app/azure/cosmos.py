@@ -90,6 +90,21 @@ def get_spot_by_segment_mem(segment_id: str) -> dict | None:
     return None
 
 
+async def get_spot_by_segment(segment_id: str) -> dict | None:
+    """Recover the latest identity/version, including occupied or expired spots."""
+    if _use_memory:
+        docs = [doc for doc in _mem_spots.values() if doc.get("segment_id") == segment_id]
+        return max(docs, key=lambda doc: doc.get("last_seen_at", ""), default=None)
+    if _spots_container is None:
+        return None
+    query = "SELECT TOP 1 * FROM c WHERE c.segment_id = @segment ORDER BY c.last_seen_at DESC"
+    async for doc in _spots_container.query_items(
+        query, parameters=[{"name": "@segment", "value": segment_id}], partition_key=segment_id,
+    ):
+        return doc
+    return None
+
+
 async def query_spots_nearby(
     lat: float, lng: float, radius_m: float = 500
 ) -> list[dict]:

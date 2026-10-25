@@ -7,6 +7,7 @@ from app.models.domain import (
     DrivewayState, GeoPoint, NearbyParkingResponse, ParkingSpaceView, SpaceDetail,
 )
 from app.repositories.protocols import ParkingRepository
+from app.domain.sign_rules import evaluate_rule_text
 
 
 class ParkingService:
@@ -28,6 +29,12 @@ class ParkingService:
     ) -> NearbyParkingResponse:
         zones = [zone for zone in await self.repository.list_zones()
                  if distance_to_line_m(origin, zone.geometry) <= radius_m]
+        for index, zone in enumerate(zones):
+            if zone.sign_rule_id and zone.sign_rule_id.startswith("scan-rule:"):
+                rule = await self.repository.get_rule(zone.sign_rule_id)
+                if rule is not None:
+                    status, change = evaluate_rule_text(rule.evidence_text, now)
+                    zones[index] = zone.model_copy(update={"legal_status_now": status, "next_change_at": change})
         by_id = {zone.id: zone for zone in zones}
         spaces = []
         for space in await self.repository.list_spaces():
@@ -80,8 +87,11 @@ class ParkingService:
         rule = await self.repository.get_rule(zone.sign_rule_id) if zone and zone.sign_rule_id else None
         if rule is None or rule.zone_id != space.zone_id:
             return None
+        if rule.id.startswith("scan-rule:"):
+            _, change = evaluate_rule_text(rule.evidence_text, now)
+            zone = zone.model_copy(update={"next_change_at": change})
         return SpaceDetail(
             **self._space_view(space, now).model_dump(), sign_rule=rule,
-            current_rules=zone.current_rules, max_minutes=rule.max_minutes,
+            current_rules=(rule.evidence_text.splitlines()[0] if rule.id.startswith("scan-rule:") and rule.evidence_text else zone.current_rules), max_minutes=rule.max_minutes,
             next_change_at=zone.next_change_at,
         )

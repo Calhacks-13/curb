@@ -13,6 +13,7 @@ import hmac
 import base64
 import json
 import time
+import time
 import logging
 from collections import deque
 from datetime import datetime, timezone
@@ -30,7 +31,7 @@ _client: httpx.AsyncClient | None = None
 # In-memory event ring buffer — always populated regardless of Web PubSub.
 # Enables local-demo fallback: phones can poll /v1/realtime/events instead.
 _event_log: deque[dict] = deque(maxlen=500)
-_event_seq: int = 0
+_event_seq: int = time.time_ns() // 1000  # JS-safe, increasing across normal API restarts
 
 
 # ---------- shared ----------

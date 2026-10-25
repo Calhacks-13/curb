@@ -1,0 +1,11 @@
+{
+  "platforms": [
+    "apple"
+  ],
+  "apple": {
+    "modules": [
+      "CurbGhostModule"
+    ],
+    "podspecPath": "CurbGhost.podspec"
+  }
+}

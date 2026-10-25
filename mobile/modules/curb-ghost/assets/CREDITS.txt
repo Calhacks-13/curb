@@ -1,0 +1,6 @@
+Car Concept — Eric Chadwick / Darmstadt Graphics Group GmbH, 2024.
+https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept
+Licensed under Creative Commons Attribution 4.0 International.
+https://creativecommons.org/licenses/by/4.0/
+Adapted for Curb: exterior geometry only, original textures and logos removed,
+custom translucent materials, normalized scene. Original vehicle by Unity Fan.

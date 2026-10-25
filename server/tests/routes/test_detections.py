@@ -184,7 +184,7 @@ def test_detection_endpoint_decodes_sign_crops_and_calls_pipeline(monkeypatch):
     assert response.json()["space"]["last_observed_at"] == "2026-10-24T23:30:00Z"
     assert response.json()["space"]["base_confidence"] == 0.91
     assert response.json()["zone"]["id"] == "scan_segment_1"
-    assert response.json()["zone"]["legal_status_now"] == "LEGAL"
+    assert response.json()["zone"]["legal_status_now"] == "UNKNOWN"
     assert [name for name, _ in repository.upserts] == ["rules", "zones", "spaces"]
     assert len(pipeline.calls) == 1
     call = pipeline.calls[0]
@@ -251,7 +251,7 @@ def test_debug_state_reports_latest_submission_without_retaining_detections(monk
             assert "last_submission" in state
             latest = state["last_submission"]
             assert datetime.fromisoformat(latest["received_at"]).utcoffset().total_seconds() == 0
-            assert {key: value for key, value in latest.items() if key != "received_at"} == {
+            assert {key: value for key, value in latest.items() if key not in {"received_at", "lat", "lng", "heading"}} == {
                 "frame_width": 1280, "frame_height": 720, "vehicle_count": 0, "sign_count": 0,
                 "visible_confirmed_tracks": 0, "candidate_count": 0,
                 "consecutive_empty_submissions": empty_count, "pipeline_state": "no_scene",

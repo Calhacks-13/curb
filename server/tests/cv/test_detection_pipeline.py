@@ -13,7 +13,7 @@ import pytest
 
 from app.azure import cosmos, signalr
 from app.config import settings
-from app.models import SignDetection, SignDocument, SignPoleReading, VehicleDetection
+from app.models import SignDetection, SignDocument, SignPoleReading, SignReading, VehicleDetection
 
 
 @pytest.mark.parametrize("boundaries,expected", [
@@ -85,7 +85,7 @@ async def flush_background_tasks():
 
 
 def store_sign(sign_id, segment_id, lat, lng, summary, category="street"):
-    reading = SignPoleReading(combined_summary=summary, sign_category=category)
+    reading = SignPoleReading(combined_summary=summary, sign_category=category, confidence_score=0.9, signs=[SignReading(sign_type="parking", raw_text="PARKING " + summary)])
     document = SignDocument(
         id=sign_id,
         road_segment_id=segment_id,
@@ -163,7 +163,7 @@ async def test_sign_resolution_uses_registered_sign_before_background_persistenc
     from app.cv.pipeline import Pipeline
 
     pipeline = Pipeline()
-    reading = SignPoleReading(combined_summary="Freshly recorded rules")
+    reading = SignPoleReading(combined_summary="Freshly recorded rules", confidence_score=0.9, signs=[SignReading(sign_type="parking", raw_text="PARKING")])
     pipeline._sign_dedup.register(SignDocument(
         id="fresh",
         road_segment_id="37.8,-122.44,E",
@@ -345,7 +345,7 @@ async def test_submitted_dimensions_control_pixel_gaps(local_services, width, he
 
     result = await submit(Pipeline(), make_vehicles(), width=width, height=height)
 
-    assert set(result) == {"frame_result", "confirmed_block"}
+    assert set(result) == {"frame_result", "confirmed_block", "confirmed_spot"}
     frame = result["frame_result"]
     assert frame.gap_bboxes == expected
     assert frame.gap_estimate == len(expected)
@@ -512,7 +512,7 @@ async def test_edge_anchor_dropout_recovers_then_expires(edge_services):
 
 
 @pytest.mark.asyncio
-async def test_segment_stays_open_until_final_confirmed_gap_expires(edge_services):
+async def test_segment_stays_open_after_all_gap_tracks_expire(edge_services):
     from app.cv.pipeline import Pipeline
 
     pipeline = Pipeline()
@@ -534,9 +534,9 @@ async def test_segment_stays_open_until_final_confirmed_gap_expires(edge_service
     await submit(pipeline, boxed_vehicles((100, 900)))
     await flush_background_tasks()
     assert session.confirmed_gap_segments == {}
-    assert pipeline.spots_in_memory == 0
-    assert cosmos._mem_spots[spot.id]["status"] == "occupied"
-    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+    assert pipeline.spots_in_memory == 1
+    assert cosmos._mem_spots[spot.id]["status"] == "open"
+    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 0
 
 
 @pytest.mark.asyncio
@@ -600,13 +600,13 @@ async def test_cross_session_support_requires_unexpired_gap(
         assert dormant.gap_tracker._gaps == {}
         assert dormant.gap_tracker._confirmed == set()
         assert dormant.confirmed_gap_segments == {}
-        assert pipeline._spot_mgr.find_by_segment(spot.segment_id) is None
-        assert cosmos._mem_spots[spot.id]["status"] == "occupied"
-        # Repeated submissions must not produce another occupied transition.
+        assert pipeline._spot_mgr.find_by_segment(spot.segment_id) is spot
+        assert cosmos._mem_spots[spot.id]["status"] == "open"
+        # Neither tracking loss nor repeated empty submissions prove occupancy.
         edge_services[0] = 105.0
         await submit(pipeline, session_id="B")
         await flush_background_tasks()
-        assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+        assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 0
 
 
 @pytest.mark.asyncio
@@ -683,9 +683,9 @@ async def test_submission_hiatus_expires_confirmed_support_before_recreating_gap
     assert replacement.duration == 0
     assert session.gap_tracker._confirmed == set()
     assert session.confirmed_gap_segments == {}
-    assert pipeline.spots_in_memory == 0
-    assert cosmos._mem_spots[spot.id]["status"] == "occupied"
-    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+    assert pipeline.spots_in_memory == 1
+    assert cosmos._mem_spots[spot.id]["status"] == "open"
+    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 0
 
 
 @pytest.mark.asyncio
@@ -693,7 +693,7 @@ async def test_best_crop_reaches_sign_reading_and_sign_is_persisted(local_servic
     from app.cv import pipeline as module
 
     read_crops = []
-    reading = SignPoleReading(combined_summary="Two hour parking", confidence_score=0.9)
+    reading = SignPoleReading(combined_summary="Two hour parking", confidence_score=0.9, signs=[SignReading(sign_type="time_limit", raw_text="2 HOUR PARKING")])
 
     async def read_sign(crop):
         read_crops.append(crop)
@@ -738,7 +738,7 @@ async def test_repeat_sign_scan_persists_confirmation_without_duplicate(local_se
     from app.cv import pipeline as module
 
     read_crops = []
-    reading = SignPoleReading(combined_summary="Two hour parking", confidence_score=0.9)
+    reading = SignPoleReading(combined_summary="Two hour parking", confidence_score=0.9, signs=[SignReading(sign_type="time_limit", raw_text="2 HOUR PARKING")])
 
     async def read_sign(crop):
         read_crops.append(crop)
@@ -771,7 +771,7 @@ async def test_opposite_direction_sign_scan_is_not_deduplicated(local_services, 
 
     async def read_sign(crop):
         read_crops.append(crop)
-        return SignPoleReading(combined_summary=f"Rules {len(read_crops)}")
+        return SignPoleReading(combined_summary=f"Rules {len(read_crops)}", confidence_score=0.9, signs=[SignReading(sign_type="parking", raw_text="PARKING")])
 
     monkeypatch.setattr(module, "read_sign_pole", read_sign)
     monkeypatch.setattr(settings, "sign_dedup_radius_m", 25.0)
@@ -791,7 +791,7 @@ async def test_opposite_direction_sign_scan_is_not_deduplicated(local_services, 
 
 
 @pytest.mark.asyncio
-async def test_empty_submissions_expire_all_trackers_and_occupy_confirmed_spot(local_services, monkeypatch):
+async def test_empty_submissions_expire_tracks_without_occupying_spot(local_services, monkeypatch):
     from app.cv import pipeline as module
     from app.cv import tracker
 
@@ -828,7 +828,7 @@ async def test_empty_submissions_expire_all_trackers_and_occupy_confirmed_spot(l
             await flush_background_tasks()
             assert len(session.vehicle_tracker.tracks) == 2
             assert session.gap_tracker._confirmed == set()
-            assert pipeline.spots_in_memory == 0
+            assert pipeline.spots_in_memory == 1
     await flush_background_tasks()
 
     frame = result["frame_result"]
@@ -842,9 +842,9 @@ async def test_empty_submissions_expire_all_trackers_and_occupy_confirmed_spot(l
     assert session.gap_tracker._gaps == {}
     assert session.gap_tracker._confirmed == set()
     assert session.confirmed_gap_segments == {}
-    assert pipeline.spots_in_memory == 0
-    assert [s["status"] for s in cosmos._mem_spots.values()] == ["occupied"]
-    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+    assert pipeline.spots_in_memory == 1
+    assert [s["status"] for s in cosmos._mem_spots.values()] == ["open"]
+    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 0
 
 
 @pytest.mark.asyncio
@@ -900,9 +900,9 @@ async def test_boundary_dropout_preserves_gap_until_timeout_and_recovers(
     await dropout_at(106.6)
     assert session.gap_tracker._gaps == {}
     assert session.confirmed_gap_segments == {}
-    assert pipeline.spots_in_memory == 0
-    assert cosmos._mem_spots[spot.id]["status"] == "occupied"
-    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+    assert pipeline.spots_in_memory == 1
+    assert cosmos._mem_spots[spot.id]["status"] == "open"
+    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 0
 
 
 @pytest.mark.asyncio

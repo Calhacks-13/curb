@@ -8,30 +8,17 @@ and the mobile's ParkingSpace/CurbZone/NearbyParkingResponse contract.
 
 import uuid
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from app.azure import cosmos, signalr
 from app.domain.detections import DetectionSubmission
-from app.models.cv import BlockObservation
-from app.models.domain import (
-    CurbZoneView as CanonicalCurbZone,
-    DayOfWeek,
-    GeoLineString,
-    GeoPoint as CanonicalGeoPoint,
-    GeoPolygon,
-    InternalSpaceState,
-    LegalStatus,
-    ParkingSpaceView as CanonicalParkingSpace,
-    PaymentRules,
-    PermitRules,
-    RuleKind,
-    SignRuleView as CanonicalSignRule,
-    WeeklyRuleWindow,
-)
-from app.repositories.protocols import ParkingRepository
+from app.domain.scan_state import persist_confirmed_scan as _persist_confirmed_scan
+from app.domain.scan_state import utc_iso
+from app.domain.sign_rules import rule_text, evaluate_rule_text
+from app.models.cv import SignPoleReading
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +158,7 @@ def _spot_to_space(spot: dict) -> ParkingSpace:
         location=loc,
         stall_geometry=stall,
         internal_state=state,
-        last_observed_at=last_seen,
+        last_observed_at=utc_iso(last_seen),
         base_confidence=spot.get("confidence", 0.0),
         version=spot.get("version", 1),
     )
@@ -191,106 +178,20 @@ def _block_to_zone(block: dict, signs: list[dict]) -> CurbZone:
         "coordinates": [[lng - d, lat], [lng + d, lat]],
     }
 
-    sign_rule_id = seg_id
-    legal_status = "LEGAL"
-
-    # If sign rules exist, use them to determine legal status
+    sign_rule_id = f"scan-rule:{seg_id}"
     block_sign = block.get("sign_rules")
-    if isinstance(block_sign, dict):
-        summary = block_sign.get("combined_summary") or block_sign.get("summary") or ""
-        if summary:
-            summary_lower = summary.lower()
-            if "no parking" in summary_lower or "no stopping" in summary_lower:
-                legal_status = "ILLEGAL"
+    reading = SignPoleReading.model_validate(block_sign) if isinstance(block_sign, dict) else None
+    legal_status, next_change = evaluate_rule_text(rule_text(reading))
 
     return CurbZone(
         id=seg_id,
         geometry=geometry,
         sign_rule_id=sign_rule_id,
         legal_status_now=legal_status,
+        next_change_at=next_change.isoformat() if next_change else None,
         version=1,
     )
 
-
-async def _persist_confirmed_scan(repository: ParkingRepository, block: BlockObservation) -> None:
-    """Store a scanner-confirmed opening in the canonical map repository.
-
-    A scanner observation is tied to its captured GPS coordinates; it never
-    moves demo data or invents a location elsewhere on the map.
-    """
-    if not (-90 <= block.lat <= 90 and -180 <= block.lng <= 180) or (block.lat == block.lng == 0):
-        logger.warning("Not persisting scan %s without a valid GPS coordinate", block.segment_id)
-        return
-
-    observed_at = block.confirmed_at
-    if observed_at.tzinfo is None:
-        observed_at = observed_at.replace(tzinfo=UTC)
-    else:
-        observed_at = observed_at.astimezone(UTC)
-
-    sign = block.sign_rules
-    evidence = sign.combined_summary.strip() if sign and sign.combined_summary.strip() else (
-        "Scanner-confirmed open curb space; verify posted signs before parking."
-    )
-    prohibited = bool(sign and any(
-        phrase in evidence.lower() for phrase in ("no parking", "no stopping")
-    ))
-    legal_status = LegalStatus.ILLEGAL if prohibited else LegalStatus.LEGAL
-    rule_kind = RuleKind.NO_PARKING if prohibited else RuleKind.ALLOWED
-    rule_id = f"scan-rule:{block.segment_id}"
-    d = 0.00003
-    line_d = 0.00005
-    coordinates = (block.lng, block.lat)
-
-    rule = CanonicalSignRule(
-        id=rule_id,
-        zone_id=block.segment_id,
-        weekly_schedule=[WeeklyRuleWindow(
-            days=list(DayOfWeek), start_local="00:00", end_local="23:59", kind=rule_kind,
-        )],
-        max_minutes=sign.combined_max_duration_min if sign else None,
-        payment_rules=PaymentRules(
-            required=bool(sign and sign.combined_price),
-            price_text=sign.combined_price if sign else None,
-        ),
-        permit_rules=PermitRules(required=False, permitted_labels=[]),
-        exceptions=[],
-        evidence_text=evidence,
-        interpretation_confidence=max(0.0, min(1.0, block.confidence)),
-        last_validated_at=observed_at,
-        version=1,
-    )
-    zone = CanonicalCurbZone(
-        id=block.segment_id,
-        geometry=GeoLineString(type="LineString", coordinates=[
-            (block.lng - line_d, block.lat), (block.lng + line_d, block.lat),
-        ]),
-        sign_rule_id=rule_id,
-        legal_status_now=legal_status,
-        current_rules=evidence,
-        next_change_at=None,
-        version=1,
-    )
-    space = CanonicalParkingSpace(
-        id=block.segment_id,
-        zone_id=block.segment_id,
-        location=CanonicalGeoPoint(type="Point", coordinates=coordinates),
-        stall_geometry=GeoPolygon(type="Polygon", coordinates=[[
-            (block.lng - d, block.lat - d), (block.lng + d, block.lat - d),
-            (block.lng + d, block.lat + d), (block.lng - d, block.lat + d),
-            (block.lng - d, block.lat - d),
-        ]]),
-        internal_state=InternalSpaceState.OPEN if block.gap_count > 0 else InternalSpaceState.OCCUPIED,
-        last_observed_at=observed_at,
-        base_confidence=max(0.0, min(1.0, block.confidence)),
-        freshness=None,
-        status_label="Likely open",
-        distance_m=0,
-        version=1,
-    )
-    await repository.upsert("rules", rule)
-    await repository.upsert("zones", zone)
-    await repository.upsert("spaces", space)
 
 
 def _sign_to_rule_view(sign_doc: dict) -> SignRuleView:
@@ -356,7 +257,10 @@ def _driveway_to_view(dw: dict) -> dict:
 async def upload_detections(request: Request, submission: DetectionSubmission):
     """Accept validated on-device detections and return confirmed-space feedback."""
     vehicles, signs = submission.to_pipeline_input()
-    result = await get_pipeline().process_detections(
+    pipeline = get_pipeline()
+    if hasattr(pipeline, "set_repository"):
+        pipeline.set_repository(request.app.state.parking_repository)
+    result = await pipeline.process_detections(
         vehicles=vehicles,
         signs=signs,
         frame_width=submission.frame_width,
@@ -385,7 +289,13 @@ async def upload_detections(request: Request, submission: DetectionSubmission):
         "sign_feedback": fr.sign_feedback,
     }
     confirmed = result.get("confirmed_block")
-    if confirmed is not None:
+    spot = result.get("confirmed_spot")
+    if spot is not None:
+        spot_dict = spot.model_dump(mode="json")
+        response["space"] = _spot_to_space(spot_dict).model_dump(mode="json")
+        response["zone"] = _block_to_zone(spot_dict, []).model_dump(mode="json")
+        response["zone"]["version"] = spot.version
+    elif confirmed is not None:
         await _persist_confirmed_scan(request.app.state.parking_repository, confirmed)
         block_dict = confirmed.model_dump(mode="json")
         response["space"] = _block_to_space(block_dict).model_dump(mode="json")
@@ -413,6 +323,11 @@ async def debug_state():
             ),
             "last_sign_reading": sess.last_sign_reading.combined_summary if sess.last_sign_reading else None,
             "last_submission": sess.last_submission,
+            "gap_diagnostics": [{
+                "gap_key": list(gap.gap_key), "visible": gap.visible,
+                "reason": gap.loss_reason, "occupancy_hits": gap.blocked_hits,
+                "blocker_id": gap.blocker_id,
+            } for gap in sess.gap_tracker._gaps.values()],
         }
 
     spots_info = {}
@@ -441,6 +356,7 @@ async def debug_state():
         "signs_deduped": signs_info,
         "recent_blocks": len(pipeline.recent_blocks),
         "event_buffer": len(signalr.get_recent_events(0)),
+        "transitions": list(mgr.transitions),
     }
 
 
