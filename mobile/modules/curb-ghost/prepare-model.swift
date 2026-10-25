@@ -11,21 +11,42 @@ for mesh in meshes {
   let element = SCNGeometryElement(data: data, primitiveType: .triangles, primitiveCount: mesh.faces.count / 3, bytesPerIndex: 4)
   let geometry = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices), SCNGeometrySource(normals: normals)], elements: [element])
   let name = mesh.name.lowercased()
-  let glass = name.contains("window") || name.contains("windshield")
+  let glass = mesh.material == "glass" || name.contains("window") || name.contains("windshield")
   let tire = mesh.material.lowercased().contains("tire")
   let rim = mesh.material.lowercased().contains("rim")
-  let light = name.contains("headlight") || name.contains("taillight")
+  let hub = mesh.material == "hub"
+  let trim = mesh.material == "trim"
+  let light = mesh.material == "light"
+  let lens = mesh.material == "lens"
   let material = SCNMaterial()
   material.lightingModel = .physicallyBased
-  material.diffuse.contents = glass ? NSColor(red: 0.08, green: 0.20, blue: 0.18, alpha: 1) : tire ? NSColor(red: 0.10, green: 0.17, blue: 0.15, alpha: 1) : NSColor(red: 0.72, green: 0.92, blue: 0.83, alpha: 1)
-  material.metalness.contents = rim ? 0.75 : glass ? 0.5 : 0.2
-  material.roughness.contents = tire ? 0.7 : glass ? 0.12 : 0.3
-  material.emission.contents = light ? NSColor(red: 0.6, green: 0.9, blue: 0.8, alpha: 1) : NSColor(red: 0.015, green: 0.035, blue: 0.025, alpha: 1)
-  material.transparency = glass ? 0.55 : tire || rim ? 0.7 : 0.53
+  material.diffuse.contents = NSColor(white: glass ? 0.19 : tire ? 0.12 : hub ? 0.22 : trim ? 0.12 : rim ? 0.48 : lens ? 0.72 : 0.9, alpha: 1)
+  material.metalness.contents = rim ? 0.35 : 0.08
+  material.roughness.contents = tire ? 0.95 : glass ? 0.28 : 0.55
+  material.emission.contents = light ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.02, alpha: 1)
+  // Transparency is applied once by the native renderer, not per surface.
+  material.transparency = 1
   material.transparencyMode = .dualLayer
   material.writesToDepthBuffer = true
   geometry.materials = [material]
   let node = SCNNode(geometry: geometry);node.name = mesh.name
   scene.rootNode.addChildNode(node)
 }
+let shadowImage = NSImage(size: NSSize(width: 128, height: 128), flipped: false) { rect in
+  NSGradient(starting: NSColor(white: 0, alpha: 0.14), ending: .clear)?.draw(in: NSBezierPath(ovalIn: rect), relativeCenterPosition: .zero)
+  return true
+}
+let shadowMaterial = SCNMaterial()
+shadowMaterial.lightingModel = .constant
+shadowMaterial.diffuse.contents = shadowImage
+shadowMaterial.writesToDepthBuffer = false
+shadowMaterial.isDoubleSided = true
+let plane = SCNPlane(width: 2.25, height: 4.55)
+plane.materials = [shadowMaterial]
+let shadow = SCNNode(geometry: plane)
+shadow.name = "GroundShadow"
+shadow.eulerAngles.x = -.pi / 2
+shadow.position.y = 0.015
+shadow.renderingOrder = -1
+scene.rootNode.addChildNode(shadow)
 print("Saved", scene.write(to: URL(fileURLWithPath: CommandLine.arguments[2]), options: nil, delegate: nil, progressHandler: nil))

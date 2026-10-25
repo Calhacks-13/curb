@@ -26,11 +26,19 @@ export function ghostPlacements(inference: OnDeviceInference | null, analysis: D
     // Avoid squeezing a car into a narrow detection or amplifying far-away noise.
     if (width < carWidth * 0.75 || height < inference.frameHeight * 0.06) continue;
     const center = (left + right) / 2;
-    const previewWidth = Math.min(width * 0.9, carWidth * 1.15);
+    // Occupy the opening itself, with a small clearance at each boundary.
+    // Derive height from the 3D car's proportions rather than stretching it.
+    const previewWidth = width * 0.96;
+    const yaw = carWidth / height > 1.45 ? 1.15 : 0.35;
+    const pitch = Math.atan2(1.65, 8);
+    const modelWidth = 2.1 * Math.cos(yaw) + 4.4 * Math.sin(yaw);
+    const modelDepth = 4.4 * Math.cos(yaw) + 2.1 * Math.sin(yaw);
+    const modelHeight = 1.5 * Math.cos(pitch) + modelDepth * Math.sin(pitch);
+    const previewHeight = previewWidth * modelHeight / modelWidth * 1.2;
     const bottom = (a[3] + b[3]) / 2;
     result.push({ key: `${gap.left_track_id}:${gap.right_track_id}`,
-      bbox: [center - previewWidth / 2, bottom - height * 1.08, center + previewWidth / 2, bottom + height * 0.07],
-      yaw: carWidth / height > 1.45 ? 1.15 : 0.35 });
+      bbox: [center - previewWidth / 2, bottom - previewHeight, center + previewWidth / 2, bottom],
+      yaw });
   }
   return result.slice(0, 2);
 }

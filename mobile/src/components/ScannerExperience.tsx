@@ -40,7 +40,7 @@ export function ScannerExperience({ presentation, sign, previousSign, sampling, 
     <View pointerEvents="none" style={styles.topScrim} /><View pointerEvents="none" style={styles.bottomScrim} />
     <View pointerEvents="none" style={styles.header}>
       <Text style={styles.wordmark}>curb</Text>
-      <Text style={styles.eyebrow}>Parking preview</Text>
+      <View style={styles.mode}><View style={styles.liveDot} /><Text style={styles.eyebrow}>Parking preview</Text></View>
     </View>
     <View style={styles.bottom}>
       {error && <View style={styles.notice}><Text style={styles.errorTitle}>Scanner stopped</Text><Text accessibilityRole="alert" style={styles.noticeText}>{error}</Text></View>}
@@ -50,7 +50,7 @@ export function ScannerExperience({ presentation, sign, previousSign, sampling, 
       {!diagnostics && !error && reading && previousSign && !showPrevious && <Pressable accessibilityRole="button" accessibilityLabel="View last parking sign"
         onPress={() => setShowPrevious(true)} style={styles.notice}><Text style={styles.previousText}>View last parking sign ↗</Text></Pressable>}
       {!diagnostics && !error && reading && showReading && <View style={styles.signStrip}>
-        <Text style={styles.signEyebrow}>{previousSign ? "LAST PARKING SIGN" : "SIGN READ"}</Text>
+        <Text style={styles.signEyebrow}>{previousSign ? "LAST PARKING SIGN" : "Parking sign"}</Text>
         {previousSign && <Text style={styles.noticeText}>From an earlier observation</Text>}
         <Text style={styles.signSummary}>{reading.combined_summary}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel={showText ? "Hide sign text" : "Read full sign text"} onPress={() => setShowText(!showText)}>
@@ -62,7 +62,7 @@ export function ScannerExperience({ presentation, sign, previousSign, sampling, 
         <Pressable accessibilityRole="button" accessibilityLabel={error ? "Close and stop scanning" : sampling ? "Pause scanning" : "Start Scanning"}
           onPress={error ? onCloseError : sampling ? onPause : onStart}
           style={({ pressed }) => [styles.mainButton, pressed && styles.pressed]}>
-          <SymbolView name={sampling && !error ? "pause.fill" : "viewfinder"} size={14} tintColor="#153B2A" fallback={null} />
+          <SymbolView name={sampling && !error ? "pause.fill" : "viewfinder"} size={14} tintColor="#FFFFFF" fallback={null} />
           <Text style={styles.mainButtonText}>{error ? "Close and stop scanning" : sampling ? "Pause" : "Start"}</Text>
         </Pressable>
         <View style={styles.runStatus}>
@@ -72,7 +72,7 @@ export function ScannerExperience({ presentation, sign, previousSign, sampling, 
         <Pressable accessibilityRole="button" accessibilityLabel={diagnostics ? "Hide diagnostics" : "Show diagnostics"}
           accessibilityState={{ selected: diagnostics }} onPress={onToggleDiagnostics}
           style={({ pressed }) => [styles.diagnosticsButton, diagnostics && styles.diagnosticsSelected, pressed && styles.pressed]}>
-          <SymbolView name="slider.horizontal.3" size={19} tintColor={vision.text} fallback={<Text style={styles.fallbackIcon}>≡</Text>} />
+          <SymbolView name="slider.horizontal.3" size={19} tintColor={diagnostics ? "#FFFFFF" : "#111111"} fallback={<Text style={[styles.fallbackIcon, diagnostics && { color: "#FFFFFF" }]}>≡</Text>} />
         </Pressable>
       </View>
     </View>
@@ -80,30 +80,32 @@ export function ScannerExperience({ presentation, sign, previousSign, sampling, 
 }
 
 const styles = StyleSheet.create({
-  counts: { fontFamily: font.regular, fontSize: 10, color: "#ADB7AF", marginTop: 4 },
-  topScrim: { position: "absolute", top: 0, left: 0, right: 0, height: 190,
-    backgroundImage: "linear-gradient(to bottom, rgba(6,18,15,0.88), rgba(6,18,15,0))" },
-  bottomScrim: { position: "absolute", bottom: 0, left: 0, right: 0, height: 310,
-    backgroundImage: "linear-gradient(to top, rgba(6,18,15,0.8), rgba(6,18,15,0))" },
-  header: { position: "absolute", top: 58, left: 24, gap: 5 },
-  wordmark: { fontFamily: font.extrabold, fontSize: 28, lineHeight: 31, letterSpacing: -1.4, color: vision.text },
-  eyebrow: { fontFamily: font.regular, fontSize: 12, color: "#D6DFD8" },
-  bottom: { position: "absolute", bottom: 20, left: 14, right: 14, gap: 10 },
-  controls: { flexDirection: "row", alignItems: "center", gap: 14, padding: 10, borderRadius: 25,
-    backgroundColor: "rgba(15,20,18,0.88)" },
-  mainButton: { minHeight: 44, paddingHorizontal: 19, borderRadius: 18, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: "#E9F1E5" },
-  mainButtonText: { fontFamily: font.bold, fontSize: 12, color: "#153B2A" },
+  counts: { fontFamily: font.regular, fontSize: 10, lineHeight: 15, color: "#737373", marginTop: 2 },
+  topScrim: { position: "absolute", top: 0, left: 0, right: 0, height: 165,
+    backgroundImage: "linear-gradient(to bottom, rgba(0,0,0,0.65), rgba(0,0,0,0))" },
+  bottomScrim: { position: "absolute", bottom: 0, left: 0, right: 0, height: 190,
+    backgroundImage: "linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0))" },
+  header: { position: "absolute", top: 58, left: 24, gap: 6 },
+  wordmark: { fontFamily: font.extrabold, fontSize: 27, lineHeight: 30, letterSpacing: -1.4, color: "#FFFFFF" },
+  mode: { flexDirection: "row", alignItems: "center", gap: 6 },
+  liveDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: "#FFFFFF" },
+  eyebrow: { fontFamily: font.regular, fontSize: 11, color: "rgba(255,255,255,0.8)" },
+  bottom: { position: "absolute", bottom: 26, left: 18, right: 18, gap: 12 },
+  controls: { flexDirection: "row", alignItems: "center", gap: 12, padding: 10, borderRadius: 18,
+    backgroundColor: "#FFFFFF", borderWidth: 0.5, borderColor: "rgba(0,0,0,0.08)" },
+  mainButton: { minHeight: 46, paddingHorizontal: 15, borderRadius: 11, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: "#111111" },
+  mainButtonText: { fontFamily: font.semibold, fontSize: 12, color: "#FFFFFF" },
   runStatus: { flex: 1, alignItems: "flex-start", justifyContent: "center" },
-  runStatusText: { fontFamily: font.semibold, fontSize: 13, color: "#F6F8F4" },
-  diagnosticsButton: { width: 44, height: 44, borderRadius: 18, borderWidth: 1, borderColor: vision.border, alignItems: "center", justifyContent: "center" },
-  diagnosticsSelected: { backgroundColor: "rgba(255,255,255,0.16)", borderColor: "rgba(255,255,255,0.5)" },
-  fallbackIcon: { color: vision.text },
-  notice: { padding: 13, borderRadius: 15, borderWidth: 1, borderColor: vision.border, backgroundColor: vision.surface },
-  noticeText: { fontFamily: font.regular, fontSize: 12, lineHeight: 18, color: vision.muted },
-  errorTitle: { fontFamily: font.bold, fontSize: 14, color: vision.sign, marginBottom: 4 },
-  previousText: { fontFamily: font.semibold, fontSize: 11, color: vision.sign },
-  signStrip: { padding: 15, borderRadius: 17, backgroundColor: vision.surface, borderWidth: 1, borderColor: "rgba(244,211,154,0.25)", gap: 8 },
-  signEyebrow: { fontFamily: font.bold, fontSize: 10, color: "#D8E3D9", letterSpacing: 0.5 },
-  signSummary: { fontFamily: font.semibold, fontSize: 13, lineHeight: 19, color: vision.text },
-  pressed: { opacity: 0.72 },
+  runStatusText: { fontFamily: font.semibold, fontSize: 13, color: "#111111" },
+  diagnosticsButton: { width: 44, height: 46, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  diagnosticsSelected: { backgroundColor: "#111111" },
+  fallbackIcon: { color: "#111111" },
+  notice: { padding: 15, borderRadius: 12, borderWidth: 0.5, borderColor: vision.border, backgroundColor: vision.surface },
+  noticeText: { fontFamily: font.regular, fontSize: 12, lineHeight: 18, color: "#B5B5B5" },
+  errorTitle: { fontFamily: font.bold, fontSize: 14, color: "#FFFFFF", marginBottom: 4 },
+  previousText: { fontFamily: font.semibold, fontSize: 11, color: "#FFFFFF", paddingVertical: 4 },
+  signStrip: { padding: 18, borderRadius: 14, backgroundColor: vision.surface, borderWidth: 0.5, borderColor: vision.border, gap: 8 },
+  signEyebrow: { fontFamily: font.semibold, fontSize: 11, color: "#A3A3A3" },
+  signSummary: { fontFamily: font.semibold, fontSize: 14, lineHeight: 21, color: "#FFFFFF" },
+  pressed: { opacity: 0.65 },
 });

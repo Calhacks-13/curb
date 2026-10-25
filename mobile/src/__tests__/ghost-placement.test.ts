@@ -9,9 +9,11 @@ const analysis: FrameAccepted = { frame_id: "1", accepted: true, frame_width: 10
     confirmed: true, duration: 3, median_width_meters: null }] };
 it("places a proportionate car at the neighboring vehicles' ground line", () => {
   const [preview] = ghostPlacements(inference, analysis);
-  expect(preview.bbox[3]).toBeCloseTo(521);
+  expect(preview.bbox[3]).toBeCloseTo(500);
   expect(preview.bbox[2] - preview.bbox[0]).toBeLessThan(450);
   expect(preview.bbox[1]).toBeGreaterThan(0);
+  expect((preview.bbox[0] + preview.bbox[2]) / 2).toBeCloseTo(475);
+  expect((preview.bbox[2] - preview.bbox[0]) / 450).toBeGreaterThanOrEqual(0.95);
 });
 it("suppresses a preview without fresh aligned analysis or visible anchors", () => {
   expect(ghostPlacements(inference, null)).toEqual([]);
@@ -25,4 +27,14 @@ it.each([{ confirmed: false }, { left_track_id: -1 }, { right_track_id: -2 }])("
 it("does not squeeze a model into a narrow gap", () => {
   const gap = { ...analysis.tracked_gaps![0], bbox: [250, 0, 350, 600] as [number, number, number, number] };
   expect(ghostPlacements(inference, { ...analysis, gap_bboxes: [gap.bbox], tracked_gaps: [gap] })).toEqual([]);
+});
+
+it("fills a wider opening without capping its width to the neighboring car", () => {
+  const wider: OnDeviceInference = { ...inference, frameWidth: 1500, vehicles: [
+    inference.vehicles[0], { ...inference.vehicles[1], bbox: [1200, 200, 1500, 500] },
+  ] };
+  const gap = { ...analysis.tracked_gaps![0], bbox: [250, 0, 1200, 600] as [number, number, number, number] };
+  const [preview] = ghostPlacements(wider, { ...analysis, frame_width: 1500, gap_bboxes: [gap.bbox], tracked_gaps: [gap] });
+  expect(preview.bbox[2] - preview.bbox[0]).toBeCloseTo(950 * 0.96);
+  expect(preview.bbox[3]).toBe(500);
 });

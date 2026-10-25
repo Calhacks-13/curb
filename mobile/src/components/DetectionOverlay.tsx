@@ -89,9 +89,9 @@ export function DetectionOverlay({ result, analysis, compact = false, showSummar
       if (!detection.box) return null;
       const area = visibleArea(detection.box, viewport);
       if (area.width <= 0 || area.height <= 0) return null;
-      const corner = Math.max(3, Math.min(compact ? 9 : 19, Number(detection.box.width) / 3, Number(detection.box.height) / 3));
+      const corner = Math.max(3, Math.min(compact ? 7 : 14, Number(detection.box.width) / 3, Number(detection.box.height) / 3));
       return <View key={detection.key} accessible accessibilityLabel={detection.accessibilityLabel}
-        style={[styles.box, { borderColor: `${detection.color}55` }, detection.box]}>
+        style={[styles.box, { borderColor: showLabels ? `${detection.color}66` : "transparent" }, detection.box]}>
         {([styles.topLeft, styles.topRight, styles.bottomLeft, styles.bottomRight]).map((position, index) =>
           <View key={index} style={[styles.corner, position, { borderColor: detection.color, width: corner, height: corner }]} />)}
         {showLabels && !compact && area.width >= 48 && area.height >= 28 && <View style={[styles.objectLabel,
@@ -107,28 +107,28 @@ export function DetectionOverlay({ result, analysis, compact = false, showSummar
 }
 
 const styles = StyleSheet.create({
-  box: { position: "absolute", borderWidth: 0.75, borderRadius: 9, backgroundColor: "rgba(194,239,206,0.025)" },
+  box: { position: "absolute", borderWidth: 0.5, borderRadius: 4, backgroundColor: "transparent" },
   corner: { position: "absolute", borderColor: vision.vehicle },
-  topLeft: { top: -0.5, left: -0.5, borderTopWidth: 2, borderLeftWidth: 2, borderTopLeftRadius: 9 },
-  topRight: { top: -0.5, right: -0.5, borderTopWidth: 2, borderRightWidth: 2, borderTopRightRadius: 9 },
-  bottomLeft: { bottom: -0.5, left: -0.5, borderBottomWidth: 2, borderLeftWidth: 2, borderBottomLeftRadius: 9 },
-  bottomRight: { bottom: -0.5, right: -0.5, borderBottomWidth: 2, borderRightWidth: 2, borderBottomRightRadius: 9 },
+  topLeft: { top: -0.5, left: -0.5, borderTopWidth: 2, borderLeftWidth: 2, borderTopLeftRadius: 4 },
+  topRight: { top: -0.5, right: -0.5, borderTopWidth: 2, borderRightWidth: 2, borderTopRightRadius: 4 },
+  bottomLeft: { bottom: -0.5, left: -0.5, borderBottomWidth: 2, borderLeftWidth: 2, borderBottomLeftRadius: 4 },
+  bottomRight: { bottom: -0.5, right: -0.5, borderBottomWidth: 2, borderRightWidth: 2, borderBottomRightRadius: 4 },
   objectLabel: { position: "absolute", flexDirection: "row", alignItems: "center", gap: 5, minHeight: 23,
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, backgroundColor: "rgba(8,22,19,0.88)", borderWidth: 0.5, borderColor: "rgba(255,255,255,0.13)" },
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, backgroundColor: "rgba(0,0,0,0.78)", borderWidth: 0.5, borderColor: "rgba(255,255,255,0.13)" },
   objectName: { fontFamily: font.bold, fontSize: 9, letterSpacing: 0.8, color: vision.text, flexShrink: 1 },
   confidence: { fontFamily: font.semibold, fontSize: 9, fontVariant: ["tabular-nums"] },
   dot: { width: 4, height: 4, borderRadius: 2 },
-  gapBox: { position: "absolute", borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(138,220,244,0.7)", borderStyle: "dashed",
-    backgroundImage: "linear-gradient(to bottom, rgba(138,220,244,0), rgba(138,220,244,0.10), rgba(138,220,244,0))" },
+  gapBox: { position: "absolute", borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(255,255,255,0.7)", borderStyle: "dashed",
+    backgroundImage: "linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.10), rgba(255,255,255,0))" },
   confirmedGap: { borderStyle: "solid", borderColor: vision.gap },
   gapLabel: { position: "absolute", minWidth: 60, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10,
-    gap: 4, backgroundColor: "rgba(8,25,26,0.9)", borderWidth: 1, borderColor: "rgba(138,220,244,0.35)" },
+    gap: 4, backgroundColor: "rgba(0,0,0,0.85)", borderWidth: 1, borderColor: "rgba(255,255,255,0.35)" },
   labelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   gapTitle: { fontFamily: font.bold, fontSize: 10, letterSpacing: 1.1, color: vision.gap },
   gapState: { fontFamily: font.semibold, fontSize: 8, letterSpacing: 0.8, color: vision.muted },
-  confirmedText: { color: "#E3F7FF" },
+  confirmedText: { color: "#FFFFFF" },
   measurement: { position: "absolute", flexDirection: "row", alignItems: "center" },
-  measureLine: { flex: 1, height: 1, backgroundColor: "rgba(138,220,244,0.7)" },
+  measureLine: { flex: 1, height: 1, backgroundColor: "rgba(255,255,255,0.7)" },
   measureCap: { width: 1, height: 9, backgroundColor: vision.gap },
   statusPill: { position: "absolute", right: 8, bottom: 8, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: vision.surface },
   statusText: { fontFamily: font.semibold, fontSize: 10, color: vision.text },

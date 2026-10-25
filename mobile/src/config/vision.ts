@@ -1,10 +1,10 @@
-/** Shared legend for the camera overlay and its diagnostic readout. */
+/** Scanner chrome is monochrome; the camera retains its original image. */
 export const vision = {
-  vehicle: "#A1E8BA",
-  gap: "#8ADCF4",
-  sign: "#F4D39A",
-  text: "#F1F6EE",
-  muted: "#A8BBB0",
-  surface: "rgba(10, 26, 23, 0.94)",
-  border: "rgba(198, 225, 207, 0.18)",
+  vehicle: "#FFFFFF",
+  gap: "#FFFFFF",
+  sign: "#FFFFFF",
+  text: "#FFFFFF",
+  muted: "#A3A3A3",
+  surface: "rgba(12, 12, 12, 0.94)",
+  border: "rgba(255, 255, 255, 0.18)",
 } as const;

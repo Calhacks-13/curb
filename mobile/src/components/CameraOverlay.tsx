@@ -53,7 +53,7 @@ function LiveDot({ on, reduceMotion }: { on: boolean; reduceMotion: boolean }) {
     loop.start();
     return () => loop.stop();
   }, [blink, on, reduceMotion]);
-  return <Animated.View style={[styles.dot, { opacity: blink, backgroundColor: on ? "#AEEFC5" : ink.grey500 }]} />;
+  return <Animated.View style={[styles.dot, { opacity: blink, backgroundColor: on ? "#FFFFFF" : ink.grey500 }]} />;
 }
 
 function CameraUnavailable() {
@@ -306,7 +306,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
             </View>
             {sampling && <Pressable onPress={onStopScan} accessibilityRole="button" accessibilityLabel="Pause scanning"
               style={({ pressed }) => [styles.compactPause, pressed && { opacity: 0.7 }]}>
-              <SymbolView name="pause.fill" size={12} tintColor="#E0EADD" fallback={<Text style={styles.stopText}>Ⅱ</Text>} />
+              <SymbolView name="pause.fill" size={12} tintColor="#FFFFFF" fallback={<Text style={styles.stopText}>Ⅱ</Text>} />
             </Pressable>}
           </View>
           {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
@@ -321,7 +321,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
 }
 
 const styles = StyleSheet.create({
-  card: { width: 156, padding: 5, borderRadius: 20, borderCurve: "continuous", backgroundColor: "#14271E", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", ...shadow.floating },
+  card: { width: 156, padding: 5, borderRadius: 20, borderCurve: "continuous", backgroundColor: "#111111", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", ...shadow.floating },
   preview: { height: 108, borderRadius: 15, overflow: "hidden", backgroundColor: ink.grey900 },
   previewPressed: { opacity: 0.88 },
   expandHitTarget: { ...StyleSheet.absoluteFill },
@@ -342,8 +342,8 @@ const styles = StyleSheet.create({
   liveText: { fontFamily: font.bold, fontSize: 10, color: ink.white, marginTop: 2 },
   caption: { fontFamily: font.semibold, fontSize: 11, color: ink.white, marginTop: 5, marginLeft: 2 },
   sub: { fontFamily: font.regular, fontSize: 10, color: ink.grey300, marginLeft: 2, marginBottom: 1 },
-  startButton: { marginTop: 5, marginHorizontal: 2, height: 36, borderRadius: 18, backgroundColor: "#D3F5DD", alignItems: "center", justifyContent: "center" },
-  startText: { fontFamily: font.bold, fontSize: 11, color: "#14271E", marginTop: 1 },
+  startButton: { marginTop: 5, marginHorizontal: 2, height: 36, borderRadius: 18, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  startText: { fontFamily: font.bold, fontSize: 11, color: "#111111", marginTop: 1 },
   stopText: { fontFamily: font.bold, fontSize: 11, color: ink.grey300, marginTop: 1 },
   fullScreen: { flex: 1, backgroundColor: ink.black },
   fallbackCenter: { flex: 1, alignItems: "center", justifyContent: "center" },

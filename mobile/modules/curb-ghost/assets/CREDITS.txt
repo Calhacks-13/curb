@@ -1,6 +1,17 @@
-Car Concept — Eric Chadwick / Darmstadt Graphics Group GmbH, 2024.
-https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept
-Licensed under Creative Commons Attribution 4.0 International.
+Tesla 2018 Model 3 by Ameer Studio.
+Author: https://sketchfab.com/uchiha.321abc
+Original source:
+https://sketchfab.com/3d-models/tesla-2018-model-3-5ef9b845aaf44203b6d04e2c677e444f
+License: Creative Commons Attribution 4.0 International (CC BY 4.0).
 https://creativecommons.org/licenses/by/4.0/
-Adapted for Curb: exterior geometry only, original textures and logos removed,
-custom translucent materials, normalized scene. Original vehicle by Unity Fan.
+
+Adapted for Curb: removed concealed interior detail, simplified large meshes,
+normalized orientation/scale, replaced original textures with grayscale materials,
+added a soft ground shadow, and applied transparency at render time.
+Model licensing is separate from the CurbGhost module's code license.
+
+Source GLB metadata identifies Ameer Studio and the above CC BY 4.0 license.
+Redistributed source copy:
+https://raw.githubusercontent.com/jamesalmeida/tesla-infotainment/main/public/car-models/tesla-model-3-2018.glb
+Source SHA-256:
+d6d78c9bd1bd9c7ca87a07509a2e7b6585995fcbdec054f297167ba7c15cd878

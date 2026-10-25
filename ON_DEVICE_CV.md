@@ -261,13 +261,12 @@ no camera images or sign crops.
 
 ## Sign evidence and rule selection
 
-The expanded scanner presents CV geometry by default: mint vehicle contours,
-amber sign frames, and cyan candidate/confirmed gap bands. Compact live counts
-replace the large status card. The dark diagnostics panel opens on Overview,
-with Gaps and Signs tabs exposing measurements, tracking state, extracted text,
-reading scores and server receipts. The sliders control hides/shows the panel;
-detections stay visible. Expansion, diagnostics and pause/resume retain the same
-native camera. Previous sign readings are explicitly labeled.
+The expanded scanner uses monochrome controls and white detection brackets.
+A translucent silver car illustrates eligible confirmed openings; the camera
+retains its original image. The white diagnostics sheet opens on demand with
+Overview, Gaps and Signs tabs for tracking, measurements, extracted text,
+reading scores and server receipts. Expansion, diagnostics and pause/resume
+retain the same native camera. Previous readings are explicitly labeled.
 
 Every selected sign crop is read individually (at most two per submission), so
 a street-name plate cannot displace the regulatory sign below it on the same pole.

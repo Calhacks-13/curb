@@ -17,6 +17,7 @@ final class CurbGhostView: ExpoView {
   private let vehicle = SCNNode()
   private let camera = SCNNode()
   private var yaw: Float = 0.35
+  private var framingBounds: (minX: Float, maxX: Float, minY: Float)?
   private static let template: SCNScene? = {
     let host = Bundle(for: CurbGhostView.self)
     guard let bundleURL = host.url(forResource: "CurbGhostAssets", withExtension: "bundle"),
@@ -30,6 +31,9 @@ final class CurbGhostView: ExpoView {
     isUserInteractionEnabled = false
     renderer.backgroundColor = .clear
     renderer.isOpaque = false
+    // Composite the finished render once so overlapping surfaces do not turn
+    // an otherwise translucent car opaque. Camera pixels remain visible.
+    renderer.alpha = 0.42
     renderer.antialiasingMode = .multisampling4X
     renderer.preferredFramesPerSecond = 30
     renderer.rendersContinuously = false
@@ -67,7 +71,7 @@ final class CurbGhostView: ExpoView {
     fill.light = SCNLight()
     fill.light?.type = .ambient
     fill.light?.intensity = 180
-    fill.light?.color = UIColor(red: 0.7, green: 0.9, blue: 0.83, alpha: 1)
+    fill.light?.color = UIColor.white
     scene.rootNode.addChildNode(fill)
     renderer.scene = scene
     setYaw(Double(yaw))
@@ -75,6 +79,7 @@ final class CurbGhostView: ExpoView {
 
   func setYaw(_ value: Double) {
     guard value.isFinite else { return }
+    if yaw != Float(value) { framingBounds = nil }
     yaw = Float(value)
     vehicle.eulerAngles.y = yaw
     setNeedsLayout()
@@ -83,13 +88,55 @@ final class CurbGhostView: ExpoView {
   override func layoutSubviews() {
     super.layoutSubviews()
     renderer.frame = bounds
-    let aspect = max(bounds.width / max(bounds.height, 1), 0.3)
-    let horizontal = abs(sin(CGFloat(yaw))) * 4.4 + abs(cos(CGFloat(yaw))) * 2.4
-    let scale = max(1.2, horizontal / aspect / 2) * 1.05
+    guard bounds.width > 0, bounds.height > 0 else { return }
+    camera.position = SCNVector3(0, 2.2, 8)
+    camera.look(at: SCNVector3(0, 0.55, 0))
+    var minX = Float.infinity, maxX = -Float.infinity
+    var minY = Float.infinity
+    // Frame actual geometry in camera space; avoid the old fixed camera padding.
+    // The shadow must not shrink the car or change its road contact point.
+    if let cached = framingBounds {
+      minX = cached.minX; maxX = cached.maxX; minY = cached.minY
+    } else {
+      vehicle.enumerateChildNodes { node, _ in
+        guard node.name != "GroundShadow", let geometry = node.geometry else { return }
+        func measure(_ local: SCNVector3) {
+          let point = node.convertPosition(local, to: self.camera)
+          minX = min(minX, point.x); maxX = max(maxX, point.x)
+          minY = min(minY, point.y)
+        }
+        if let source = geometry.sources(for: .vertex).first,
+           source.usesFloatComponents, source.bytesPerComponent == 4, source.componentsPerVector >= 3 {
+          source.data.withUnsafeBytes { (data: UnsafeRawBufferPointer) in
+            for index in stride(from: 0, to: source.vectorCount, by: max(1, source.vectorCount / 160)) {
+              let offset = source.dataOffset + index * source.dataStride
+              guard offset + 12 <= data.count else { continue }
+              measure(SCNVector3(
+                data.loadUnaligned(fromByteOffset: offset, as: Float.self),
+                data.loadUnaligned(fromByteOffset: offset + 4, as: Float.self),
+                data.loadUnaligned(fromByteOffset: offset + 8, as: Float.self)))
+            }
+          }
+        } else {
+          let (low, high) = geometry.boundingBox
+          for x in [low.x, high.x] {
+            for y in [low.y, high.y] {
+              for z in [low.z, high.z] { measure(SCNVector3(x, y, z)) }
+            }
+          }
+        }
+      }
+      if minX.isFinite && maxX.isFinite && minY.isFinite {
+        framingBounds = (minX, maxX, minY)
+      }
+    }
+    guard minX.isFinite, maxX.isFinite, minY.isFinite, maxX > minX else { return }
+    let aspect = bounds.width / bounds.height
+    let scale = CGFloat(maxX - minX) / aspect / 2 / 0.99
     camera.camera?.orthographicScale = scale
-    let target = Float(scale * 0.72)
-    camera.position = SCNVector3(0, target + 1.65, 8)
-    camera.look(at: SCNVector3(0, target, 0))
+    // A small bottom inset keeps the wheels on the neighboring cars' ground line.
+    let center = SCNVector3((minX + maxX) / 2, minY + Float(scale * 0.94), 0)
+    camera.position = camera.convertPosition(center, to: nil)
     renderer.setNeedsDisplay()
   }
 }
