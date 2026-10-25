@@ -11,7 +11,7 @@ export type DetectionUploadDeps = {
 export type DetectionUploadStats = { sent: number; dropped: number; failed: number };
 export type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
 export type DetectionDeliveryEvent =
-  | Readonly<{ state: "delivered"; result: DeepReadonly<FrameAccepted>; stats: Readonly<DetectionUploadStats> }>
+  | Readonly<{ state: "delivered"; source: DeepReadonly<OnDeviceInference>; result: DeepReadonly<FrameAccepted>; stats: Readonly<DetectionUploadStats> }>
   | Readonly<{ state: "failed"; error: Readonly<{ status: number | null; message: string }>; stats: Readonly<DetectionUploadStats> }>;
 
 /** The JSON response snapshot owns every nested object and geometry array. */
@@ -57,15 +57,16 @@ export class DetectionUploadController {
     }
     const payload = buildDetectionSubmission(inference, context, new Date().toISOString());
     this.inFlight = true;
-    void this.send(payload, this.generation);
+    const source = immutableSnapshot({ ...inference, signs: inference.signs.map((sign) => ({ ...sign, cropBase64: "" })) });
+    void this.send(payload, this.generation, source);
   }
 
-  private async send(payload: DetectionSubmission, generation: number): Promise<void> {
+  private async send(payload: DetectionSubmission, generation: number, source: DeepReadonly<OnDeviceInference>): Promise<void> {
     try {
       const result = await this.deps.upload(payload);
       this.stats.sent++;
       if (this.active && generation === this.generation) {
-        this.deps.onDelivery?.(Object.freeze({ state: "delivered", result: immutableSnapshot(result), stats: Object.freeze({ ...this.stats }) }));
+        this.deps.onDelivery?.(Object.freeze({ state: "delivered", source, result: immutableSnapshot(result), stats: Object.freeze({ ...this.stats }) }));
         // A subscriber may stop or restart scanning synchronously.
         if (this.active && generation === this.generation && result.space) this.deps.onSpotConfirmed?.(result);
       }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { FrameAccepted, OnDeviceInference, SignFeedback } from "@/api/types";
 import { font } from "@/config/tokens";
@@ -16,10 +16,11 @@ type Props = {
   deliveryText?: string;
   deliveryDetail?: string;
   initialTab?: Tab;
+  previewStatus?: string;
 };
 
 /** A compact instrument panel for presenting what the vision pipeline observed. */
-export function ScannerDetails({ analysis, lastSigns, signCount, fresh, inference = null, deliveryText, deliveryDetail, initialTab = "overview" }: Props) {
+export function ScannerDetails({ analysis, lastSigns, signCount, fresh, inference = null, deliveryText, deliveryDetail, initialTab = "overview", previewStatus }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const current = analysis?.sign_feedback ?? [];
   const signs = current.length ? current : lastSigns;
@@ -41,6 +42,7 @@ export function ScannerDetails({ analysis, lastSigns, signCount, fresh, inferenc
           style={[styles.tab, id === tab && styles.selectedTab]}><Text style={[styles.tabText, id === tab && styles.selectedTabText]}>{label}</Text></Pressable>)}
     </View>
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {previewStatus && <Text accessibilityLiveRegion="polite" style={styles.previewStatus}>{`Gap detection: ${previewStatus}`}</Text>}
       {tab === "overview" && <>
         <View style={styles.stats}>
           {([['Vehicles', inference?.vehicles.length ?? analysis?.vehicle_count ?? 0, '#111111'],
@@ -69,7 +71,7 @@ export function ScannerDetails({ analysis, lastSigns, signCount, fresh, inferenc
             <Text style={styles.secondary}>{boundary}</Text>
           </View>;
         })}
-        <Text style={styles.caption}>Measurements are in image pixels. The preview does not verify vehicle fit or curb legality.</Text>
+        <Text style={styles.caption}>Measurements are in image pixels. A detected gap does not verify vehicle fit or curb legality.</Text>
       </>}
       {tab === "signs" && <>
         <Text style={styles.sectionSummary}>{fresh && current.length ? "Sign reading" : signs.length ? "Last sign reading" : "Sign reading"}</Text>
@@ -94,15 +96,13 @@ export function ScannerDetails({ analysis, lastSigns, signCount, fresh, inferenc
         </View>)}
       </>}
     </ScrollView>
-    <Pressable accessibilityRole="link" accessibilityLabel="Tesla Model 3 model credits" onPress={() => void Linking.openURL("https://sketchfab.com/3d-models/tesla-2018-model-3-5ef9b845aaf44203b6d04e2c677e444f")} style={styles.credits}>
-      <Text style={styles.creditText}>Tesla Model 3 · Ameer Studio · CC BY 4.0 · adapted</Text>
-    </Pressable>
     {deliveryText && <View style={styles.receipt}><Text style={styles.receiptText}>{deliveryText}</Text>
       {!!deliveryDetail && <Text style={styles.receiptDetail}>{deliveryDetail}</Text>}</View>}
   </View>;
 }
 
 const styles = StyleSheet.create({
+  previewStatus: { fontFamily: font.semibold, fontSize: 12, lineHeight: 18, color: "#333333" },
   credits: { paddingHorizontal: 20, paddingBottom: 8, paddingTop: 4 },
   creditText: { fontFamily: font.regular, fontSize: 9, color: "#737373" },
   panel: { position: "absolute", left: 18, right: 18, bottom: 108, maxHeight: "46%", borderRadius: 18, borderCurve: "continuous",

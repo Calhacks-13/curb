@@ -61,6 +61,25 @@ describe("Web PubSub client", () => {
     conn.close();
   });
 
+  it("polls even with a healthy socket and deduplicates the two transports", async () => {
+    jest.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    const event = { type: "space.opened", entity_id: "friend", entity_version: 1,
+      occurred_at: "2026-10-25T12:00:00Z", payload: {} };
+    const fetchMock = jest.fn(async () => ({ ok: true, json: async () => ({ events: [{ ...event, seq: 10 }] }) }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const onEvent = jest.fn();
+    const conn = connectWebPubSub(async () => "wss://x/1", onEvent, undefined, "https://api/events");
+    try {
+      await jest.advanceTimersByTimeAsync(0);
+      FakeSocket.all[0].onopen?.();
+      FakeSocket.all[0].onmessage?.({ data: JSON.stringify({ type: "message", data: event }) });
+      await jest.advanceTimersByTimeAsync(2000);
+      expect(fetchMock).toHaveBeenCalledWith("https://api/events?since=10");
+      expect(onEvent).toHaveBeenCalledTimes(1);
+    } finally { conn.close(); globalThis.fetch = originalFetch; }
+  });
+
   it("rejects unknown event types", () => {
     expect(parseRealtimeEvent({ type: "space.teleported", entity_id: "s", entity_version: 1, occurred_at: "", payload: {} })).toBeNull();
   });

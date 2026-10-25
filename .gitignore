@@ -46,3 +46,6 @@ captures/
 .DS_Store
 .idea/
 .vscode/
+
+# Downloaded local model cache
+/weights/

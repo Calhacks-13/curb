@@ -55,7 +55,7 @@ def driveway_from_seed(doc: dict, now: datetime) -> Driveway:
         price_usdc=str(doc.get("price_usdc", "0")),
         availability_start=start,
         availability_end=end,
-        state="AVAILABLE",
+        state="UNAVAILABLE" if doc.get("state") == "UNAVAILABLE" else "AVAILABLE",
         held_by_user_id=None,
         active_booking_id=None,
         version=int(doc.get("version", 1)),

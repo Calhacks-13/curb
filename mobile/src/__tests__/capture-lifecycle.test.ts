@@ -97,7 +97,7 @@ describe("DetectionUploadController", () => {
     controller.submit(inference);
     await flush();
     const receipt = onDelivery.mock.calls[1][0];
-    expect(receipt).toEqual({ state: "delivered", result: expect.objectContaining({ vehicle_count: 0, gap_count: 0, scene_valid: false }), stats: { sent: 1, dropped: 0, failed: 1 } });
+    expect(receipt).toEqual({ state: "delivered", source: expect.objectContaining({ frameWidth: 1280, frameHeight: 720 }), result: expect.objectContaining({ vehicle_count: 0, gap_count: 0, scene_valid: false }), stats: { sent: 1, dropped: 0, failed: 1 } });
     expect(failure.stats).toEqual({ sent: 0, dropped: 0, failed: 1 });
     expect(Object.isFrozen(failure)).toBe(true);
     expect(Object.isFrozen(failure.stats)).toBe(true);
@@ -255,4 +255,22 @@ describe("DetectionUploadController", () => {
     expect(controller.stats.sent).toBe(1);
     expect(onSpotConfirmed).not.toHaveBeenCalled();
   });
+});
+
+it("pairs delivered gaps with immutable submitted geometry without retaining crop images", async () => {
+  let resolve!: (value: FrameAccepted) => void;
+  const pending = new Promise<FrameAccepted>((done) => { resolve = done; });
+  const onDelivery = jest.fn();
+  const sample: typeof inference = JSON.parse(JSON.stringify(inference));
+  const originalLeft = sample.vehicles[0].bbox[0];
+  const controller = new DetectionUploadController({ context: () => context, upload: () => pending, onDelivery });
+  controller.start();
+  controller.submit(sample);
+  sample.vehicles[0].bbox[0] += 100;
+  resolve(accepted);
+  await flush();
+  const source = onDelivery.mock.calls[0][0].source;
+  expect(source.vehicles[0].bbox[0]).toBe(originalLeft);
+  expect(Object.isFrozen(source.vehicles[0].bbox)).toBe(true);
+  expect(source.signs.every((sign: { cropBase64: string }) => sign.cropBase64 === "")).toBe(true);
 });

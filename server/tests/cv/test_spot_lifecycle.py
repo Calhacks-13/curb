@@ -292,3 +292,48 @@ async def test_mapping_seed_exemption_survives_reobservation_after_restart(clock
     assert observed.is_seed is True
     await restarted.maintain(now=observed.last_seen_at + timedelta(seconds=301))
     assert restarted._spot_mgr.find_by_segment(seed.segment_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_slow_sign_read_does_not_block_gap_feedback_or_expire_its_tracking(clock, monkeypatch):
+    from app.cv import pipeline as module
+    from app.models.cv import SignDetection, SignPoleReading, SignReading
+    release = asyncio.Event()
+    started = asyncio.Event()
+    async def read(_crop):
+        started.set()
+        await release.wait()
+        return SignPoleReading(signs=[SignReading(sign_type="time_limit", raw_text="2 HOUR PARKING")],
+                               combined_summary="Two hour parking", confidence_score=0.9)
+    monkeypatch.setattr(module, "read_sign_pole", read)
+    pipeline = Pipeline()
+    sign = SignDetection(bbox=[450, 20, 500, 100], confidence=0.9, crop_bytes=b"crop")
+    try:
+        for stamp in [100, 101, 102, 103, 104]:
+            clock[0] = stamp
+            response = asyncio.create_task(pipeline.process_detections(vehicles=vehicles(), signs=[sign],
+                frame_width=1000, frame_height=600, lat=37.8, lng=-122.44, heading=90, session_id="walk"))
+            for _ in range(30):
+                await asyncio.sleep(0)
+            assert response.done(), "OCR held up the live camera response"
+            result = response.result()
+        assert started.is_set() and not release.is_set()
+        assert any(gap.confirmed for gap in result["frame_result"].tracked_gaps)
+        assert pipeline._sign_jobs
+        assert not any(event["event"] == "gap.lost" for event in pipeline._spot_mgr.transitions)
+        release.set()
+        await pipeline.wait_for_sign_reads()
+        assert pipeline._sessions["walk"].sign_tracker.tracks[0].read_result.combined_summary == "Two hour parking"
+    finally:
+        release.set()
+        await pipeline.close()
+
+
+@pytest.mark.asyncio
+async def test_new_opening_publishes_its_zone_before_the_space(clock):
+    pipeline = Pipeline()
+    spot = await open_space(pipeline, clock)
+    await asyncio.sleep(0)
+    events = signalr.get_recent_events()
+    opening = next(index for index, event in enumerate(events) if event["type"] == "space.opened" and event["entity_id"] == spot.id)
+    assert any(event["type"] == "sign_rule.updated" and event["entity_id"] == spot.segment_id for event in events[:opening])

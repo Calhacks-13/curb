@@ -24,7 +24,7 @@ describe("shared contracts", () => {
     expect(NearbyParkingResponseSchema.parse(seed.nearby)).toEqual(seed.nearby);
     expect(seed.av.id).toBe("av_demo");
     expect(seed.nearby.driveways).toContainEqual(
-      expect.objectContaining({ id: "driveway_av_1", price_usdc: "5.00" }),
+      expect.objectContaining({ id: "driveway_av_1", price_usdc: "0.50" }),
     );
     expect(
       DemoSessionResponseSchema.parse({ user: seed.driver, token: "driver-demo-token" }),

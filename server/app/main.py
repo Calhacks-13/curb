@@ -20,6 +20,8 @@ from app.routes.sessions import router as sessions_router
 from app.repositories.cosmos import CosmosParkingRepository
 from app.repositories.memory import InMemoryParkingRepository
 from app.seed.loader import load_seed
+from app.seed.palace import PalaceScenario
+from app.routes.palace import router as palace_router
 from app.wiring import build_driveway_service, resolve_actor
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -41,6 +43,8 @@ async def lifespan(app: FastAPI):
     # Startup: initialize persistence and realtime clients.
     await cosmos.init()
     await signalr.init()
+    from app.seed.palace import load_driveways
+    await load_driveways(repository, datetime.now(UTC))
     driveway_docs = {
         driveway.id: driveway.model_dump(mode="json")
         for driveway in await repository.list_driveways()
@@ -54,6 +58,7 @@ async def lifespan(app: FastAPI):
 
     pipeline = get_pipeline()
     pipeline.set_repository(repository)
+    app.state.palace_scenario = PalaceScenario(repository, signalr.broadcast_realtime_event)
 
     async def maintain_spots():
         while True:
@@ -74,6 +79,8 @@ async def lifespan(app: FastAPI):
         from app.cv.sign_reader import close_client
 
         await app.state.agent_demo_runner.close()
+        await app.state.palace_scenario.close()
+        await pipeline.close()
         await close_client()
         await cosmos.close()
         await signalr.close()
@@ -136,3 +143,5 @@ async def health():
         "webpubsub_configured": signalr._webpubsub_configured(),
         "spots_in_memory": pipeline.spots_in_memory,
     }
+
+app.include_router(palace_router)

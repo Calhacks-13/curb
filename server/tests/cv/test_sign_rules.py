@@ -133,6 +133,10 @@ async def test_each_sign_on_pole_is_read_and_nearby_cached_street_plate_is_not_r
     for _ in range(3):
         result = await pipeline.process_detections(vehicles=[], signs=signs, frame_width=1000,
             frame_height=600, lat=37.8, lng=-122.44, heading=90, session_id="walk")
+    assert result["frame_result"].sign_rules is None
+    await pipeline.wait_for_sign_reads()
+    result = await pipeline.process_detections(vehicles=[], signs=signs, frame_width=1000,
+        frame_height=600, lat=37.8, lng=-122.44, heading=90, session_id="walk")
     assert set(calls) == {b"street", b"parking"}
     assert result["frame_result"].sign_rules == parking_reading()
     assert len(cosmos._mem_signs) == 1
@@ -156,7 +160,10 @@ async def test_poor_reading_retries_with_better_crop_without_persisting_garbage(
                                   confidence=0.6 if frame < 3 else 0.85, crop_bytes=b"dark" if frame < 3 else b"clear")
         result = await pipeline.process_detections(vehicles=[], signs=[detection], frame_width=1000,
             frame_height=600, lat=37.8, lng=-122.44, heading=90, session_id="walk")
+        await pipeline.wait_for_sign_reads()
         if frame == 2:
+            result = await pipeline.process_detections(vehicles=[], signs=[detection], frame_width=1000,
+                frame_height=600, lat=37.8, lng=-122.44, heading=90, session_id="walk")
             assert result["frame_result"].sign_feedback[0]["state"] == "uncertain"
             assert cosmos._mem_signs == {}
     assert calls == [b"dark", b"clear"]

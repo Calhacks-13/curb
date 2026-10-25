@@ -77,11 +77,11 @@ export function DetectionOverlay({ result, analysis, compact = false, showSummar
         {!compact && <View style={[styles.measurement, { top: area.top + area.height * 0.52, left: area.left + 3, width: Math.max(0, area.width - 6) }]}>
           <View style={styles.measureCap} /><View style={styles.measureLine} /><View style={styles.measureCap} />
         </View>}
-        {!compact && area.width >= 66 && <View style={[styles.gapLabel, { top: area.top + area.height * 0.42,
+        {area.width >= (compact ? 40 : 66) && <View style={[styles.gapLabel, { top: area.top + area.height * 0.42,
           left: area.left + Math.max(4, (area.width - 144) / 2), maxWidth: Math.max(0, area.width - 8) }]}>
           <View style={styles.labelRow}><View style={[styles.dot, { backgroundColor: vision.gap }]} />
-            <Text style={styles.gapTitle}>{`GAP ${String(index + 1).padStart(2, "0")}`}</Text></View>
-          <Text style={[styles.gapState, gap.confirmed && styles.confirmedText]}>{gap.state.toUpperCase()}</Text>
+            <Text style={styles.gapTitle}>{compact ? "GAP" : `GAP ${String(index + 1).padStart(2, "0")}`}</Text></View>
+          {!compact && <Text style={[styles.gapState, gap.confirmed && styles.confirmedText]}>{gap.state.toUpperCase()}</Text>}
         </View>}
       </View>;
     })}

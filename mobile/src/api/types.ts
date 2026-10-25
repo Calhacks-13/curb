@@ -134,6 +134,8 @@ export type DrivewayUpdate = {
 };
 
 export type FrameMetadata = {
+  /** Bounded diagnostic status; never image or crop content. */
+  preview_status?: string;
   captured_at: string;
   lat: number;
   lng: number;

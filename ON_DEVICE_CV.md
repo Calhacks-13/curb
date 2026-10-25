@@ -159,7 +159,7 @@ Expand the camera preview to inspect gap analysis and sign readings. The detecti
 response includes source dimensions/time, candidate `gap_bboxes`, `tracked_gaps`
 (track IDs, observation duration, confirmation and optional meter estimate), and
 per-track `sign_feedback` (gathering/unavailable/uncertain/read plus extracted text
-and interpreted rules). Blue dashed openings are candidates; solid blue openings
+and interpreted rules). White dashed openings are candidates; solid white openings
 have temporal confirmation. Pixel widths do not establish vehicle fit or legality.
 Gap geometry is from the last server sample, expires after three seconds from
 capture, and is hidden after an upload failure or camera-dimension change.
@@ -385,20 +385,36 @@ References: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/),
 [Apple model performance reports](https://developer.apple.com/documentation/coreml/analyzing-a-core-ml-model-s-performance-in-xcode),
 and [Core ML Instruments](https://developer.apple.com/videos/play/wwdc2022/10027/).
 
-## Ghost-car scanner preview
+## Scanner gap outlines
 
-The immersive camera now replaces full-height gap bands with a translucent,
-shaded native 3D car. Details open on demand in a light, compact sheet; contour
-labels appear with diagnostics. The same native camera remains mounted.
-
-A car is illustrated only for confirmed interior gaps with two currently visible
-neighboring vehicles and fresh matching frame dimensions. Adjacent car boxes
-supply approximate image position/scale. Candidates, edges, narrow openings and
-misaligned/delayed geometry do not receive a model. This does not measure depth,
-fit, road-plane pose or occlusion, and is labeled as an unverified fit preview.
-See `mobile/modules/curb-ghost/README.md` for native build and model credits.
+The scanner uses monochrome gap outlines: dashed for candidates and solid for
+confirmed openings. Gap labels appear in both compact and expanded camera views;
+expanded diagnostics show duration, pixel width, sign text and server feedback.
+The 3D car is no longer mounted in the live scanner. The native module and licensed
+asset remain in the repository for reference.
 
 Curb display summaries are separate from the complete OCR evidence used for
 schedule evaluation. Next-change rows include the calendar date and Pacific time,
 so a monthly restriction is not displayed as a bare “11 AM”. Fenced OCR JSON is
 accepted; malformed replies show a readable retry message rather than JSON.
+
+
+## Live preview feedback and OCR scheduling
+
+Sign OCR runs in bounded background jobs (one per session, two external calls at
+a time), outside the live tracking lock. Results are applied under the mutation
+lock and arrive in subsequent frame feedback. Slow sign reading cannot hold a
+camera response past the three-second geometry freshness limit. Shutdown and
+session cleanup cancel their jobs.
+
+Each client receipt retains an immutable snapshot of submitted geometry without
+crop images. Gap geometry expires three seconds after capture and is hidden on
+camera orientation changes. Scan details and the next upload report gap-detection
+status in `preview_status`. `/v1/debug/state` retains 120 recent frame summaries
+with processing time, confirmed interior gaps and pending OCR.
+
+New openings publish their zone before the space. The client maintains an
+event-time snapshot so batched messages do not lose their legality context before
+React renders. A two-second polling safety net remains active alongside Web
+PubSub; identical entity/type/version messages are deduplicated. New-opening
+banners exclude previously known or announced spots and explicitly illegal curbs.

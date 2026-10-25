@@ -6,13 +6,16 @@ public class CurbGhostModule: Module {
   public func definition() -> ModuleDefinition {
     Name("CurbGhost")
     View(CurbGhostView.self) {
+      Events("onStatus")
       Prop("yaw") { (view: CurbGhostView, yaw: Double) in view.setYaw(yaw) }
     }
   }
 }
 
 /// An image-anchored illustration, not an ARSession or metric fit measurement.
-final class CurbGhostView: ExpoView {
+final class CurbGhostView: ExpoView, SCNSceneRendererDelegate {
+  let onStatus = EventDispatcher()
+  private var reportedRendered = false
   private let renderer = SCNView()
   private let vehicle = SCNNode()
   private let camera = SCNNode()
@@ -73,8 +76,30 @@ final class CurbGhostView: ExpoView {
     fill.light?.intensity = 180
     fill.light?.color = UIColor.white
     scene.rootNode.addChildNode(fill)
+    renderer.delegate = self
     renderer.scene = scene
     setYaw(Double(yaw))
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    // Draw while the preview is attached; a paused on-demand SCNView could
+    // otherwise never produce its first frame over the native camera.
+    renderer.isPlaying = window != nil
+    renderer.rendersContinuously = window != nil
+    guard window != nil else { return }
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.onStatus(["state": Self.template == nil ? "error" : self.reportedRendered ? "rendered" : "loaded"])
+    }
+  }
+
+  func renderer(_ renderer: SCNSceneRenderer, didRenderScene scene: SCNScene, atTime time: TimeInterval) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self, !self.reportedRendered, Self.template != nil else { return }
+      self.reportedRendered = true
+      self.onStatus(["state": "rendered"])
+    }
   }
 
   func setYaw(_ value: Double) {

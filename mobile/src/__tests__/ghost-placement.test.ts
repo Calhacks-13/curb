@@ -38,3 +38,23 @@ it("fills a wider opening without capping its width to the neighboring car", () 
   expect(preview.bbox[2] - preview.bbox[0]).toBeCloseTo(950 * 0.96);
   expect(preview.bbox[3]).toBe(500);
 });
+
+it("keeps a confirmed preview aligned with moving live anchors from the submitted frame", () => {
+  const live: OnDeviceInference = { ...inference, vehicles: inference.vehicles.map((car) => ({ ...car,
+    bbox: car.bbox.map((value, axis) => value + (axis % 2 === 0 ? 90 : 0)) as [number, number, number, number],
+  })) };
+  const [preview] = ghostPlacements(live, analysis, inference);
+  expect((preview.bbox[0] + preview.bbox[2]) / 2).toBeCloseTo(565);
+});
+
+it("does not hide persistent vehicle detections with an extra 60% confidence gate", () => {
+  const lowerScores = { ...inference, vehicles: inference.vehicles.map((car) => ({ ...car, confidence: 0.5 })) };
+  expect(ghostPlacements(lowerScores, analysis)).toHaveLength(1);
+});
+
+it("removes the model as soon as a vehicle enters the old opening", () => {
+  const blocked: OnDeviceInference = { ...inference, vehicles: [...inference.vehicles,
+    { bbox: [300, 200, 650, 500], cls: "car", confidence: 0.9 },
+  ] };
+  expect(ghostPlacements(blocked, analysis, inference)).toEqual([]);
+});

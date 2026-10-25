@@ -25,6 +25,7 @@ export function buildDetectionSubmission(
   capturedAt: string,
 ): DetectionSubmission {
   return {
+    ...(context.preview_status ? { preview_status: context.preview_status.slice(0, 160) } : {}),
     captured_at: capturedAt,
     lat: context.lat,
     lng: context.lng,

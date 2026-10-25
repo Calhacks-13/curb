@@ -8,7 +8,6 @@ import { scheduleOnRN } from "react-native-worklets";
 import { getApi } from "@/api/client";
 import type { FrameAccepted, OnDeviceInference, SignFeedback } from "@/api/types";
 import { font, ink, shadow } from "@/config/tokens";
-import { GhostParkingOverlay } from "@/components/GhostParkingOverlay";
 import { DetectionOverlay } from "@/components/DetectionOverlay";
 import { ScannerDetails } from "@/components/ScannerDetails";
 import { ScannerExperience } from "@/components/ScannerExperience";
@@ -86,23 +85,31 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   const now = useNow(500);
   const [expanded, setExpanded] = useState(false);
   const [diagnostics, setDiagnostics] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState("Waiting for gap analysis");
   const changeExpanded = useCallback((next: boolean) => {
     setExpanded(next);
     onExpandedChange?.(next);
   }, [onExpandedChange]);
-  const latest = useRef({ frameContext, onSpotConfirmed });
+  const latest = useRef({ frameContext, onSpotConfirmed, previewStatus });
   const sessionRef = useRef<object | null>(null);
-  useEffect(() => { latest.current = { frameContext, onSpotConfirmed }; }, [frameContext, onSpotConfirmed]);
+  useEffect(() => { latest.current = { frameContext, onSpotConfirmed, previewStatus }; }, [frameContext, onSpotConfirmed, previewStatus]);
   const controller = useRef<DetectionUploadController | null>(null);
   useEffect(() => {
     controller.current = new DetectionUploadController({
-      context: () => latest.current.frameContext(),
+      context: () => {
+        const context = latest.current.frameContext();
+        return context ? { ...context, preview_status: latest.current.previewStatus } : null;
+      },
       upload: (payload) => getApi().uploadDetections(payload),
       onSpotConfirmed: (result) => latest.current.onSpotConfirmed?.(result),
       onDelivery: (event) => {
         const current = sessionRef.current;
         if (current) setLatestDelivery({ session: current, event });
         if (current && event.state === "delivered") {
+          const gaps = event.result.tracked_gaps ?? [];
+          const confirmed = gaps.filter((gap) => gap.confirmed).length;
+          setPreviewStatus(confirmed ? `${confirmed} confirmed opening${confirmed === 1 ? "" : "s"}`
+            : (event.result.gap_count ?? 0) > 0 ? "Candidate opening — hold steady to confirm" : "No opening detected");
           const readings = event.result.sign_feedback?.filter(isParkingReading);
           if (readings?.length) setLastSigns({ session: current, signs: readings });
         }
@@ -261,8 +268,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         onError={onCameraError}
         resizeMode="cover"
       />
-      <DetectionOverlay result={visibleInference} analysis={alignedAnalysis ? receipt : null} compact={!expanded} showSummary={false} showGaps={false} showLabels={diagnostics} />
-      <GhostParkingOverlay inference={visibleInference} analysis={alignedAnalysis ? receipt : null} compact={!expanded} />
+      <DetectionOverlay result={visibleInference} analysis={alignedAnalysis ? receipt : null} compact={!expanded} showSummary={false} showGaps showLabels={diagnostics} />
       {!expanded && <View style={styles.liveTag}>
         <LiveDot on={enabled && delivery?.state !== "failed"} reduceMotion={reduceMotion} />
         <Text style={styles.liveText}>{presentation.badge}</Text>
@@ -293,7 +299,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
             onCloseError={() => { changeExpanded(false); onStopScan?.(); }} />
           {diagnostics && enabled && <ScannerDetails analysis={receipt}
             lastSigns={lastSigns?.session === session ? lastSigns.signs : []}
-            inference={visibleInference} deliveryText={deliveryText} deliveryDetail={deliveryDetail}
+            inference={visibleInference} deliveryText={deliveryText} deliveryDetail={deliveryDetail} previewStatus={previewStatus}
             signCount={visibleInference?.signs.length ?? 0} fresh={!!alignedAnalysis} />}
           {fullScreenCloseButton}
         </>

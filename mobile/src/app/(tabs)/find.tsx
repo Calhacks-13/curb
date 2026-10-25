@@ -86,10 +86,11 @@ export default function FindScreen() {
 
   // New-opening alerts. Realtime events arrive outside render, so the handler
   // reads the latest screen state through a ref.
+  const announcedSpots = useRef(new Set<string>());
   const [spotAlert, setSpotAlert] = useState<SpotAlert | null>(null);
   const [avPosition, setAvPosition] = useState<AgentPosition | null>(null);
   const latest = useRef<{ state: ParkingState; area: SearchArea | null; driver: LngLat; routeTargetM: number | null } | null>(null);
-  const onRealtimeEvent = useCallback((event: RealtimeEvent) => {
+  const onRealtimeEvent = useCallback((event: RealtimeEvent, before: ParkingState) => {
     if (event.type === "agent.position") {
       const position = agentPositionPayload(event);
       if (position) setAvPosition(position);
@@ -97,9 +98,10 @@ export default function FindScreen() {
     }
     const L = latest.current;
     if (!L) return;
-    const hit = newOpening(event, L.state, L.area, Date.now());
+    const hit = newOpening(event, before, L.area, Date.now(), announcedSpots.current);
     if (!hit) return;
     if (L.routeTargetM != null && !worthInterruptingRoute(hit.position, L.driver, L.routeTargetM)) return;
+    announcedSpots.current.add(hit.id);
     setSpotAlert((prev) => mergeAlert(prev, hit.id, Date.now()));
     haptics.tap();
   }, []);

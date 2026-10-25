@@ -13,6 +13,7 @@ import asyncio
 import logging
 import json
 import hashlib
+import copy
 import uuid
 from collections import deque
 from datetime import UTC, datetime
@@ -236,21 +237,21 @@ class SpotManager:
         )
         self._spots[segment_id] = spot
         await self._persist(spot)
-        asyncio.create_task(_safe(signalr.broadcast_realtime_event(
-            event_type="space.opened",
-            entity_id=spot.id,
-            payload=_spot_payload(spot),
-            entity_version=spot.version,
-        )))
-
-        # Broadcast zone so mobile has legal_status context for the new spot
-        zone_payload = _zone_payload(segment_id, lat, lng, sign_rules, version=spot.version)
-        asyncio.create_task(_safe(signalr.broadcast_realtime_event(
-            event_type="sign_rule.updated",
-            entity_id=segment_id,
-            payload=zone_payload,
-            entity_version=spot.version,
-        )))
+        # Keep context and opening ordered on both transports. One task also
+        # avoids blocking camera processing on the external Web PubSub request.
+        version = spot.version
+        zone_payload = _zone_payload(segment_id, lat, lng, sign_rules, version=version)
+        space_payload = _spot_payload(spot)
+        async def announce_opening():
+            await signalr.broadcast_realtime_event(
+                event_type="sign_rule.updated", entity_id=segment_id,
+                payload=zone_payload, entity_version=version,
+            )
+            await signalr.broadcast_realtime_event(
+                event_type="space.opened", entity_id=spot.id,
+                payload=space_payload, entity_version=version,
+            )
+        asyncio.create_task(_safe(announce_opening()))
 
         logger.info("Spot OPENED %s at (%.5f, %.5f) segment=%s", spot.id, lat, lng, segment_id)
         self.record("space.opened", spot.last_transition_reason, spot, session_id=session_id)
@@ -440,6 +441,9 @@ class Pipeline:
         self.recent_blocks: deque[dict] = deque(maxlen=50)
         self._reading_cache: dict[tuple[str, str], SignPoleReading] = {}
         self._lock = asyncio.Lock()
+        self._sign_jobs: dict[str, asyncio.Task] = {}
+        self._sign_read_slots = asyncio.Semaphore(2)
+        self.recent_frames: deque[dict] = deque(maxlen=120)
         self.mapping_mode: bool = False  # when True, spots are saved as permanent seed
 
     @property
@@ -452,6 +456,9 @@ class Pipeline:
         return self._sessions[session_id]
 
     def cleanup_session(self, session_id: str):
+        job = self._sign_jobs.pop(session_id, None)
+        if job is not None:
+            job.cancel()
         state = self._sessions.pop(session_id, None)
         if state is not None:
             for gap in state.gap_tracker.invalidate("session_ended"):
@@ -472,6 +479,69 @@ class Pipeline:
         )
         return segment_id
 
+    async def wait_for_sign_reads(self):
+        """Drain current OCR jobs for deterministic shutdown/integration checks."""
+        if self._sign_jobs:
+            await asyncio.gather(*list(self._sign_jobs.values()))
+
+    async def close(self):
+        jobs = list(self._sign_jobs.values())
+        for job in jobs:
+            job.cancel()
+        if jobs:
+            await asyncio.gather(*jobs, return_exceptions=True)
+        self._sign_jobs.clear()
+
+    def _schedule_sign_reads(self, session_id, session, ready_tracks, heading):
+        if session_id in self._sign_jobs or len(self._sign_jobs) >= 16:
+            return
+        selected = sorted(ready_tracks, key=lambda track: track.best_crop_area, reverse=True)[:2]
+        snapshots = []
+        for track in selected:
+            track.read_requested = True
+            track.read_attempts += 1
+            track.read_confidence = track.best_crop_confidence
+            track.read_area = track.best_crop_area
+            track.read_hits = track.hits
+            snapshots.append(copy.deepcopy(track))
+        task = asyncio.create_task(self._read_signs_in_background(session_id, session, snapshots, heading))
+        self._sign_jobs[session_id] = task
+        def finished(done):
+            if self._sign_jobs.get(session_id) is done:
+                self._sign_jobs.pop(session_id, None)
+            if not done.cancelled() and done.exception() is not None:
+                logger.error("Sign result processing failed (%s)", type(done.exception()).__name__)
+        task.add_done_callback(finished)
+
+    async def _read_signs_in_background(self, session_id, session, snapshots, heading):
+        direction = make_road_segment_id(0, 0, heading).rsplit(",", 1)[-1]
+        async def read(track):
+            key = (hashlib.sha256(track.best_crop_bytes).hexdigest(), direction)
+            cached = self._reading_cache.get(key)
+            if cached is not None:
+                return cached.model_copy(deep=True)
+            try:
+                async with self._sign_read_slots:
+                    result = assess_reading(await asyncio.wait_for(read_sign_pole(track.best_crop_bytes), timeout=15))
+            except Exception as error:
+                logger.warning("Sign reading failed (%s)", type(error).__name__)
+                result = SignPoleReading(combined_summary="Sign reading unavailable. Try a clearer view.", flagged=True)
+            if not result.flagged:
+                self._reading_cache[key] = result.model_copy(deep=True)
+                if len(self._reading_cache) > 256:
+                    self._reading_cache.pop(next(iter(self._reading_cache)))
+            return result
+        readings = dict(zip((track.id for track in snapshots), await asyncio.gather(*(read(track) for track in snapshots))))
+        async with self._lock:
+            if self._sessions.get(session_id) is not session:
+                return
+            for track in session.sign_tracker.tracks:
+                if track.id in readings:
+                    track.read_result = readings[track.id].model_copy(deep=True)
+            result = await self._process_sign_tracks(snapshots, heading, readings)
+            if result is not None:
+                session.last_sign_reading = result
+
     async def maintain(self, now: datetime | None = None):
         async with self._lock:
             for session_id, state in self._sessions.items():
@@ -481,8 +551,8 @@ class Pipeline:
             await self._spot_mgr.refresh_rule_times(now)
 
     async def process_detections(self, *args, **kwargs):
-        # Sign reading and persistence await I/O; serialize lifecycle mutations
-        # across phones and the maintenance task to preserve event versions.
+        # Serialize tracking/persistence mutations; external OCR runs outside this
+        # lock so it cannot age out the phone's live gap feedback.
         async with self._lock:
             return await self._process_detections(*args, **kwargs)
 
@@ -552,11 +622,11 @@ class Pipeline:
             # Process confirmed tracks that haven't been read yet
             ready_tracks = [t for t in all_sign_tracks if t.needs_reading]
             if ready_tracks:
-                sign_pole_reading = await self._process_sign_tracks(
-                    ready_tracks, heading
-                )
-                if sign_pole_reading is not None:
-                    session.last_sign_reading = sign_pole_reading
+                self._schedule_sign_reads(session_id, session, ready_tracks, heading)
+            readings = [track.read_result for track in all_sign_tracks
+                        if track.time_since_update == 0 and track.read_result is not None]
+            if readings:
+                sign_pole_reading = merge_curb_readings(readings) or readings[0]
         else:
             session.sign_tracker.update([])
 
@@ -774,7 +844,7 @@ class Pipeline:
         }
 
     async def _process_sign_tracks(
-        self, ready_tracks: list[SignTrack], heading: float,
+        self, ready_tracks: list[SignTrack], heading: float, readings_by_track: dict[int, SignPoleReading],
     ) -> SignPoleReading | None:
         # Bound external reading work per submission. Each individual sign crop
         # is read: selecting only the highest-confidence crop discarded the
@@ -790,24 +860,7 @@ class Pipeline:
             est_lat, est_lng, uncertainty = triangulate_sign(observations)
             road_seg_id = make_road_segment_id(est_lat, est_lng, heading)
 
-            async def read_track(track):
-                track.read_requested = True
-                track.read_attempts += 1
-                track.read_confidence = track.best_crop_confidence
-                track.read_area = track.best_crop_area
-                track.read_hits = track.hits
-                key = (hashlib.sha256(track.best_crop_bytes).hexdigest(), road_seg_id.rsplit(",", 1)[-1])
-                reading = self._reading_cache.get(key)
-                if reading is None:
-                    reading = assess_reading(await read_sign_pole(track.best_crop_bytes))
-                    if not reading.flagged:
-                        self._reading_cache[key] = reading.model_copy(deep=True)
-                        if len(self._reading_cache) > 256:
-                            self._reading_cache.pop(next(iter(self._reading_cache)))
-                track.read_result = reading.model_copy(deep=True)
-                return reading
-
-            readings = await asyncio.gather(*(read_track(track) for track in pole_tracks))
+            readings = [readings_by_track[track.id] for track in pole_tracks]
             parking = merge_curb_readings(readings)
             pole_reading = parking or readings[0]
             if result is None or has_curb_evidence(pole_reading) and not has_curb_evidence(result):

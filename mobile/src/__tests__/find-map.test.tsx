@@ -219,6 +219,34 @@ describe("Find map from the live typed client", () => {
     return { type, entity_id: id, entity_version: version, occurred_at: observed, payload: { ...nearby.spaces[0], id, last_observed_at: observed, base_confidence: base, version } };
   };
 
+  it("notifies a second client when a new zone and opening arrive in the same batch, once only", async () => {
+    await mount();
+    const opening = spaceEvent("space.opened", "friend-scan", 1, 0.95);
+    opening.payload.zone_id = "friend-zone";
+    const zone: RealtimeEvent = { type: "sign_rule.updated", entity_id: "friend-zone", entity_version: 1,
+      occurred_at: new Date(NOW).toISOString(), payload: { ...nearby.zones[0], id: "friend-zone", legal_status_now: "UNKNOWN" } };
+    await act(async () => { mockOnEvent(zone); mockOnEvent(opening); });
+    expect(screen.getByText("New spot opened")).toBeTruthy();
+    expect(latest("setPills").pills.some((pill) => pill.id === "friend-scan")).toBe(true);
+    await tick(6000);
+    expect(screen.queryByText("New spot opened")).toBeNull();
+    await act(async () => mockOnEvent({ ...opening, entity_version: 2 }));
+    expect(screen.queryByText("New spot opened")).toBeNull();
+  });
+
+  it("does not recommend an opening on a curb known to prohibit parking", async () => {
+    await mount();
+    const opening = spaceEvent("space.opened", "illegal-scan", 1, 0.95);
+    opening.payload.zone_id = "no-parking";
+    await act(async () => {
+      mockOnEvent({ type: "sign_rule.updated", entity_id: "no-parking", entity_version: 1,
+        occurred_at: new Date(NOW).toISOString(), payload: { ...nearby.zones[0], id: "no-parking", legal_status_now: "ILLEGAL" } });
+      mockOnEvent(opening);
+    });
+    expect(screen.queryByText("New spot opened")).toBeNull();
+    expect(latest("setPills").pills.some((pill) => pill.id === "illegal-scan")).toBe(false);
+  });
+
   it("keeps route confidence live, reports drops, and replaces below 50% only on confirmation", async () => {
     await routeToFresh();
     expect(screen.getByLabelText("Chance the spot is open: 65 percent")).toBeTruthy();

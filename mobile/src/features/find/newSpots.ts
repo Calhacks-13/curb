@@ -18,10 +18,13 @@ export const ALERT_MERGE_MS = 5000;
  * re-sighting), the stall's curb isn't known to be illegal, the sighting is
  * fresh, and it's inside the search area.
  */
-export function newOpening(event: RealtimeEvent, state: ParkingState, area: SearchArea | null, now: number): { id: string; position: LngLat } | null {
+export function newOpening(event: RealtimeEvent, state: ParkingState, area: SearchArea | null, now: number, announced: ReadonlySet<string> = new Set()): { id: string; position: LngLat } | null {
   if (event.type !== "space.opened") return null;
+  if (announced.has(event.entity_id)) return null;
   const known = state.spaces[event.entity_id];
-  const space = { ...(known ?? {}), ...event.payload } as Partial<ParkingSpace>;
+  // Existing map supply and replayed events are never new discoveries.
+  if (known) return null;
+  const space = event.payload as Partial<ParkingSpace>;
   const position = space.location?.coordinates;
   const zone = space.zone_id ? state.zones[space.zone_id] : undefined;
   if (!position || !showsOpenings(zone)) return null;

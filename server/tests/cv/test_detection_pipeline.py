@@ -665,7 +665,7 @@ async def test_same_frame_new_confirmation_prevents_transient_occupation(edge_se
     assert cosmos._mem_spots[spot.id]["status"] == "open"
     assert spot.version == 2
     assert [e["type"] for e in signalr.get_recent_events()] == [
-        "space.opened", "sign_rule.updated", "space.refreshed",
+        "sign_rule.updated", "space.opened", "space.refreshed",
     ]
 
 
@@ -810,9 +810,12 @@ async def test_best_crop_reaches_sign_reading_and_sign_is_persisted(local_servic
         result = await submit(pipeline, signs=[SignDetection(
             bbox=[700, 40, 740, 120], confidence=confidence, crop_bytes=crop,
         )])
+    await pipeline.wait_for_sign_reads()
     await flush_background_tasks()
 
     assert read_crops == [b"best"]
+    assert result["frame_result"].sign_rules is None  # The upload returns before OCR.
+    result = await submit(pipeline, signs=[SignDetection(bbox=[700, 40, 740, 120], confidence=0.7, crop_bytes=b"after-read")])
     assert result["frame_result"].scene_valid is True
     assert result["frame_result"].sign_rules == reading
     feedback = result["frame_result"].sign_feedback[0]
@@ -825,7 +828,7 @@ async def test_best_crop_reaches_sign_reading_and_sign_is_persisted(local_servic
     assert repeated["frame_result"].sign_feedback[0]["reading"] == feedback["reading"]
     assert read_crops == [b"best"]
     track = pipeline._sessions["drive"].sign_tracker.tracks[0]
-    assert len(track.gps_observations) == 4
+    assert len(track.gps_observations) == 5
     assert track.read_result == reading
     assert pipeline._sessions["drive"].last_sign_reading == reading
     assert len(cosmos._mem_signs) == 1
@@ -854,12 +857,14 @@ async def test_repeat_sign_scan_persists_confirmation_without_duplicate(local_se
 
     for _ in range(3):
         await submit(pipeline, signs=[sign], session_id="first-pass")
+    await pipeline.wait_for_sign_reads()
     await flush_background_tasks()
     sign_id, stored_before = next(iter(cosmos._mem_signs.items()))
     confirmed_before = stored_before["last_confirmed"]
 
     for _ in range(3):
         await submit(pipeline, signs=[sign], session_id="repeat-pass")
+    await pipeline.wait_for_sign_reads()
     await flush_background_tasks()
 
     assert read_crops == [b"sign"]
@@ -886,6 +891,7 @@ async def test_opposite_direction_sign_scan_is_not_deduplicated(local_services, 
         await submit(pipeline, signs=[sign], session_id="east-pass", heading=90.0)
     for _ in range(3):
         await submit(pipeline, signs=[sign], session_id="west-pass", heading=270.0)
+    await pipeline.wait_for_sign_reads()
     await flush_background_tasks()
 
     assert read_crops == [b"sign", b"sign"]
@@ -916,7 +922,7 @@ async def test_empty_submissions_expire_tracks_without_occupying_spot(local_serv
     assert pipeline.spots_in_memory == 1
     assert len(cosmos._mem_blocks) == 1
     assert [s["status"] for s in cosmos._mem_spots.values()] == ["open"]
-    assert [e["type"] for e in signalr.get_recent_events()] == ["space.opened", "sign_rule.updated"]
+    assert [e["type"] for e in signalr.get_recent_events()] == ["sign_rule.updated", "space.opened"]
 
     session = pipeline._sessions["drive"]
     vehicle_tracks = list(session.vehicle_tracker.tracks)

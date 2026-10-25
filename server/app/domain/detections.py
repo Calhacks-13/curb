@@ -189,6 +189,7 @@ class DetectionSubmission(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128, strict=True)
     device_id: str = Field(min_length=1, max_length=128, strict=True)
+    preview_status: str | None = Field(default=None, max_length=160)
     captured_at: datetime
     lat: Annotated[FiniteNumber, Field(ge=-90, le=90)]
     lng: Annotated[FiniteNumber, Field(ge=-180, le=180)]

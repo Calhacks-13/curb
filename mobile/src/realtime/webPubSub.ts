@@ -47,6 +47,15 @@ export function connectWebPubSub(
   let retry: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let lastSeq = 0;
+  let polling = false;
+  const delivered = new Set<string>();
+  function deliver(event: RealtimeEvent) {
+    const key = `${event.type}:${event.entity_id}:${event.entity_version}`;
+    if (delivered.has(key)) return;
+    delivered.add(key);
+    if (delivered.size > 2000) delivered.delete(delivered.values().next().value!);
+    onEvent(event);
+  }
 
   function stopPolling() {
     if (pollTimer) {
@@ -57,24 +66,28 @@ export function connectWebPubSub(
 
   function startPolling() {
     if (pollTimer || closed || !pollUrl) return;
-    onStatus?.("open"); // polling is a degraded "open"
-    pollTimer = setInterval(async () => {
-      if (closed) { stopPolling(); return; }
+    const poll = async () => {
+      if (closed || polling) return;
+      polling = true;
       try {
         const res = await fetch(`${pollUrl}?since=${lastSeq}`);
-        if (!res.ok) return;
+        if (!res.ok || closed) return;
         const data = await res.json();
+        if (closed) return;
+        onStatus?.("open");
         const events: unknown[] = data?.events ?? [];
         for (const raw of events) {
           const seq = (raw as Record<string, unknown>)?.seq;
           if (typeof seq === "number" && seq > lastSeq) lastSeq = seq;
           const event = parseRealtimeEvent(raw);
-          if (event) onEvent(event);
+          if (event) deliver(event);
         }
       } catch {
-        // Network error during poll — keep trying on next interval.
-      }
-    }, POLL_INTERVAL_MS);
+        // Keep the last good map through temporary network failures.
+      } finally { polling = false; }
+    };
+    pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+    void poll();
   }
 
   async function open() {
@@ -87,7 +100,7 @@ export function connectWebPubSub(
       ws = new WebSocket(url, "json.webpubsub.azure.v1");
       ws.onopen = () => {
         attempt = 0;
-        stopPolling(); // WS connected — stop polling if active
+        // Keep the polling safety net: an open socket does not prove pushes arrive.
         onStatus?.("open");
       };
       ws.onmessage = (msg) => {
@@ -95,7 +108,7 @@ export function connectWebPubSub(
           const frame = JSON.parse(String(msg.data));
           // Server messages arrive as { type: "message", data: <event> }.
           const event = parseRealtimeEvent(frame?.type === "message" ? frame.data : frame);
-          if (event) onEvent(event);
+          if (event) deliver(event);
         } catch {
           // Ignore malformed frames.
         }
@@ -121,6 +134,7 @@ export function connectWebPubSub(
   }
 
   open();
+  startPolling();
 
   return {
     close() {

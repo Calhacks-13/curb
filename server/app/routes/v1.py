@@ -8,6 +8,7 @@ and the mobile's ParkingSpace/CurbZone/NearbyParkingResponse contract.
 
 import uuid
 import logging
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
@@ -259,6 +260,7 @@ def _driveway_to_view(dw: dict) -> dict:
 @router.post("/vision/detections")
 async def upload_detections(request: Request, submission: DetectionSubmission):
     """Accept validated on-device detections and return confirmed-space feedback."""
+    started_at = time.perf_counter()
     vehicles, signs = submission.to_pipeline_input()
     pipeline = get_pipeline()
     if hasattr(pipeline, "set_repository"):
@@ -303,6 +305,20 @@ async def upload_detections(request: Request, submission: DetectionSubmission):
         block_dict = confirmed.model_dump(mode="json")
         response["space"] = _block_to_space(block_dict).model_dump(mode="json")
         response["zone"] = _block_to_zone(block_dict, []).model_dump(mode="json")
+    if hasattr(pipeline, "recent_frames"):
+        stats = {
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "session_id": submission.session_id,
+            "preview_status": submission.preview_status,
+            "processing_ms": round((time.perf_counter() - started_at) * 1000),
+            "vehicles": len(fr.vehicles), "gaps": fr.gap_estimate,
+            "confirmed_interior_gaps": sum(gap.confirmed and gap.left_track_id >= 0 and gap.right_track_id >= 0 for gap in fr.tracked_gaps),
+            "sign_read_pending": submission.session_id in pipeline._sign_jobs,
+        }
+        previous = next((frame for frame in reversed(pipeline.recent_frames) if frame["session_id"] == submission.session_id), {})
+        pipeline.recent_frames.append(stats)
+        if stats["confirmed_interior_gaps"] or stats["processing_ms"] >= 1500 or stats["preview_status"] != previous.get("preview_status"):
+            logging.getLogger("uvicorn.error.curb.lifecycle").info("cv_frame %s", stats)
     return response
 
 
@@ -318,6 +334,7 @@ async def debug_state():
     sessions_info = {}
     for sid, sess in pipeline._sessions.items():
         sessions_info[sid] = {
+            "sign_read_pending": sid in pipeline._sign_jobs,
             "vehicle_tracks": len(sess.vehicle_tracker.tracks),
             "confirmed_gaps": len(sess.gap_tracker._confirmed),
             "sign_tracks": len(sess.sign_tracker.tracks),
@@ -357,6 +374,7 @@ async def debug_state():
         "sessions": sessions_info,
         "spots": spots_info,
         "signs_deduped": signs_info,
+        "recent_frames": list(pipeline.recent_frames),
         "recent_blocks": len(pipeline.recent_blocks),
         "event_buffer": len(signalr.get_recent_events(0)),
         "transitions": list(mgr.transitions),
