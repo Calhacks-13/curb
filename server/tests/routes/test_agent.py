@@ -13,7 +13,7 @@ from app.domain.driveways import (
     DrivewayService,
     InMemoryDrivewayRepository,
 )
-from app.models.domain import DrivewayState
+from app.models.domain import AgentPositionEvent, DrivewayState
 from app.routes.agent import (
     AV_ID,
     AV_ROUTE,
@@ -162,6 +162,56 @@ async def test_payment_failure_is_logged_and_does_not_invent_a_booking(caplog):
     assert held.state == DrivewayState.HELD
     assert booking.transaction_hash is None
     assert "payments unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_response_is_not_logged_as_booked(caplog):
+    publisher = RecordingPublisher()
+    service = DrivewayService(InMemoryDrivewayRepository([driveway()]), publisher)
+
+    class ReconciliationPayment:
+        async def execute(self, booking_id: str, caller_token: str) -> dict:
+            booking = await service.repository.get_booking(booking_id)
+            return {
+                "booking": {
+                    **booking.to_view().model_dump(mode="json"),
+                    "state": "RECONCILIATION_REQUIRED",
+                    "payment_status": "SETTLED",
+                    "transaction_hash": TX_HASH,
+                }
+            }
+
+    async def immediate_sleep(_seconds):
+        return None
+
+    runner = AgentDemoRunner(
+        service,
+        ReconciliationPayment(),
+        publish_position=lambda *_args: immediate_sleep(0),
+        sleep=immediate_sleep,
+        clock=lambda: NOW,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        assert runner.start() is True
+        await runner.task
+
+    held = await service.get_driveway(TARGET_DRIVEWAY_ID, NOW)
+    assert held.state == DrivewayState.HELD
+    assert f"Booked {TARGET_DRIVEWAY_ID}" not in caplog.text
+    assert "awaiting reconciliation" in caplog.text
+
+
+def test_agent_position_is_a_valid_server_realtime_event():
+    event = AgentPositionEvent(
+        type="agent.position",
+        entity_id=AV_ID,
+        entity_version=6,
+        occurred_at=NOW,
+        payload={"position": list(AV_ROUTE[-1][0]), "heading": 67},
+    )
+
+    assert event.payload.position == AV_ROUTE[-1][0]
 
 
 @pytest.mark.asyncio

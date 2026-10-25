@@ -116,6 +116,10 @@ class AgentDemoRunner:
 
         result = await self.payment.execute(booking.id, AV_TOKEN)
         paid = result["booking"]
+        if paid.get("state") != "CONFIRMED":
+            raise RuntimeError(
+                f"payment is {paid.get('state', 'UNKNOWN')}; awaiting reconciliation"
+            )
         transaction_hash = paid.get("transaction_hash")
         if not transaction_hash:
             raise ValueError("payment service did not return a transaction hash")

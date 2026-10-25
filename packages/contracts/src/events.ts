@@ -75,6 +75,17 @@ export const RealtimeEventSchema = z.discriminatedUnion("type", [
       retryable: z.boolean(),
     }),
   }),
+  z.strictObject({
+    type: z.literal("agent.position"),
+    ...eventBase,
+    payload: z.strictObject({
+      position: z.tuple([
+        z.number().finite().min(-180).max(180),
+        z.number().finite().min(-90).max(90),
+      ]),
+      heading: z.number().finite().min(0).lt(360),
+    }),
+  }),
 ]);
 
 export type RealtimeEvent = z.infer<typeof RealtimeEventSchema>;

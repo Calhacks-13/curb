@@ -317,6 +317,13 @@ class PaymentFailedPayload(ContractModel):
     retryable: bool
 
 
+class AgentPositionPayload(ContractModel):
+    position: LngLat
+    heading: float = Field(ge=0, lt=360)
+
+    _position_valid = field_validator("position")(_validate_lng_lat)
+
+
 class RealtimeEventBase(ContractModel):
     entity_id: str = Field(min_length=1)
     entity_version: int = Field(gt=0)
@@ -373,6 +380,11 @@ class PaymentFailedEvent(RealtimeEventBase):
     payload: PaymentFailedPayload
 
 
+class AgentPositionEvent(RealtimeEventBase):
+    type: Literal["agent.position"]
+    payload: AgentPositionPayload
+
+
 RealtimeEvent = Annotated[
     SpaceOpenedEvent
     | SpaceRefreshedEvent
@@ -383,6 +395,7 @@ RealtimeEvent = Annotated[
     | DrivewayHeldEvent
     | DrivewayReleasedEvent
     | BookingConfirmedEvent
-    | PaymentFailedEvent,
+    | PaymentFailedEvent
+    | AgentPositionEvent,
     Field(discriminator="type"),
 ]
