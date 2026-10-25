@@ -53,6 +53,7 @@ const MARKER_CSS = `
     background: ${ink.white}; color: ${status.driveway}; display: grid; place-items: center; box-shadow: 0 0 0 1.5px ${status.driveway}; }
   .pin.is-muted .callout { background: ${ink.grey100}; color: ${ink.grey500}; box-shadow: none; }
   .pin.is-muted .chip-driveway { background: ${ink.grey300}; }
+  .pin.is-muted .tail { border-top-color: ${ink.grey100}; filter: none; }
   .pin.is-selected .callout { background: ${ink.black}; color: ${ink.white}; }
   .pin.is-selected .tail { border-top-color: ${ink.black}; }
   /* Night: callouts invert so the selected one is the brightest thing on the map. */
@@ -62,6 +63,8 @@ const MARKER_CSS = `
   .night .chip-aging { border-color: ${status.agingNight}; color: ${status.agingNight}; }
   .night .chip-stale { border-color: ${status.staleNight}; color: ${status.staleNight}; }
   .night .chip-driveway { background: ${status.drivewayNight}; }
+  .night .pin.is-muted .chip-driveway { background: ${ink.grey500}; }
+  .night .pin.is-muted .tail { border-top-color: ${ink.grey900}; }
   .night .chip-badge { color: ${status.drivewayNight}; box-shadow: 0 0 0 1.5px ${status.drivewayNight}; }
   .night .pin.is-selected .callout { background: ${ink.white}; color: ${ink.black}; }
   .night .pin.is-selected .tail { border-top-color: ${ink.white}; }

@@ -75,6 +75,21 @@ it("executes supply messages into stall polygons and semantic pin buttons, then 
     expect(page.messages.at(-1)).toEqual({ type: "spotTapped", id: "fresh" });
     page.handlers.get("click:stall-fill")?.({ features: [{ properties: { id: "fresh" } }] });
     expect(page.messages.at(-1)).toEqual({ type: "spotTapped", id: "fresh" });
+
+    page.send({ type: "setPills", pills: [
+      { id: "driveway", kind: "driveway", label: "Booked $5.00", position, muted: true },
+    ] });
+    const booked = page.document.querySelector<HTMLButtonElement>("button.pin");
+    expect(booked?.textContent).toContain("Booked $5.00");
+    expect(booked?.classList.contains("is-muted")).toBe(true);
+    expect(booked?.getAttribute("aria-label")).toBe("Driveway. Booked $5.00.");
+    expect(booked?.getAttribute("aria-label")).not.toMatch(/guaranteed after payment/i);
+    expect(page.window.getComputedStyle(booked!.querySelector(".callout")!).backgroundColor).toBe("rgb(242, 242, 244)");
+    expect(page.window.getComputedStyle(booked!.querySelector(".chip-driveway")!).backgroundColor).toBe("rgb(199, 199, 204)");
+    expect(page.window.getComputedStyle(booked!.querySelector(".tail")!).borderTopColor).toBe("rgb(242, 242, 244)");
+    page.document.body.classList.add("night");
+    expect(page.window.getComputedStyle(booked!.querySelector(".chip-driveway")!).backgroundColor).toBe("rgb(110, 110, 115)");
+
     page.send({ type: "setPills", pills: [] });
     page.send({ type: "setStalls", stalls: [] });
     expect(page.document.querySelectorAll("button.pin")).toHaveLength(0);
