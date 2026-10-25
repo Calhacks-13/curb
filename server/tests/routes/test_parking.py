@@ -204,6 +204,25 @@ def test_local_demo_seed_refreshes_observations_without_changing_fixture_data(se
     assert fixture.nearby.spaces[0].last_observed_at == datetime(2026, 10, 24, 0, 59, 40, tzinfo=UTC)
 
 
+def test_local_demo_seed_opens_driveways_for_24_hours_from_startup(seed):
+    """Seeded driveways are bookable from server start until 24 hours later."""
+    from app.repositories.memory import InMemoryParkingRepository
+    from app.seed.loader import load_seed
+
+    fixture = PublicSeedFixture.model_validate(seed)
+    reference = datetime(2026, 10, 25, 10, 19, tzinfo=UTC)
+    repository = InMemoryParkingRepository()
+
+    asyncio.run(load_seed(repository, fixture, refresh_observations=True, now=reference))
+
+    driveways = asyncio.run(repository.list_driveways())
+    assert {driveway.id for driveway in driveways} == {"driveway_demo_1", "driveway_av_1"}
+    for driveway in driveways:
+        assert driveway.availability_start == reference
+        assert driveway.availability_end == reference + timedelta(hours=24)
+    assert fixture.nearby.driveways[0].availability_start == datetime(2026, 10, 24, tzinfo=UTC)
+
+
 def test_confirmed_scan_is_saved_to_the_canonical_map_repository(seed):
     from app.models.cv import BlockObservation
     from app.routes.v1 import _persist_confirmed_scan

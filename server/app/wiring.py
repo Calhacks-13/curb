@@ -34,13 +34,15 @@ def _local_time(value: str) -> time:
 
 
 def _window(start_hhmm: str, end_hhmm: str, now: datetime) -> tuple[datetime, datetime]:
-    """Today's Pacific window for HH:MM bounds, rolled forward once it has ended."""
+    """The Pacific window for HH:MM bounds that contains ``now``, or else the next one."""
     today = now.astimezone(LA).date()
     start = datetime.combine(today, _local_time(start_hhmm), LA)
     end = datetime.combine(today, _local_time(end_hhmm), LA)
     if end <= start:
         end += timedelta(days=1)  # overnight window
-    if now >= end:
+    if now < end - timedelta(days=1):
+        start, end = start - timedelta(days=1), end - timedelta(days=1)  # opened yesterday
+    elif now >= end:
         start, end = start + timedelta(days=1), end + timedelta(days=1)
     return start.astimezone(UTC), end.astimezone(UTC)
 

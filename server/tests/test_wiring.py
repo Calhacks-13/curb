@@ -92,6 +92,20 @@ def test_seed_driveway_accepts_contract_utc_timestamps():
     assert driveway.availability_start <= NOW < driveway.availability_end
 
 
+def test_overnight_window_opened_yesterday_is_still_available_after_midnight():
+    """A window running 17:00 to 17:00 Pacific stays open at 03:00 the next morning."""
+    contract_seed = {
+        **SEED["driveway_demo_1"],
+        "availability_start": "2026-10-25T00:00:00Z",  # 17:00 Pacific
+        "availability_end": "2026-10-26T00:00:00Z",  # 17:00 Pacific next day
+    }
+    early = datetime(2026, 10, 25, 10, 0, tzinfo=UTC)  # 03:00 Pacific
+
+    driveway = driveway_from_seed(contract_seed, early)
+
+    assert driveway.availability_start <= early < driveway.availability_end
+
+
 def test_unauthenticated_hold_is_rejected():
     client, _ = build_client()
     response = client.post("/v1/driveways/driveway_demo_1/holds", json={"expected_version": 1})
