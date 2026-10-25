@@ -17,11 +17,9 @@ type Props = {
   onRetry: () => void;
 };
 
-const MAX_ROWS = 4;
-
 /** Ranked nearby options: fresh curb openings first, then the guaranteed driveway, then aging. */
 export function NearbyList({ options, reservation = null, load, locating = false, onOpen, onRetry }: Props) {
-  const rows = options.filter((o) => o.id !== reservation?.id).slice(0, MAX_ROWS);
+  const rows = options.filter((o) => o.id !== reservation?.id);
 
   return (
     <View>
