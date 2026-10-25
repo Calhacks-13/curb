@@ -106,7 +106,11 @@ describe("Find map from the live typed client", () => {
     await mount();
     await fireEvent(screen.getByTestId("map-webview"), "message", { nativeEvent: { data: JSON.stringify({ type: "spotTapped", id: "fresh" }) } });
     expect(await screen.findByText("Two-hour parking allowed now.")).toBeTruthy();
-    expect(screen.getByLabelText("Confidence: 93%")).toBeTruthy();
+    expect(screen.getByLabelText("Chance the spot is open: 65 percent")).toBeTruthy();
+    expect(latest("setPills").pills.find((p) => p.id === "fresh")?.label).toBe("65% open");
+    expect(screen.getByLabelText("Detection confidence: 90%")).toBeTruthy();
+    expect(screen.getByLabelText("Parking rule confidence: 97%")).toBeTruthy();
+    expect(screen.queryByText("Likely open")).toBeNull();
     expect(screen.getByText("2 hr")).toBeTruthy();
     expect(mockFetch.mock.calls.some(([url]) => url.includes("directions/"))).toBe(false);
     expect(latest("setRoute")).toBeUndefined();

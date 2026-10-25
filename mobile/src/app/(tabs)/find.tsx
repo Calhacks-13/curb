@@ -395,6 +395,8 @@ export default function FindScreen() {
             <SpaceDetailSheet
               option={detailOption}
               ageSeconds={spaceAge(detailOption.id)}
+              confidencePercent={detailOption.confidencePercent ?? 0}
+              detectionConfidence={state.spaces[detailOption.id]?.detection_confidence ?? 0}
               load={detail.load}
               routing={routing}
               onRoute={() => routeTo(detailOption)}
