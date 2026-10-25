@@ -56,8 +56,9 @@ def test_repository_round_trips_seed_without_storage_metadata_or_overwriting(ada
         assert (await repository.get_space("space_demo_1")).version == 1
         assert len(await repository.list_spaces()) == 3
         assert len(await repository.list_zones()) == 1
-        assert len(await repository.list_driveways()) == 1
+        assert len(await repository.list_driveways()) == 2
         assert (await repository.get_user("owner_demo")).display_name == "Driveway Owner"
+        assert (await repository.get_user("av_demo")).display_name == "Autonomous Vehicle"
         assert (await repository.get_zone("zone_demo_1")).sign_rule_id == "sign_rule_demo_1"
         assert (await repository.get_rule("sign_rule_demo_1")).max_minutes == 120
         assert await repository.get_space("missing") is None

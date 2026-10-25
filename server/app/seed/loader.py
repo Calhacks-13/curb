@@ -33,7 +33,7 @@ async def load_seed(
             }
         )
     for collection, values in (
-        ("users", [fixture.driver, fixture.owner]),
+        ("users", [fixture.driver, fixture.owner, fixture.av]),
         ("zones", fixture.nearby.zones),
         ("spaces", fixture.nearby.spaces),
         ("rules", [fixture.sign_rule]),

@@ -218,6 +218,7 @@ export const AgentParkingOptionSchema = z.strictObject({
 export const PublicSeedFixtureSchema = z.strictObject({
   driver: UserViewSchema,
   owner: UserViewSchema,
+  av: UserViewSchema,
   sign_rule: SignRuleViewSchema,
   driveway: DrivewayViewSchema,
   booking: BookingViewSchema,

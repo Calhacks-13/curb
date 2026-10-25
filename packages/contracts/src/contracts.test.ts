@@ -22,6 +22,10 @@ describe("shared contracts", () => {
     const seed = PublicSeedFixtureSchema.parse(PUBLIC_SEED_FIXTURE);
 
     expect(NearbyParkingResponseSchema.parse(seed.nearby)).toEqual(seed.nearby);
+    expect(seed.av.id).toBe("av_demo");
+    expect(seed.nearby.driveways).toContainEqual(
+      expect.objectContaining({ id: "driveway_av_1", price_usdc: "5.00" }),
+    );
     expect(
       DemoSessionResponseSchema.parse({ user: seed.driver, token: "driver-demo-token" }),
     ).toEqual({ user: seed.driver, token: "driver-demo-token" });
