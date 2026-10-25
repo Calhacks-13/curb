@@ -148,17 +148,47 @@ later submissions/confirmations. There is no offline queue. JSON goes to
   "captured_at": "2026-10-24T18:00:00.000Z",
   "lat": 37.8,
   "lng": -122.4,
+  "accuracy_m": null,
   "heading": 180,
   "frame_width": 1280,
   "frame_height": 720,
   "vehicles": [{ "bbox": [10, 20, 200, 300], "cls": "car", "confidence": 0.85 }],
-  "signs": [{ "bbox": [400, 80, 440, 160], "confidence": 0.7, "crop_b64": "<sign JPEG only>" }]
+  "signs": []
 }
 ```
 
-Payload size varies with detections/crops. Full frames never leave the device.
-FastAPI validates bounds/confidence/strict base64, decodes crops, and calls
-`Pipeline.process_detections`. Empty lists age trackers. The server keeps
+`accuracy_m` is required and may be `null` when GPS accuracy is unavailable.
+Each sign entry contains `bbox`, `confidence`, and `crop_b64`: strict base64 of
+the sign-crop JPEG bytes, without a data-URL prefix. Full frames never leave the
+device. The example uses an empty sign list and can be submitted as written.
+
+The API enforces conservative per-submission limits before pipeline processing:
+
+| Input | Limit |
+| --- | --- |
+| Vehicles / signs | 64 / 16 detections |
+| Each JPEG crop | 256 KiB decoded; 349,528 base64 characters |
+| All JPEG crops combined | 1 MiB decoded; 1,398,168 base64 characters including padding allowance |
+| Crop dimensions | Positive, at most 2048 per axis and 4,000,000 pixels |
+| Frame dimensions | Positive integers, at most 4096 per axis and 16,000,000 pixels |
+| Session / device identifiers | 128 characters each |
+| Vehicle class / capture timestamp | 32 / 64 characters |
+
+Unknown submission/detection fields are rejected. Counts and aggregate encoded
+crop length are checked before decoding; exact decoded sizes are checked before
+pipeline entry. These budgets keep tracker matching and sign payloads bounded
+while allowing ample post-NMS detections at the 1280×720 camera target. The frame
+ceiling also accommodates larger hardware buffers and portrait orientation:
+VisionCamera's target resolution is a preference. Crop ceilings allow large sign
+regions from those buffers while bounding downstream image-reader pixel work.
+
+FastAPI validates bounds/confidence, strict base64, and JPEG structure (complete
+segments, frame/scan headers, quantization/Huffman tables, entropy-scan framing,
+end marker, and positive bounded dimensions). This dependency-free structural
+check does not decode entropy codes or establish visual correctness. Each crop
+is base64-decoded once and the validated bytes are reused. Invalid or over-budget
+submissions return 422 without calling `Pipeline.process_detections`.
+Empty lists age trackers. The server keeps
 VehicleTracker, GapTracker, SignTracker, sign triangulation, best-crop Claude
 reading, confirmed-space lifecycle, Cosmos, and Web PubSub. It loads no YOLO/depth
 models and accepts no binary camera inference stream.

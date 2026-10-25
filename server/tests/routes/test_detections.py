@@ -10,6 +10,47 @@ from app.models.cv import BlockObservation, FrameResult
 from app.routes import v1
 
 
+# Real 2×2 JPEG encoded by CoreImage.jpegRepresentation at quality 0.85,
+# matching the native crop encoder. Keep the fixed bytes independent of validation.
+JPEG_CROP = base64.b64decode(
+    "/9j/4AAQSkZJRgABAgEASABIAAD/4QC+RXhpZgAATU0AKgAAAAgABQEaAAUAAAABAAAASgEb"
+    "AAUAAAABAAAAUgEoAAMAAAABAAIAAAITAAMAAAABAAEAAIdpAAQAAAABAAAAWgAAAAAAAABIAAAA"
+    "AQAAAEgAAAABAAeQAAAHAAAABDAyMjGRAQAHAAAABAECAwCgAAAHAAAABDAxMDCgAQADAAAA"
+    "AQABAACgAgAEAAAAAQAAAAKgAwAEAAAAAQAAAAKkBgADAAAAAQAAAAAAAAAAAAD/wAARCAACAAID"
+    "ASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIE"
+    "AwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcY"
+    "GRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWG"
+    "h4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi"
+    "4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QA"
+    "tREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLR"
+    "ChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3"
+    "eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX"
+    "2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9sAQwABAQEBAQECAQECAwICAgMEAwMDAwQGBAQEBAQG"
+    "BwYGBgYGBgcHBwcHBwcHCAgICAgICQkJCQkLCwsLCwsLCwsL/9sAQwECAgIDAwMFAwMFCwgG"
+    "CAsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsL/90ABAAB"
+    "/9oADAMBAAIRAxEAPwD8X6KKK/lM/wB/D//Z"
+)
+
+
+def padded_jpeg(size):
+    """Add legal JPEG comment segments to reach an exact decoded-byte budget."""
+    comments = bytearray()
+    remaining = size - len(JPEG_CROP)
+    while remaining:
+        chunk = min(60_000, remaining)
+        assert chunk >= 4
+        comments.extend(b"\xff\xfe" + (chunk - 2).to_bytes(2, "big") + b"x" * (chunk - 4))
+        remaining -= chunk
+    return JPEG_CROP[:-2] + comments + JPEG_CROP[-2:]
+
+
+def jpeg_dimensions(width, height):
+    data = bytearray(JPEG_CROP)
+    offset = data.index(b"\xff\xc0")
+    data[offset + 5:offset + 9] = height.to_bytes(2, "big") + width.to_bytes(2, "big")
+    return bytes(data)
+
+
 class RecordingPipeline:
     def __init__(self, confirmed_block: BlockObservation | None = None):
         self.calls: list[dict] = []
@@ -61,7 +102,7 @@ def submission(**overrides):
             {
                 "bbox": [500.0, 50.0, 620.0, 240.0],
                 "confidence": 0.7,
-                "crop_b64": base64.b64encode(b"jpeg-crop").decode("ascii"),
+                "crop_b64": base64.b64encode(JPEG_CROP).decode("ascii"),
             },
         ],
         "frame_width": 1280,
@@ -125,7 +166,7 @@ def test_detection_endpoint_decodes_sign_crops_and_calls_pipeline(monkeypatch):
     }
     assert call["signs"][0].bbox == [500.0, 50.0, 620.0, 240.0]
     assert call["signs"][0].confidence == 0.7
-    assert call["signs"][0].crop_bytes == b"jpeg-crop"
+    assert call["signs"][0].crop_bytes == JPEG_CROP
 
 
 def test_detection_endpoint_accepts_empty_lists(monkeypatch):
@@ -257,7 +298,127 @@ def test_submission_converts_to_internal_detection_models():
     assert vehicles[0].bbox == [10, 20, 210, 300]
     assert vehicles[0].cls == "car"
     assert isinstance(signs[0], SignDetection)
-    assert signs[0].crop_bytes == b"jpeg-crop"
+    assert signs[0].crop_bytes == JPEG_CROP
+
+
+@pytest.mark.parametrize(("kind", "count"), [("vehicles", 65), ("signs", 17)])
+def test_detection_endpoint_rejects_excess_detections(monkeypatch, kind, count):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    body = submission()
+    body[kind] *= count
+    assert client.post("/v1/vision/detections", json=body).status_code == 422
+    assert pipeline.calls == []
+
+
+def test_detection_endpoint_accepts_detection_count_limits(monkeypatch):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    body = submission()
+    body["vehicles"] *= 64
+    body["signs"] *= 16
+    assert client.post("/v1/vision/detections", json=body).status_code == 200
+    assert len(pipeline.calls[0]["vehicles"]) == 64
+    assert len(pipeline.calls[0]["signs"]) == 16
+
+
+@pytest.mark.parametrize("size", [262_145, 262_148], ids=["decoded-budget", "encoded-budget"])
+def test_detection_endpoint_rejects_oversized_crop(monkeypatch, size):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    body = submission()
+    body["signs"][0]["crop_b64"] = base64.b64encode(padded_jpeg(size)).decode("ascii")
+    assert client.post("/v1/vision/detections", json=body).status_code == 422
+    assert pipeline.calls == []
+
+
+def test_detection_endpoint_rejects_aggregate_crop_budget_before_decoding(monkeypatch):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    body = submission()
+    body["signs"][0]["crop_b64"] = base64.b64encode(padded_jpeg(262_144)).decode("ascii")
+    body["signs"] *= 5
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail("aggregate encoded budget must be checked before decoding crops")
+
+    monkeypatch.setattr("app.domain.detections.base64.b64decode", unexpected_decode)
+    assert client.post("/v1/vision/detections", json=body).status_code == 422
+    assert pipeline.calls == []
+
+
+def test_detection_endpoint_rejects_aggregate_decoded_crop_budget(monkeypatch):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    body = submission()
+    # Encoding/padding can hide a one-byte decoded overflow at the encoded limit.
+    body["signs"] = [dict(body["signs"][0], crop_b64=base64.b64encode(padded_jpeg(size)).decode("ascii"))
+                     for size in [262_144, 262_144, 262_144, 261_121, 1024]]
+    assert client.post("/v1/vision/detections", json=body).status_code == 422
+    assert pipeline.calls == []
+
+
+def test_detection_endpoint_accepts_crop_budgets_and_decodes_each_crop_once(monkeypatch):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    body = submission()
+    crop = padded_jpeg(262_144)
+    body["signs"][0]["crop_b64"] = base64.b64encode(crop).decode("ascii")
+    body["signs"] *= 4
+    decode = base64.b64decode
+    decoded = []
+
+    def recording_decode(*args, **kwargs):
+        value = decode(*args, **kwargs)
+        decoded.append(value)
+        return value
+
+    monkeypatch.setattr("app.domain.detections.base64.b64decode", recording_decode)
+    assert client.post("/v1/vision/detections", json=body).status_code == 200
+    assert len(decoded) == 4
+    assert all(sign.crop_bytes == crop for sign in pipeline.calls[0]["signs"])
+
+
+@pytest.mark.parametrize("crop", [
+    b"arbitrary non-image bytes", b"\x89PNG\r\n\x1a\n", JPEG_CROP[:-2], JPEG_CROP[:100],
+    b"\xff\xd8\xff\xd9", JPEG_CROP + b"trailing", b"\xff\xd8\xff\xe0\x00\x01\xff\xd9",
+    JPEG_CROP.replace(b"\xff\xda\x00\x0c", b"\xff\xda\x00\xff"),
+    jpeg_dimensions(0, 2), jpeg_dimensions(2, 0), jpeg_dimensions(2049, 2),
+    jpeg_dimensions(2, 2049), jpeg_dimensions(2048, 2048),
+], ids=["non-image", "png", "missing-eoi", "truncated-segment", "empty-jpeg", "trailing-data",
+        "invalid-segment-length", "truncated-scan-header", "zero-width", "zero-height",
+        "oversized-width", "oversized-height", "pixel-budget"])
+def test_detection_endpoint_rejects_invalid_jpeg(monkeypatch, crop):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    body = submission()
+    body["signs"][0]["crop_b64"] = base64.b64encode(crop).decode("ascii")
+    assert client.post("/v1/vision/detections", json=body).status_code == 422
+    assert pipeline.calls == []
+
+
+@pytest.mark.parametrize("change", [
+    {"frame_width": 4097}, {"frame_height": 4097}, {"frame_width": 4096, "frame_height": 4096},
+    {"session_id": "x" * 129}, {"device_id": "x" * 129}, {"surprise": "x" * 1000},
+    {"captured_at": "2026-10-24T23:30:00Z" + " " * 65},
+    {"vehicles": [{"bbox": [0, 0, 1, 1], "confidence": 0.5, "cls": "x" * 33}]},
+    {"vehicles": [{"bbox": [0, 0, 1, 1], "confidence": 0.5, "cls": "car", "extra": "x"}]},
+    {"signs": [{"bbox": [0, 0, 1, 1], "confidence": 0.5,
+                "crop_b64": base64.b64encode(JPEG_CROP).decode("ascii"), "extra": "x"}]},
+])
+def test_detection_endpoint_rejects_unbounded_metadata(monkeypatch, change):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    assert client.post("/v1/vision/detections", json=submission(**change)).status_code == 422
+    assert pipeline.calls == []
+
+
+@pytest.mark.parametrize(("width", "height"), [(1920, 1080), (720, 1280), (4000, 4000)])
+def test_detection_endpoint_accepts_hardware_frame_sizes(monkeypatch, width, height):
+    pipeline = RecordingPipeline()
+    client, _ = build_client(monkeypatch, pipeline)
+    assert client.post("/v1/vision/detections", json=submission(frame_width=width, frame_height=height)).status_code == 200
+    assert len(pipeline.calls) == 1
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
