@@ -285,6 +285,26 @@ async def test_confirmed_space_does_not_inherit_unlocated_prior_session_reading(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("api_key,state", [("", "unavailable"), ("test-key", "gathering")])
+async def test_sign_feedback_reports_readiness_and_clears_on_empty_frame(local_services, monkeypatch, api_key, state):
+    from app.cv.pipeline import Pipeline
+
+    monkeypatch.setattr(settings, "anthropic_api_key", api_key)
+    pipeline = Pipeline()
+    result = await submit(pipeline, signs=[SignDetection(
+        bbox=[700, 40, 740, 120], confidence=0.8, crop_bytes=b"crop",
+    )])
+    feedback = result["frame_result"].sign_feedback[0]
+    assert feedback["bbox"] == [700, 40, 740, 120]
+    assert feedback["observations"] == 1
+    assert feedback["required_observations"] == 3
+    assert feedback["state"] == state
+    assert feedback["reading"] is None
+    empty = await submit(pipeline)
+    assert empty["frame_result"].sign_feedback == []
+
+
+@pytest.mark.asyncio
 async def test_submitted_values_reach_real_trackers_and_preserve_sign_crop(local_services):
     from app.cv.pipeline import Pipeline
 
@@ -691,8 +711,17 @@ async def test_best_crop_reaches_sign_reading_and_sign_is_persisted(local_servic
     assert read_crops == [b"best"]
     assert result["frame_result"].scene_valid is True
     assert result["frame_result"].sign_rules == reading
+    feedback = result["frame_result"].sign_feedback[0]
+    assert feedback["state"] == "read"
+    assert feedback["reading"]["combined_summary"] == "Two hour parking"
+    # Repeated sightings retain the cached reading, even without a new read call.
+    repeated = await submit(pipeline, signs=[SignDetection(
+        bbox=[700, 40, 740, 120], confidence=0.7, crop_bytes=b"again",
+    )])
+    assert repeated["frame_result"].sign_feedback[0]["reading"] == feedback["reading"]
+    assert read_crops == [b"best"]
     track = pipeline._sessions["drive"].sign_tracker.tracks[0]
-    assert len(track.gps_observations) == 3
+    assert len(track.gps_observations) == 4
     assert track.read_result == reading
     assert pipeline._sessions["drive"].last_sign_reading == reading
     assert len(cosmos._mem_signs) == 1

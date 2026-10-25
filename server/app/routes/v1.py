@@ -377,6 +377,12 @@ async def upload_detections(request: Request, submission: DetectionSubmission):
         "vehicle_count": len(fr.vehicles),
         "gap_count": fr.gap_estimate,
         "scene_valid": fr.scene_valid,
+        "captured_at": submission.captured_at,
+        "frame_width": submission.frame_width,
+        "frame_height": submission.frame_height,
+        "gap_bboxes": fr.gap_bboxes,
+        "tracked_gaps": [gap.model_dump(mode="json") for gap in fr.tracked_gaps],
+        "sign_feedback": fr.sign_feedback,
     }
     confirmed = result.get("confirmed_block")
     if confirmed is not None:

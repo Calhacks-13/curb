@@ -64,6 +64,38 @@ def test_repository_round_trips_seed_without_storage_metadata_or_overwriting(ada
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("status,paths", [(None, ["/partition_key"]), (404, None), (403, None), (None, ["/segment_id"])])
+def test_cosmos_connection_checks_required_container_and_closes_on_failure(monkeypatch, status, paths):
+    from unittest.mock import AsyncMock, Mock
+    import azure.cosmos.aio
+    from app.repositories.cosmos import CosmosParkingRepository, RepositoryError
+
+    container = Mock()
+    container.read = AsyncMock(return_value={"partitionKey": {"paths": paths}})
+    if status:
+        container.read.side_effect = StorageError(status)
+    client = Mock()
+    client.close = AsyncMock()
+    client.get_database_client.return_value.get_container_client.return_value = container
+    monkeypatch.setattr(azure.cosmos.aio, "CosmosClient", Mock(return_value=client))
+
+    async def run():
+        if status or paths != ["/partition_key"]:
+            with pytest.raises(RepositoryError) as failure:
+                await CosmosParkingRepository.connect("endpoint", "secret", "curb")
+            assert "secret" not in str(failure.value)
+            assert "state" in str(failure.value)
+            if status == 404:
+                assert "Provision it with partition key /partition_key" in str(failure.value)
+            client.close.assert_awaited_once()
+        else:
+            repository = await CosmosParkingRepository.connect("endpoint", "secret", "curb")
+            assert repository._container is container
+            await repository.close()
+            client.close.assert_awaited_once()
+    asyncio.run(run())
+
+
 def test_committed_server_seed_matches_contract_fixture():
     import subprocess
 

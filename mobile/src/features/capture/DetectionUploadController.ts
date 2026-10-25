@@ -9,7 +9,7 @@ export type DetectionUploadDeps = {
   onDelivery?: (event: DetectionDeliveryEvent) => void;
 };
 export type DetectionUploadStats = { sent: number; dropped: number; failed: number };
-type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
+export type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
 export type DetectionDeliveryEvent =
   | Readonly<{ state: "delivered"; result: DeepReadonly<FrameAccepted>; stats: Readonly<DetectionUploadStats> }>
   | Readonly<{ state: "failed"; error: Readonly<{ status: number | null; message: string }>; stats: Readonly<DetectionUploadStats> }>;

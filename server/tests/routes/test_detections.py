@@ -112,6 +112,38 @@ def submission(**overrides):
     return body
 
 
+def test_detection_response_exposes_gap_geometry_and_sign_readings(monkeypatch):
+    from app.models.cv import TrackedGapInfo
+
+    class FeedbackPipeline(RecordingPipeline):
+        async def process_detections(self, **kwargs):
+            result = await super().process_detections(**kwargs)
+            frame = result["frame_result"]
+            frame.gap_bboxes = [[210, 0, 500, 720]]
+            frame.tracked_gaps = [TrackedGapInfo(
+                bbox=[210, 0, 500, 720], left_track_id=1, right_track_id=2,
+                duration=2.5, confirmed=True,
+            )]
+            frame.sign_feedback = [{
+                "track_id": 3, "bbox": [500, 50, 620, 240], "observations": 3,
+                "required_observations": 3, "state": "read",
+                "reading": {"signs": [{"raw_text": "2 HOUR PARKING"}], "combined_summary": "Two hour parking"},
+            }]
+            return result
+
+    client, _ = build_client(monkeypatch, FeedbackPipeline())
+    response = client.post("/v1/vision/detections", json=submission())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["frame_width"] == 1280
+    assert body["frame_height"] == 720
+    assert body["gap_bboxes"] == [[210, 0, 500, 720]]
+    assert body["tracked_gaps"][0]["confirmed"] is True
+    assert body["tracked_gaps"][0]["duration"] == 2.5
+    assert body["sign_feedback"][0]["reading"]["signs"][0]["raw_text"] == "2 HOUR PARKING"
+    assert "crop_bytes" not in str(body)
+
+
 def test_detection_endpoint_decodes_sign_crops_and_calls_pipeline(monkeypatch):
     confirmed = BlockObservation(
         segment_id="scan_segment_1",
@@ -136,6 +168,12 @@ def test_detection_endpoint_decodes_sign_crops_and_calls_pipeline(monkeypatch):
         "vehicle_count": 1,
         "gap_count": 1,
         "scene_valid": True,
+        "captured_at": "2026-10-24T23:30:00+00:00",
+        "frame_width": 1280,
+        "frame_height": 720,
+        "gap_bboxes": [],
+        "tracked_gaps": [],
+        "sign_feedback": [],
         "space": response.json()["space"],
         "zone": response.json()["zone"],
     }

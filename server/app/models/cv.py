@@ -112,6 +112,7 @@ class FrameResult(BaseModel):
     used_segmentation: bool = False
     used_depth: bool = False
     tracked_gaps: list[TrackedGapInfo] = []
+    sign_feedback: list[dict] = []
 
 
 class WSMetadata(BaseModel):

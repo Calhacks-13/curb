@@ -579,6 +579,19 @@ class Pipeline:
             used_segmentation=False,
             used_depth=False,
             tracked_gaps=tracked_gap_infos,
+            sign_feedback=[{
+                "track_id": track.id,
+                "bbox": track.bbox,
+                "observations": track.hits,
+                "required_observations": settings.sign_track_confirm_hits,
+                "state": (
+                    "unavailable" if not settings.anthropic_api_key and track.read_result is None
+                    else "gathering" if track.read_result is None
+                    else "uncertain" if track.read_result.flagged
+                    else "read"
+                ),
+                "reading": track.read_result.model_dump(mode="json") if track.read_result else None,
+            } for track in session.sign_tracker.tracks if track.time_since_update == 0],
         )
 
         return {

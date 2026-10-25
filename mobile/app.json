@@ -13,7 +13,8 @@
         "NSCameraUsageDescription": "Curb processes camera frames on your device to spot open curb spaces. Only structured detections and small parking-sign crops are sent to Curb.",
         "NSLocalNetworkUsageDescription": "Curb connects to the development server and local API on your network while testing this build."
       },
-      "bundleIdentifier": "com.curb.mobile"
+      "bundleIdentifier": "com.derek.curb.a8kvs8mh42",
+      "appleTeamId": "A8KVS8MH42"
     },
     "android": {
       "adaptiveIcon": {

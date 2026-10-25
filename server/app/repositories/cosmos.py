@@ -5,6 +5,7 @@ from app.repositories.protocols import Collection
 
 
 class DocumentContainer(Protocol):
+    async def read(self) -> dict: ...
     async def create_item(self, body: dict) -> dict: ...
     async def upsert_item(self, body: dict) -> dict: ...
     async def read_item(self, item: str, partition_key: str) -> dict: ...
@@ -32,6 +33,22 @@ class CosmosParkingRepository:
         client = CosmosClient(endpoint, key)
         repository = cls(client.get_database_client(database).get_container_client(container))
         repository._client = client
+        try:
+            properties = await repository._container.read()
+        except Exception as error:
+            await client.close()
+            status = getattr(error, "status_code", None)
+            hint = (
+                "Provision it with partition key /partition_key (see infra/modules/cosmos.bicep)."
+                if status == 404 else "Check Cosmos credentials, permissions, and connectivity."
+            )
+            raise RepositoryError(
+                f"Cannot open parking state container {container!r} in database {database!r}"
+                f" (HTTP {status if status is not None else 'unavailable'}). {hint}"
+            ) from None
+        if properties.get("partitionKey", {}).get("paths") != ["/partition_key"]:
+            await client.close()
+            raise RepositoryError(f"Parking state container {container!r} requires partition key /partition_key.")
         return repository
 
     async def close(self) -> None:

@@ -155,6 +155,19 @@ delivery failure. The next successful response clears the current delivery error
 Upload failure keeps local inference and detection boxes active while fresh
 results retry. Native inference errors still stop the scanner.
 
+Expand the camera preview to inspect gap analysis and sign readings. The detection
+response includes source dimensions/time, candidate `gap_bboxes`, `tracked_gaps`
+(track IDs, observation duration, confirmation and optional meter estimate), and
+per-track `sign_feedback` (gathering/unavailable/uncertain/read plus extracted text
+and interpreted rules). Blue dashed openings are candidates; solid blue openings
+have temporal confirmation. Pixel widths do not establish vehicle fit or legality.
+Gap geometry is from the last server sample, expires after three seconds from
+capture, and is hidden after an upload failure or camera-dimension change.
+Successful empty responses clear gap overlays. Sign feedback exposes missing reader
+configuration, uncertainty, and reader errors rather than treating detection as a
+successful read. The last reading remains available in the expanded panel after
+the sign leaves view, labeled as a previous reading, until scanning stops/restarts.
+
 JSON goes to `POST /v1/vision/detections`:
 
 ```json

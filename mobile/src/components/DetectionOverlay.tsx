@@ -2,16 +2,18 @@ import { useMemo, useState } from "react";
 import type { LayoutChangeEvent, ViewStyle } from "react-native";
 import { StyleSheet, Text, View } from "react-native";
 
-import type { DetectionBox, OnDeviceInference } from "@/api/types";
+import type { DetectionBox, FrameAccepted, OnDeviceInference } from "@/api/types";
 import { font, ink } from "@/config/tokens";
+import type { DeepReadonly } from "@/features/capture/DetectionUploadController";
 
 type Size = { width: number; height: number };
 
 type Props = {
   result: OnDeviceInference | null;
+  analysis?: DeepReadonly<FrameAccepted> | null;
 };
 
-function projectCoverBox(box: DetectionBox, frame: Size, viewport: Size): ViewStyle | null {
+function projectCoverBox(box: Readonly<DetectionBox>, frame: Size, viewport: Size): ViewStyle | null {
   if (frame.width <= 0 || frame.height <= 0 || viewport.width <= 0 || viewport.height <= 0) return null;
   const scale = Math.max(viewport.width / frame.width, viewport.height / frame.height);
   const offsetX = (viewport.width - frame.width * scale) / 2;
@@ -32,7 +34,7 @@ function confidenceLabel(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
-export function DetectionOverlay({ result }: Props) {
+export function DetectionOverlay({ result, analysis }: Props) {
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
   const detections = useMemo(() => {
     if (!result) return [];
@@ -61,6 +63,16 @@ export function DetectionOverlay({ result }: Props) {
     const { width, height } = event.nativeEvent.layout;
     setViewport((current) => current.width === width && current.height === height ? current : { width, height });
   };
+  const gaps = analysis?.frame_width && analysis.frame_height ? (analysis.gap_bboxes ?? []).map((bbox, index) => {
+    const tracked = analysis.tracked_gaps?.find((gap) => gap.bbox.every((value, axis) => value === bbox[axis]));
+    const state = tracked?.confirmed ? "Confirmed" : "Candidate";
+    const size = tracked?.median_width_meters != null ? `${tracked.median_width_meters.toFixed(1)} m` : `${Math.round(bbox[2] - bbox[0])} px`;
+    return {
+      box: projectCoverBox(bbox, { width: analysis.frame_width!, height: analysis.frame_height! }, viewport),
+      label: `Gap ${index + 1} · ${state} · ${size}${tracked ? ` · ${tracked.duration.toFixed(1)}s` : ""}`,
+      confirmed: tracked?.confirmed,
+    };
+  }) : [];
   const vehicleCount = result?.vehicles.length ?? 0;
   const signCount = result?.signs.length ?? 0;
   const status = result == null
@@ -70,7 +82,14 @@ export function DetectionOverlay({ result }: Props) {
       : `${vehicleCount} vehicle${vehicleCount === 1 ? "" : "s"} · ${signCount} sign${signCount === 1 ? "" : "s"}`;
 
   return (
-    <View testID="detection-overlay" onLayout={onLayout} style={StyleSheet.absoluteFill}>
+    <View pointerEvents="none" testID="detection-overlay" onLayout={onLayout} style={StyleSheet.absoluteFill}>
+      {gaps.map((gap, index) => gap.box && (
+        <View key={`gap-${index}`} accessible accessibilityLabel={gap.label} style={[
+          styles.box, styles.gapBox, gap.confirmed && styles.confirmedGap, gap.box,
+        ]}>
+          <Text style={[styles.label, styles.gapLabel]}>{gap.label}</Text>
+        </View>
+      ))}
       {detections.map((detection) => detection.box && (
         <View
           key={detection.key}
@@ -96,6 +115,9 @@ export function DetectionOverlay({ result }: Props) {
 
 const styles = StyleSheet.create({
   box: { position: "absolute", borderWidth: 2 },
+  gapBox: { borderColor: "#66CFFF", backgroundColor: "rgba(102,207,255,0.14)", borderStyle: "dashed" },
+  confirmedGap: { borderStyle: "solid", backgroundColor: "rgba(102,207,255,0.28)" },
+  gapLabel: { top: "30%", left: 0, backgroundColor: "#66CFFF" },
   vehicleBox: { borderColor: "#35F28B" },
   signBox: { borderColor: "#FFD166" },
   label: {

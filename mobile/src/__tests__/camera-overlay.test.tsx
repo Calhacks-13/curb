@@ -236,6 +236,50 @@ it("shows processed detections and moves the single live camera into a full-scre
   expect(mockCameraUnmount).not.toHaveBeenCalled();
 });
 
+it("shows server gap details and sign text, retains the last reading, and clears it on stop", async () => {
+  const response: FrameAccepted = {
+    ...accepted, captured_at: new Date().toISOString(), frame_width: 1280, frame_height: 720,
+    gap_bboxes: [[300, 0, 600, 720]],
+    tracked_gaps: [{ bbox: [300, 0, 600, 720], left_track_id: 1, right_track_id: 2, duration: 2.5, confirmed: true, median_width_meters: null }],
+    sign_feedback: [{ track_id: 7, bbox: [200, 20, 230, 80], observations: 3, required_observations: 3, state: "read", reading: {
+      signs: [{ raw_text: "2 HOUR PARKING 8AM–6PM" }], combined_summary: "Two hour parking", combined_hours: "8am–6pm",
+      combined_max_duration_min: 120, combined_price: null, combined_restrictions: [], confidence_score: 0.9, flagged: false,
+    } }],
+  };
+  mockFetch.mockResolvedValue({ ok: true, json: async () => response });
+  const view = await render(<CameraOverlay {...defaults} />);
+  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await emitFrame();
+  await flushRN();
+  expect(screen.getByText("1 gap · 1 confirmed")).toBeTruthy();
+  expect(screen.getByText(/vehicle #1 → vehicle #2/)).toBeTruthy();
+  expect(screen.getByText("2 HOUR PARKING 8AM–6PM")).toBeTruthy();
+  expect(screen.getByText(/Reading score 90%/)).toBeTruthy();
+  mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ...response, sign_feedback: [], gap_bboxes: [], tracked_gaps: [] }) });
+  await emitFrame();
+  await flushRN();
+  expect(screen.getByText("Last sign reading")).toBeTruthy();
+  expect(screen.getByText("2 HOUR PARKING 8AM–6PM")).toBeTruthy();
+  await view.rerender(<CameraOverlay {...defaults} sampling={false} />);
+  expect(screen.queryByText("2 HOUR PARKING 8AM–6PM")).toBeNull();
+});
+
+it("hides delayed server geometry and shows sign-reading configuration failures", async () => {
+  mockFetch.mockResolvedValue({ ok: true, json: async () => ({
+    ...accepted, captured_at: new Date(Date.now() - 10_000).toISOString(), frame_width: 1280, frame_height: 720,
+    gap_bboxes: [[300, 0, 600, 720]],
+    sign_feedback: [{ track_id: 1, bbox: [200, 20, 230, 80], observations: 1, required_observations: 3, state: "unavailable", reading: null }],
+  }) });
+  await render(<CameraOverlay {...defaults} />);
+  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await emitFrame();
+  await flushRN();
+  await act(async () => screen.getByTestId("detection-overlay").props.onLayout({ nativeEvent: { layout: { width: 128, height: 72 } } }));
+  expect(screen.getByText("Analysis delayed — gap overlay hidden")).toBeTruthy();
+  expect(screen.queryByLabelText(/Gap 1/)).toBeNull();
+  expect(screen.getByText(/Reading unavailable — server API key missing/)).toBeTruthy();
+});
+
 it("surfaces a full-screen scanner failure and lets the user stop scanning", async () => {
   function RecoverableCamera() {
     const [sampling, setSampling] = useState(true);

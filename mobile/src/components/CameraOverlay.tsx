@@ -6,11 +6,13 @@ import type { Frame } from "react-native-vision-camera";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { getApi } from "@/api/client";
-import type { FrameAccepted, OnDeviceInference } from "@/api/types";
+import type { FrameAccepted, OnDeviceInference, SignFeedback } from "@/api/types";
 import { font, ink, radius, shadow } from "@/config/tokens";
 import { DetectionOverlay } from "@/components/DetectionOverlay";
-import { DetectionUploadController, type DetectionDeliveryEvent } from "@/features/capture/DetectionUploadController";
+import { ScannerDetails } from "@/components/ScannerDetails";
+import { DetectionUploadController, type DeepReadonly, type DetectionDeliveryEvent } from "@/features/capture/DetectionUploadController";
 import type { FrameContext } from "@/features/capture/detectionUpload";
+import { useNow } from "@/hooks/useNow";
 
 type Props = {
   /** Find is focused and the app is in the foreground. */
@@ -77,6 +79,8 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [latestInference, setLatestInference] = useState<{ session: object; result: OnDeviceInference } | null>(null);
   const [latestDelivery, setLatestDelivery] = useState<{ session: object; event: DetectionDeliveryEvent } | null>(null);
+  const [lastSigns, setLastSigns] = useState<{ session: object; signs: DeepReadonly<SignFeedback[]> } | null>(null);
+  const now = useNow(500);
   const [expanded, setExpanded] = useState(false);
   const changeExpanded = useCallback((next: boolean) => {
     setExpanded(next);
@@ -94,6 +98,10 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
       onDelivery: (event) => {
         const current = sessionRef.current;
         if (current) setLatestDelivery({ session: current, event });
+        if (current && event.state === "delivered") {
+          const readings = event.result.sign_feedback?.filter((sign) => sign.reading != null);
+          if (readings?.length) setLastSigns({ session: current, signs: readings });
+        }
       },
     });
     return () => { controller.current?.stop(); controller.current = null; };
@@ -222,6 +230,10 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   const visibleInference = enabled && latestInference?.session === session ? latestInference.result : null;
   const delivery = enabled && latestDelivery?.session === session ? latestDelivery.event : null;
   const receipt = delivery?.state === "delivered" ? delivery.result : null;
+  // Server geometry belongs to the submitted sample, not subsequent native frames.
+  // Hide delayed results and geometry from a different camera orientation.
+  const freshAnalysis = !!receipt?.captured_at && now.getTime() - Date.parse(receipt.captured_at) < 3000;
+  const alignedAnalysis = freshAnalysis && visibleInference?.frameWidth === receipt?.frame_width && visibleInference?.frameHeight === receipt?.frame_height;
   const count = (value: number | undefined, noun: string) => value == null ? null : `${value} ${noun}${value === 1 ? "" : "s"}`;
   const receiptText = ["Server received", count(receipt?.vehicle_count, "vehicle"), count(receipt?.gap_count, "gap")].filter(Boolean).join(" · ");
   const deliveryText = delivery?.state === "failed" ? "Upload unavailable"
@@ -247,7 +259,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         onError={onCameraError}
         resizeMode="cover"
       />
-      <DetectionOverlay result={visibleInference} />
+      <DetectionOverlay result={visibleInference} analysis={alignedAnalysis ? receipt : null} />
       <View style={styles.liveTag}>
         <LiveDot on={enabled && delivery?.state !== "failed"} reduceMotion={reduceMotion} />
         <Text style={styles.liveText}>{badge}</Text>
@@ -278,6 +290,12 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
             </View>
           </View>
           {deliveryStatus}
+          {enabled && <ScannerDetails
+            analysis={receipt}
+            lastSigns={lastSigns?.session === session ? lastSigns.signs : []}
+            signCount={visibleInference?.signs.length ?? 0}
+            fresh={!!alignedAnalysis}
+          />}
           {scannerError && (
             <View style={styles.fullScreenError}>
               <Text style={styles.errorTitle}>Scanner stopped</Text>
@@ -296,6 +314,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
       ) : (
         <>
         {deliveryStatus}
+        {enabled && <Text style={styles.sub}>Expand for gaps + sign text</Text>}
         {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
         {sampling ? (
           <>

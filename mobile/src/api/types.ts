@@ -160,6 +160,33 @@ export type OnDeviceInference = {
   frameHeight: number;
 };
 
+export type SignFeedback = {
+  track_id: number;
+  bbox: DetectionBox;
+  observations: number;
+  required_observations: number;
+  state: "gathering" | "unavailable" | "uncertain" | "read";
+  reading: {
+    signs: { raw_text: string }[];
+    combined_summary: string;
+    combined_hours: string | null;
+    combined_max_duration_min: number | null;
+    combined_price: string | null;
+    combined_restrictions: string[];
+    confidence_score: number;
+    flagged: boolean;
+  } | null;
+};
+
+export type TrackedGap = {
+  bbox: DetectionBox;
+  left_track_id: number;
+  right_track_id: number;
+  duration: number;
+  confirmed: boolean;
+  median_width_meters: number | null;
+};
+
 export type FrameAccepted = {
   frame_id: string;
   accepted: boolean;
@@ -167,6 +194,12 @@ export type FrameAccepted = {
   vehicle_count?: number;
   gap_count?: number;
   scene_valid?: boolean;
+  captured_at?: string;
+  frame_width?: number;
+  frame_height?: number;
+  gap_bboxes?: DetectionBox[];
+  tracked_gaps?: TrackedGap[];
+  sign_feedback?: SignFeedback[];
   /** Present when the server confirmed a spot from this frame. */
   space?: ParkingSpace;
   zone?: CurbZone;
