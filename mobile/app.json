@@ -10,7 +10,8 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "infoPlist": {
-        "NSCameraUsageDescription": "Curb processes camera frames on your device to spot open curb spaces. Only structured detections and small parking-sign crops are sent to Curb."
+        "NSCameraUsageDescription": "Curb processes camera frames on your device to spot open curb spaces. Only structured detections and small parking-sign crops are sent to Curb.",
+        "NSLocalNetworkUsageDescription": "Curb connects to the development server and local API on your network while testing this build."
       },
       "bundleIdentifier": "com.curb.mobile"
     },
