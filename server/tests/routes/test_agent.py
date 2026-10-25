@@ -30,11 +30,14 @@ TX_HASH = "0x" + "a" * 64
 
 
 class RecordingPublisher:
-    def __init__(self):
+    def __init__(self, timeline=None):
         self.events = []
+        self.timeline = timeline
 
     async def publish(self, event):
         self.events.append(event)
+        if self.timeline is not None:
+            self.timeline.append(event.type)
 
 
 def driveway() -> Driveway:
@@ -78,14 +81,19 @@ class SettlingPaymentExecutor:
 
 @pytest.mark.asyncio
 async def test_runner_drives_holds_waits_and_settles_one_target(caplog):
-    driveway_publisher = RecordingPublisher()
-    service = DrivewayService(InMemoryDrivewayRepository([driveway()]), driveway_publisher)
+    timeline = []
+    driveway_publisher = RecordingPublisher(timeline)
+    untouched = driveway().model_copy(update={"id": "driveway_other", "version": 7})
+    service = DrivewayService(
+        InMemoryDrivewayRepository([driveway(), untouched]), driveway_publisher
+    )
     payment = SettlingPaymentExecutor(service)
     positions = []
     sleeps = []
 
     async def publish_position(position, heading, version):
         positions.append((position, heading, version))
+        timeline.append("agent.position")
 
     async def sleep(seconds):
         sleeps.append(seconds)
@@ -108,10 +116,18 @@ async def test_runner_drives_holds_waits_and_settles_one_target(caplog):
         "driveway.held",
         "booking.confirmed",
     ]
+    assert timeline == ["agent.position"] * 6 + [
+        "driveway.held",
+        "driveway.held",
+        "booking.confirmed",
+    ]
     booking_id = driveway_publisher.events[-1].entity_id
     assert payment.calls == [(booking_id, f"demo-token-{AV_ID}")]
     final = await service.get_driveway(TARGET_DRIVEWAY_ID, NOW)
     assert final.state == DrivewayState.BOOKED
+    other = await service.get_driveway("driveway_other", NOW)
+    assert other.state == DrivewayState.AVAILABLE
+    assert other.version == 7
     booking = await service.repository.get_booking(booking_id)
     assert booking.transaction_hash == TX_HASH
     assert f"Booked {TARGET_DRIVEWAY_ID} — $5.00 USDC — tx: {TX_HASH}" in caplog.text
