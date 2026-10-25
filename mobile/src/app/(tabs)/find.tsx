@@ -24,7 +24,7 @@ import { DraggablePip } from "@/components/DraggablePip";
 import { font, ink, radius, SEP } from "@/config/tokens";
 import { DEMO_DRIVER } from "@/data/mock/marina";
 import { DemoModeBadge } from "@/demo/DemoModeBadge";
-import { getDeviceId, newCaptureSessionId, type FrameContext } from "@/features/capture/frameUpload";
+import { getDeviceId, newCaptureSessionId, type FrameContext } from "@/features/capture/detectionUpload";
 import { useDriverLocation } from "@/features/capture/useDriverLocation";
 import { ageSeconds } from "@/features/find/freshness";
 import { mergeAlert, newOpening, worthInterruptingRoute, type SpotAlert } from "@/features/find/newSpots";
@@ -111,7 +111,7 @@ export default function FindScreen() {
   const reservation = myReservation(options);
   const { checkout, reserve, pay, cancel, reset } = useDrivewayBooking(() => haptics.success());
 
-  // Frame metadata for camera sampling.
+  // Metadata for on-device camera detections.
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [captureSession] = useState(newCaptureSessionId);
   useEffect(() => {
@@ -119,7 +119,8 @@ export default function FindScreen() {
   }, []);
   const frameContext = useCallback((): FrameContext | null => {
     if (!deviceId) return null;
-    const pos = location.position ?? DEMO_DRIVER.position;
+    const pos = location.position ?? (live ? null : DEMO_DRIVER.position);
+    if (!pos) return null;
     return {
       lat: pos[1],
       lng: pos[0],
@@ -128,9 +129,9 @@ export default function FindScreen() {
       device_id: deviceId,
       session_id: captureSession,
     };
-  }, [location.position, location.accuracyM, location.heading, deviceId, captureSession]);
+  }, [live, location.position, location.accuracyM, location.heading, deviceId, captureSession]);
 
-  /** Self-feedback: server confirmed a spot in the frame upload response → inject into reducer. */
+  /** Self-feedback: server confirmed a spot in the detection response → inject into reducer. */
   const onSpotConfirmed = useCallback(
     (result: FrameAccepted) => {
       if (!result.space) return;
@@ -347,7 +348,7 @@ export default function FindScreen() {
       >
         <CameraOverlay
           active={focused && appActive}
-          sampling={live && scanActive}
+          sampling={live && scanActive && location.position != null}
           frameContext={frameContext}
           reduceMotion={reduceMotion}
           onSpotConfirmed={onSpotConfirmed}

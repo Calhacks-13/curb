@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import FindScreen from "@/app/(tabs)/find";
 import type { NearbyParkingResponse, RealtimeEvent, SpaceDetail } from "@/api/types";
 import type { AppToMap } from "@/map/messages";
+import type { CameraOverlay } from "@/components/CameraOverlay";
 
 // Only native/external surfaces are doubled: Find, CurbMap, the HTTP client,
 // nearby reducer, freshness clock and detail sheet all run together.
@@ -18,10 +19,11 @@ jest.mock("react-native-webview", () => {
     return <View {...props} testID="map-webview" />;
   }) };
 });
-jest.mock("@/components/CameraOverlay", () => ({ CameraOverlay: () => null }));
+let mockCameraProps: React.ComponentProps<typeof CameraOverlay>;
+jest.mock("@/components/CameraOverlay", () => ({ CameraOverlay: (props: React.ComponentProps<typeof CameraOverlay>) => { mockCameraProps = props; return null; } }));
 jest.mock("@/components/DraggablePip", () => ({ DraggablePip: ({ children }: { children: React.ReactNode }) => children }));
 jest.mock("@/components/sheet/SheetFrame", () => ({ SHEET_PEEK: 78, SheetFrame: ({ children }: { children: React.ReactNode }) => children }));
-jest.mock("@/features/capture/frameUpload", () => ({ getDeviceId: async () => "phone", newCaptureSessionId: () => "capture" }));
+jest.mock("@/features/capture/detectionUpload", () => ({ getDeviceId: async () => "phone", newCaptureSessionId: () => "capture" }));
 jest.mock("@/hooks/useScreenFocused", () => ({ useScreenFocused: () => true }));
 jest.mock("@/hooks/useReduceMotion", () => ({ useReduceMotion: () => true }));
 jest.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
@@ -135,6 +137,22 @@ describe("Find map from the live typed client", () => {
     expect(mockFetch.mock.calls.filter(([url]) => url.includes("/nearby"))).toHaveLength(0);
     expect(latest("setPills").pills).toEqual([]);
     expect(mockMessages.some((m) => m.type === "setCarPosition")).toBe(false);
+    expect(mockCameraProps.sampling).toBe(false);
+    expect(mockCameraProps.frameContext()).toBeNull();
     if (status === "denied") expect(screen.getByText("Location is off")).toBeTruthy();
+  });
+
+  it("never supplies demo GPS to live detections and starts inference only after a real fix", async () => {
+    mockPosition = null;
+    const view = await mount();
+    expect(mockCameraProps.frameContext()).toBeNull();
+    mockPosition = [-122.2, 37.6];
+    await view.rerender(<FindScreen />);
+    expect(mockCameraProps.sampling).toBe(true);
+    expect(mockCameraProps.frameContext()).toEqual(expect.objectContaining({ lat: 37.6, lng: -122.2, device_id: "phone" }));
+    mockPosition = null;
+    await view.rerender(<FindScreen />);
+    expect(mockCameraProps.sampling).toBe(false);
+    expect(mockCameraProps.frameContext()).toBeNull();
   });
 });

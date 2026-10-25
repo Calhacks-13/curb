@@ -21,8 +21,10 @@ htmlcov/
 .expo/
 dist/
 build/
-ios/
-android/
+/ios/
+/android/
+/mobile/ios/
+/mobile/android/
 
 # Hand-maintained local Nitro module and generated bindings are source.
 !mobile/modules/curb-vision/ios/

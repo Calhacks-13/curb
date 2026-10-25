@@ -1,31 +1,33 @@
-import { CameraView, useCameraPermissions } from "expo-camera";
+import type { CurbVision } from "curb-vision";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useRef, useState } from "react";
-import { Animated, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import type { Frame } from "react-native-vision-camera";
+import { scheduleOnRN } from "react-native-worklets";
 
+import { getApi } from "@/api/client";
+import type { FrameAccepted, OnDeviceInference } from "@/api/types";
 import { font, ink, radius, shadow } from "@/config/tokens";
-import { CaptureController } from "@/features/capture/CaptureController";
-import { discardFrame, uploadFrame, type FrameContext } from "@/features/capture/frameUpload";
-import type { FrameAccepted } from "@/api/types";
+import { DetectionUploadController } from "@/features/capture/DetectionUploadController";
+import type { FrameContext } from "@/features/capture/detectionUpload";
 
 type Props = {
-  /** Find is focused and the app is in the foreground. The preview unmounts otherwise. */
+  /** Find is focused and the app is in the foreground. */
   active: boolean;
-  /** Upload sampled frames (live backend with a location fix). Demo replay shows preview only. */
+  /** Run inference and upload detections. Demo replay shows preview only. */
   sampling: boolean;
   /** Latest metadata for each frame (location, heading, ids). */
   frameContext: () => FrameContext | null;
   reduceMotion: boolean;
   /** Called when the server confirms a spot from a scanned frame. */
   onSpotConfirmed?: (result: FrameAccepted) => void;
-  /** Called when the user taps "Start Scanning" to begin frame uploads. */
+  /** Called when the user taps "Start Scanning" to begin inference. */
   onStartScan?: () => void;
-  /** Called when the user taps "Stop" to end frame uploads. */
+  /** Called when the user taps "Stop" to end inference. */
   onStopScan?: () => void;
 };
 
-/** Prefer 720p; fall back to whatever the device offers. */
-const PREFERRED_SIZES = ["1280x720", "Medium", "High"];
+const FRAME_RESOLUTION = { width: 1280, height: 720 };
 
 function LiveDot({ on, reduceMotion }: { on: boolean; reduceMotion: boolean }) {
   const [blink] = useState(() => new Animated.Value(1));
@@ -46,88 +48,118 @@ function LiveDot({ on, reduceMotion }: { on: boolean; reduceMotion: boolean }) {
   return <Animated.View style={[styles.dot, { opacity: blink, backgroundColor: on ? ink.live : ink.grey500 }]} />;
 }
 
-type LiveCameraProps = {
-  sampling: boolean;
-  frameContext: () => FrameContext | null;
-  onCapturing: (capturing: boolean) => void;
-  onSpotConfirmed?: (result: FrameAccepted) => void;
-};
-
-/**
- * The preview itself. Mounted only while Find is active, so camera readiness and
- * the sampler start fresh every time the screen comes back.
- */
-function LiveCamera({ sampling, frameContext, onCapturing, onSpotConfirmed }: LiveCameraProps) {
-  const camera = useRef<CameraView>(null);
-  const [ready, setReady] = useState(false);
-  const [pictureSize, setPictureSize] = useState<string | undefined>();
-  const ctxRef = useRef(frameContext);
-  useEffect(() => {
-    ctxRef.current = frameContext;
-  }, [frameContext]);
-
-  const capturing = ready && sampling;
-  useEffect(() => {
-    onCapturing(capturing);
-    if (!capturing) return;
-    const controller = new CaptureController({
-      capture: async () => {
-        const shot = await camera.current?.takePictureAsync({ quality: 0.5, shutterSound: false });
-        if (!shot?.uri) throw new Error("no frame");
-        return shot.uri;
-      },
-      upload: async (uri) => {
-        const ctx = ctxRef.current();
-        if (!ctx) throw new Error("no location yet");
-        const result = await uploadFrame(uri, ctx);
-        if (result.space) onSpotConfirmed?.(result);
-      },
-      discard: discardFrame,
-    });
-    controller.start();
-    return () => {
-      controller.stop();
-      onCapturing(false);
-    };
-  }, [capturing, onCapturing, onSpotConfirmed]);
-
-  const onReady = async () => {
-    setReady(true);
-    try {
-      const sizes = (await camera.current?.getAvailablePictureSizesAsync()) ?? [];
-      setPictureSize(PREFERRED_SIZES.find((sz) => sizes.includes(sz)));
-    } catch {
-      // Keep the default size.
-    }
-  };
-
+function CameraUnavailable() {
   return (
-    <CameraView
-      ref={camera}
-      style={StyleSheet.absoluteFill}
-      facing="back"
-      animateShutter={false}
-      pictureSize={pictureSize}
-      onCameraReady={onReady}
-    />
+    <View style={styles.card}>
+      <View style={[styles.preview, styles.previewEmpty]}>
+        <SymbolView name="video.slash.fill" size={16} tintColor={ink.grey500} fallback={null} />
+      </View>
+      <Text style={styles.caption}>Camera unavailable</Text>
+    </View>
   );
 }
 
-/** Floating live camera card on Find: preview, scanning indicator, frame sampling. */
-export function CameraOverlay({ active, sampling, frameContext, reduceMotion, onSpotConfirmed, onStartScan, onStopScan }: Props) {
-  const [permission, requestPermission] = useCameraPermissions();
-  const [capturing, setCapturing] = useState(false);
+/** Web has no native preview; do not load VisionCamera or CoreML there. */
+export function CameraOverlay(props: Props) {
+  return Platform.OS === "web" ? <CameraUnavailable /> : <NativeCameraOverlay {...props} />;
+}
+
+function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onSpotConfirmed, onStartScan, onStopScan }: Props) {
+  // VisionCamera 5 has no web implementation and initializes Nitro on import.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Camera, useCameraPermission, useCameraDevice, useFrameOutput } = require("react-native-vision-camera") as typeof import("react-native-vision-camera");
+  const { hasPermission, canRequestPermission, status, requestPermission } = useCameraPermission();
+  const device = useCameraDevice("back");
+  const [native, setNative] = useState<CurbVision | null>(null);
+  const [scannerError, setScannerError] = useState<string | null>(null);
+  const latest = useRef({ frameContext, onSpotConfirmed });
+  useEffect(() => { latest.current = { frameContext, onSpotConfirmed }; }, [frameContext, onSpotConfirmed]);
+  const controller = useRef<DetectionUploadController | null>(null);
+  useEffect(() => {
+    controller.current = new DetectionUploadController({
+      context: () => latest.current.frameContext(),
+      upload: (payload) => getApi().uploadDetections(payload),
+      onSpotConfirmed: (result) => latest.current.onSpotConfirmed?.(result),
+    });
+    return () => { controller.current?.stop(); controller.current = null; };
+  }, []);
+  const eligible = active && sampling && Platform.OS === "ios" && hasPermission && device != null && getApi().mode === "live";
+
+  useEffect(() => {
+    if (!eligible || native || scannerError) return;
+    let cancelled = false;
+    // Never import or instantiate the iOS-only HybridObject on Android/web.
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { getCurbVision } = require("curb-vision") as typeof import("curb-vision");
+      setNative(getCurbVision());
+    }).catch((error: unknown) => {
+      if (!cancelled) setScannerError(error instanceof Error ? error.message : String(error));
+    });
+    return () => { cancelled = true; };
+  }, [eligible, native, scannerError]);
+
+  const enabled = eligible && native != null && scannerError == null;
+  // RN callbacks retain session identity; delayed worklet deliveries from a
+  // previous Stop/blur can never become uploads in a later scanning session.
+  const session = useMemo(() => ({ enabled }), [enabled]);
+  const sessionRef = useRef<object | null>(null);
+  useEffect(() => {
+    if (enabled) {
+      sessionRef.current = session;
+      controller.current?.start();
+    } else {
+      sessionRef.current = null;
+      controller.current?.stop();
+    }
+    return () => {
+      sessionRef.current = null;
+      controller.current?.stop();
+    };
+  }, [enabled, session]);
+
+  const onInference = useCallback((result: OnDeviceInference) => {
+    if (sessionRef.current === session) controller.current?.submit(result);
+  }, [session]);
+  const failScanner = useCallback((message: string) => {
+    sessionRef.current = null;
+    controller.current?.stop();
+    setScannerError(message);
+  }, []);
+  const onInferenceError = useCallback((message: string) => {
+    if (sessionRef.current === session) failScanner(message);
+  }, [failScanner, session]);
+  const onCameraError = useCallback((error: Error) => failScanner(error.message), [failScanner]);
+  const onFrame = useCallback((frame: Frame) => {
+    "worklet";
+    try {
+      if (enabled && native) {
+        const result = native.detect(frame);
+        scheduleOnRN(onInference, result);
+      }
+    } catch (error) {
+      scheduleOnRN(onInferenceError, error instanceof Error ? error.message : String(error));
+    } finally {
+      frame.dispose();
+    }
+  }, [enabled, native, onInference, onInferenceError]);
+  const frameOutput = useFrameOutput({
+    targetResolution: FRAME_RESOLUTION,
+    pixelFormat: "native",
+    enablePhysicalBufferRotation: true,
+    dropFramesWhileBusy: true,
+    onFrame,
+  });
+  const outputs = useMemo(() => enabled ? [frameOutput] : [], [enabled, frameOutput]);
 
   // Ask once when Find first needs the camera.
   useEffect(() => {
-    if (active && permission && !permission.granted && permission.canAskAgain && permission.status === "undetermined") requestPermission();
-  }, [active, permission, requestPermission]);
+    if (active && !hasPermission && canRequestPermission && status === "not-determined") void requestPermission();
+  }, [active, hasPermission, canRequestPermission, status, requestPermission]);
 
-  const granted = !!permission?.granted;
-  const live = active && capturing;
-
-  if (!granted) {
-    const blocked = permission && !permission.canAskAgain;
+  if (!hasPermission) {
+    const blocked = !canRequestPermission;
     return (
       <Pressable
         onPress={() => (blocked ? Linking.openSettings() : requestPermission())}
@@ -144,22 +176,25 @@ export function CameraOverlay({ active, sampling, frameContext, reduceMotion, on
     );
   }
 
+  if (!device) return <CameraUnavailable />;
+
   return (
     <View
       style={styles.card}
       accessible
-      accessibilityLabel={sampling ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
+      accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
     >
       <View style={styles.preview}>
-        {active && <LiveCamera sampling={sampling} frameContext={frameContext} onCapturing={setCapturing} onSpotConfirmed={onSpotConfirmed} />}
+        <Camera style={StyleSheet.absoluteFill} isActive={active && hasPermission} device={device} outputs={outputs} onError={onCameraError} />
         <View style={styles.liveTag}>
-          <LiveDot on={live} reduceMotion={reduceMotion} />
-          <Text style={styles.liveText}>{live ? "Live" : "Preview"}</Text>
+          <LiveDot on={enabled} reduceMotion={reduceMotion} />
+          <Text style={styles.liveText}>{enabled ? "Live" : "Preview"}</Text>
         </View>
       </View>
+      {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
       {sampling ? (
         <>
-          <Text style={styles.caption}>Scanning curb</Text>
+          <Text style={styles.caption}>{enabled ? "Scanning curb" : "Camera preview"}</Text>
           <Pressable
             onPress={onStopScan}
             accessibilityRole="button"
@@ -170,7 +205,7 @@ export function CameraOverlay({ active, sampling, frameContext, reduceMotion, on
         </>
       ) : (
         <Pressable
-          onPress={onStartScan}
+          onPress={() => { setScannerError(null); onStartScan?.(); }}
           accessibilityRole="button"
           style={({ pressed }) => [styles.startButton, pressed && { opacity: 0.8 }]}
         >
