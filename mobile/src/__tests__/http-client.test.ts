@@ -1,7 +1,7 @@
 import type { NearbyParkingResponse as WireNearby, SpaceDetail as WireDetail } from "@curb/contracts/domain";
 
 import { getApi } from "@/api/client";
-import { normalizeNearby } from "@/api/normalize";
+import { normalizeNearby, normalizeSpaceDetail } from "@/api/normalize";
 import { findOptions, mapPills } from "@/features/find/options";
 import { emptyParkingState, fromNearby } from "@/realtime/reducer";
 
@@ -72,6 +72,12 @@ it("normalizes a canonical flat detail into the sheet's current rule and observa
   const detail = await getApi().space("space-1");
   expect(detail.space).toMatchObject({ id: "space-1", base_confidence: 0.94, detection_confidence: 0.87, version: 7 });
   expect(detail.rule).toEqual({ id: "rule-1", summary: "Metered parking allowed for two hours.", max_minutes: 120, next_change_at: "2026-10-25T01:00:00Z", next_change_summary: null, payment_text: "$3.50/hr", permit_text: "Permit required: Area C", interpretation_confidence: 0.96, last_validated_at: "2026-10-24T18:00:00Z" });
+});
+
+it("normalizes a canonical detail with no sign read into the sheet's no-rule state", () => {
+  const detail = normalizeSpaceDetail({ ...wireDetail, sign_rule: null, max_minutes: null });
+  expect(detail.space).toMatchObject({ id: "space-1", status_label: "Likely open" });
+  expect(detail.rule).toBeNull();
 });
 
 it("sends the selected session's bearer token on nearby/detail requests and removes it at sign-out", async () => {

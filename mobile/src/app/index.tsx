@@ -26,7 +26,7 @@ export default function ProfilePicker() {
         <Text style={styles.wordmark} accessibilityRole="header">
           Curb
         </Text>
-        <Text style={styles.tagline}>Legal parking, seen moments ago.</Text>
+        <Text style={styles.tagline}>Open parking, seen moments ago.</Text>
       </View>
 
       {restoring ? (

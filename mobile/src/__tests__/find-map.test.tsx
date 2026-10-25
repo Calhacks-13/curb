@@ -85,10 +85,10 @@ describe("Find map from the live typed client", () => {
   });
   afterEach(() => { jest.useRealTimers(); });
 
-  it("sends legal lines and labeled fresh/aging/stale/driveway shapes to the map, using precise GPS", async () => {
+  it("sends labeled fresh/aging/stale/driveway shapes to the map without curb lines, using precise GPS", async () => {
     await mount();
     expect(mockFetch).toHaveBeenCalledWith("https://curb.test/v1/parking/nearby?lat=37.79932&lng=-122.43597&radius_m=804.672", expect.anything());
-    expect(latest("setZones").zones).toEqual([{ id: "legal", coordinates: [CENTER, [-122.43597, 37.7998]] }]);
+    expect(mockMessages.some((m) => (m.type as string) === "setZones")).toBe(false);
     expect(latest("setStalls").stalls.map(({ id, kind }) => ({ id, kind }))).toEqual([
       { id: "fresh", kind: "fresh" }, { id: "driveway", kind: "driveway" }, { id: "aging", kind: "aging" }, { id: "stale", kind: "stale" },
     ]);
@@ -126,7 +126,6 @@ describe("Find map from the live typed client", () => {
       await act(async () => { jest.advanceTimersByTime(advance); });
       expect(latest("setPills").pills.find((p) => p.id === "fresh")?.kind ?? null).toBe(kind);
     }
-    expect(latest("setZones").zones).toHaveLength(1);
     expect(mockFetch.mock.calls.filter(([url]) => url.includes("/nearby"))).toHaveLength(1);
   });
 
@@ -139,14 +138,13 @@ describe("Find map from the live typed client", () => {
     expect(latest("setStalls").stalls.find((p) => p.id === "driveway")?.ring).not.toEqual(oldRing);
   });
 
-  it("shows paired camera feedback when the fresh space and legal zone share an ID and version", async () => {
+  it("shows paired camera feedback when the fresh space and its zone share an ID and version", async () => {
     await mount();
     await act(async () => { mockCameraProps.onSpotConfirmed?.({
       frame_id: "confirmed-frame", accepted: true,
       space: { ...nearby.spaces[0], id: "scan-segment", zone_id: "scan-segment", last_observed_at: new Date(NOW).toISOString() },
       zone: { ...nearby.zones[0], id: "scan-segment" },
     }); });
-    expect(latest("setZones").zones).toContainEqual({ id: "scan-segment", coordinates: nearby.zones[0].geometry.coordinates });
     expect(latest("setStalls").stalls).toContainEqual(expect.objectContaining({ id: "scan-segment", kind: "fresh", ring }));
     expect(latest("setPills").pills).toContainEqual(expect.objectContaining({ id: "scan-segment", kind: "fresh", label: "93% open" }));
   });

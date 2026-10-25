@@ -16,9 +16,6 @@ export const ink = {
  * a label and a distinct shape; never rely on color alone.
  */
 export const status = {
-  /** Legal now, availability unknown. */
-  legal: "#2F6BDE",
-  legalNight: "#5B8DFF",
   /** Seen open within 90 s: "Likely open". */
   fresh: "#1F8F4E",
   freshNight: "#3BE08A",

@@ -44,7 +44,7 @@ export function RouteReplacementPrompt({ replacement, onAccept, onKeep }: Props)
         </>
       ) : (
         <>
-          <Text style={styles.altDetail}>No other openings nearby right now. Blue curbs are still legal to park.</Text>
+          <Text style={styles.altDetail}>No other openings nearby right now.</Text>
           <Pressable onPress={onKeep} accessibilityRole="button" style={({ pressed }) => [styles.secondary, styles.single, pressed && { opacity: 0.85 }]}>
             <Text style={styles.secondaryText}>OK</Text>
           </Pressable>

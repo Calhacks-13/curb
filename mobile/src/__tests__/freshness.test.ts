@@ -42,22 +42,33 @@ describe("visibleSpaces", () => {
     detection_confidence: 0.88,
     version: 1,
   });
-  const zones = { legal: zone("legal", "LEGAL"), illegal: zone("illegal", "ILLEGAL"), norule: zone("norule", "LEGAL", null) };
+  const zones = {
+    legal: zone("legal", "LEGAL"),
+    illegal: zone("illegal", "ILLEGAL"),
+    illegalUnsigned: zone("illegalUnsigned", "ILLEGAL", null),
+    norule: zone("norule", "LEGAL", null),
+    unknown: zone("unknown", "UNKNOWN", null),
+  };
 
-  it("shows only fresh-enough openings in zones that are legal now under a validated rule", () => {
+  it("shows fresh-enough openings unless their zone is explicitly illegal", () => {
     const shown = visibleSpaces(
       [
         space("ok", "legal", "OPEN", 30),
         space("occupied", "legal", "OCCUPIED", 10),
         space("expired", "legal", "OPEN", 400),
         space("illegal", "illegal", "OPEN", 10),
+        space("illegalUnsigned", "illegalUnsigned", "OPEN", 10),
         space("unvalidated", "norule", "OPEN", 10),
+        space("unsigned", "unknown", "OPEN", 120),
       ],
       zones,
       NOW,
     );
-    expect(shown.map((s) => s.space.id)).toEqual(["ok"]);
-    expect(shown[0].freshness).toBe("fresh");
+    expect(shown.map((s) => [s.space.id, s.freshness])).toEqual([
+      ["ok", "fresh"],
+      ["unvalidated", "fresh"],
+      ["unsigned", "aging"],
+    ]);
   });
 
   it("keeps the inclusive five-minute boundary but excludes unusable timestamps", () => {

@@ -43,13 +43,12 @@ function mapPage() {
   return { dom, document: window.document as Document, window, messages, sources, handlers, send };
 }
 
-it("executes supply messages into legal lines, stall polygons and semantic pin buttons, then bridges taps and removes expired pins", () => {
+it("executes supply messages into stall polygons and semantic pin buttons, then bridges taps and removes expired pins", () => {
   const page = mapPage();
   try {
     const position: [number, number] = [-122.43597, 37.79932];
     const ring: [number, number][] = [position, [-122.4359, 37.79932], [-122.4359, 37.7994], position];
     // Messages arriving before Mapbox loads must survive the runtime queue.
-    page.send({ type: "setZones", zones: [{ id: "legal", coordinates: [position, [-122.4359, 37.7994]] }] });
     page.send({ type: "setStalls", stalls: [{ id: "fresh", kind: "fresh", ring }] });
     page.send({ type: "setPills", pills: [
       { id: "fresh", kind: "fresh", label: "Likely open", position },
@@ -59,7 +58,7 @@ it("executes supply messages into legal lines, stall polygons and semantic pin b
     ] });
     page.handlers.get("load")?.();
     expect(page.messages).toContainEqual({ type: "mapReady" });
-    expect(page.sources.get("zones")?.data).toMatchObject({ features: [{ geometry: { type: "LineString", coordinates: [position, [-122.4359, 37.7994]] } }] });
+    expect(page.sources.has("zones")).toBe(false);
     expect(page.sources.get("stalls")?.data).toMatchObject({ features: [{ properties: { id: "fresh", kind: "fresh" }, geometry: { type: "Polygon", coordinates: [ring] } }] });
     const pins = page.document.querySelectorAll<HTMLButtonElement>("button.pin");
     expect(pins).toHaveLength(4);

@@ -1,5 +1,5 @@
 import { buildDemoFixture } from "@/demo/fixtures";
-import { findOptions, mapPills, mapZones, myReservation } from "@/features/find/options";
+import { findOptions, mapPills, myReservation } from "@/features/find/options";
 import { emptyParkingState, fromNearby } from "@/realtime/reducer";
 
 // 2 PM PDT: inside the demo driveway's 7 AM to 3 AM window.
@@ -83,10 +83,25 @@ describe("findOptions", () => {
     expect(near.length).toBeLessThan(all.length);
   });
 
-  it("draws only zones that are legal now", () => {
-    const ids = mapZones(stateAt(NOW).zones).map((z) => z.id);
-    expect(ids).not.toContain("zone_demo_6");
-    expect(ids).toContain("zone_demo_1");
+  describe("unsigned curbs", () => {
+    const withZone = (patch: object) => {
+      const s = stateAt(NOW);
+      return { ...s, zones: { ...s.zones, zone_demo_1: { ...s.zones.zone_demo_1, ...patch } } };
+    };
+    const zoneOneFresh = (state: ReturnType<typeof stateAt>) =>
+      findOptions(state, NOW, from).filter((o) => state.spaces[o.id]?.zone_id === "zone_demo_1" && o.kind === "fresh");
+
+    it("labels a fresh opening with no sign read the same as a signed one", () => {
+      const signed = mapPills(zoneOneFresh(stateAt(NOW)));
+      const unsigned = mapPills(zoneOneFresh(withZone({ legal_status_now: "UNKNOWN", sign_rule_id: null })));
+      expect(unsigned.length).toBeGreaterThan(0);
+      expect(unsigned.map((p) => p.label)).toEqual(signed.map((p) => p.label));
+      expect(unsigned.every((p) => /^\d+% open$/.test(p.label))).toBe(true);
+    });
+
+    it("still hides openings on a curb known to be illegal", () => {
+      expect(zoneOneFresh(withZone({ legal_status_now: "ILLEGAL", sign_rule_id: null }))).toEqual([]);
+    });
   });
 
   describe("driveway ownership", () => {

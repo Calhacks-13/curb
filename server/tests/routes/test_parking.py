@@ -63,7 +63,7 @@ def test_nearby_freshness_and_expiry_leave_legal_zone(seed, age, expected):
     assert [s.freshness for s in parsed.spaces] == ([expected] if expected else [])
 
 
-@pytest.mark.parametrize("change", ["occupied", "unknown", "missing_rule", "wrong_zone_rule", "illegal", "low_confidence", "far"])
+@pytest.mark.parametrize("change", ["occupied", "unknown", "illegal", "low_confidence", "far"])
 def test_nearby_suppresses_unusable_openings(seed, change):
     space = seed["nearby"]["spaces"][0]
     seed["nearby"]["spaces"] = [space]
@@ -71,10 +71,6 @@ def test_nearby_suppresses_unusable_openings(seed, change):
         space["internal_state"] = "OCCUPIED"
     elif change == "unknown":
         space["internal_state"] = "UNKNOWN"
-    elif change == "missing_rule":
-        seed["nearby"]["zones"][0]["sign_rule_id"] = None
-    elif change == "wrong_zone_rule":
-        seed["sign_rule"]["zone_id"] = "another_zone"
     elif change == "illegal":
         seed["nearby"]["zones"][0]["legal_status_now"] = "ILLEGAL"
     elif change == "low_confidence":
@@ -87,6 +83,41 @@ def test_nearby_suppresses_unusable_openings(seed, change):
 
     assert body["spaces"] == []
     assert body["zones"][0]["legal_status_now"] == ("ILLEGAL" if change == "illegal" else "LEGAL")
+
+
+@pytest.mark.parametrize("change", ["unknown_no_rule", "missing_rule", "wrong_zone_rule"])
+def test_nearby_shows_unsigned_openings_with_no_rule_detail(seed, change):
+    """An observed opening without a validated sign is listed, and its detail has no rule."""
+    zone = seed["nearby"]["zones"][0]
+    seed["nearby"]["spaces"] = [seed["nearby"]["spaces"][0]]
+    if change == "unknown_no_rule":
+        zone["legal_status_now"] = "UNKNOWN"
+        zone["sign_rule_id"] = None
+    elif change == "missing_rule":
+        zone["sign_rule_id"] = None
+    else:
+        seed["sign_rule"]["zone_id"] = "another_zone"
+    client, _ = build_client(seed)
+
+    parsed = NearbyParkingResponse.model_validate(nearby(client).json())
+    response = client.get("/v1/spaces/space_demo_1", headers=AUTH)
+
+    assert [(s.id, s.status_label) for s in parsed.spaces] == [("space_demo_1", "Likely open")]
+    assert response.status_code == 200
+    detail = SpaceDetail.model_validate(response.json())
+    assert detail.sign_rule is None
+    assert detail.max_minutes is None
+    assert detail.status_label == "Likely open"
+
+
+def test_nearby_still_hides_unsigned_openings_in_illegal_zones(seed):
+    """Explicitly illegal curbs stay hidden even when no sign rule is attached."""
+    zone = seed["nearby"]["zones"][0]
+    zone["legal_status_now"] = "ILLEGAL"
+    zone["sign_rule_id"] = None
+    client, _ = build_client(seed)
+
+    assert nearby(client).json()["spaces"] == []
 
 
 def test_nearby_omits_outside_zones_and_driveways(seed):

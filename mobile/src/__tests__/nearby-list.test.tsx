@@ -1,5 +1,6 @@
-import { render } from "@testing-library/react-native";
+import { fireEvent, render } from "@testing-library/react-native";
 
+import { MapLegend } from "@/components/MapLegend";
 import { NearbyList } from "@/components/find/NearbyList";
 import type { FindOption } from "@/features/find/options";
 
@@ -24,5 +25,22 @@ describe("NearbyList", () => {
 
     expect(view.getByRole("button", { name: "82% open. Seen 18 sec ago • 2 min walk. 50 ft" })).toBeTruthy();
     expect(view.queryByText(/Likely open/)).toBeNull();
+  });
+
+  it("describes an empty list by availability, without claiming any curb is legal", async () => {
+    const view = await render(<NearbyList options={[]} load="ready" onOpen={() => {}} onRetry={() => {}} />);
+
+    expect(view.getByText("No openings seen nearby yet")).toBeTruthy();
+    expect(view.queryByText(/legal/i)).toBeNull();
+  });
+});
+
+describe("MapLegend", () => {
+  it("explains availability colors without a legal-to-park row", async () => {
+    const view = await render(<MapLegend />);
+    await fireEvent.press(view.getByLabelText("Map key"));
+
+    expect(view.getByText("Likely open")).toBeTruthy();
+    expect(view.queryByText(/legal/i)).toBeNull();
   });
 });

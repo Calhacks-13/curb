@@ -70,7 +70,7 @@ export function NearbyList({ options, reservation = null, load, locating = false
       {load === "ready" && rows.length === 0 && (
         <View style={styles.state}>
           <Text style={styles.stateTitle}>No openings seen nearby yet</Text>
-          <Text style={styles.stateText}>Blue curbs are legal to park now. Openings appear here as cars pass.</Text>
+          <Text style={styles.stateText}>Openings appear here as cars pass. Always check posted signs before you park.</Text>
         </View>
       )}
 

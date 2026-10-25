@@ -127,7 +127,7 @@ export const ActiveBookingSummarySchema = z.strictObject({
 });
 
 export const SpaceDetailSchema = ParkingSpaceViewSchema.extend({
-  sign_rule: SignRuleViewSchema,
+  sign_rule: SignRuleViewSchema.nullable(),
   current_rules: z.string().min(1),
   max_minutes: z.number().int().positive().nullable(),
   next_change_at: UtcDateTimeSchema.nullable(),
