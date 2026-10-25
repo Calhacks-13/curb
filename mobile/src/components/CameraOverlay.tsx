@@ -7,9 +7,12 @@ import { scheduleOnRN } from "react-native-worklets";
 
 import { getApi } from "@/api/client";
 import type { FrameAccepted, OnDeviceInference, SignFeedback } from "@/api/types";
-import { font, ink, radius, shadow } from "@/config/tokens";
+import { font, ink, shadow } from "@/config/tokens";
+import { GhostParkingOverlay } from "@/components/GhostParkingOverlay";
 import { DetectionOverlay } from "@/components/DetectionOverlay";
 import { ScannerDetails } from "@/components/ScannerDetails";
+import { ScannerExperience } from "@/components/ScannerExperience";
+import { isParkingReading, scannerPresentation } from "@/features/capture/scannerPresentation";
 import { DetectionUploadController, type DeepReadonly, type DetectionDeliveryEvent } from "@/features/capture/DetectionUploadController";
 import type { FrameContext } from "@/features/capture/detectionUpload";
 import { useNow } from "@/hooks/useNow";
@@ -50,7 +53,7 @@ function LiveDot({ on, reduceMotion }: { on: boolean; reduceMotion: boolean }) {
     loop.start();
     return () => loop.stop();
   }, [blink, on, reduceMotion]);
-  return <Animated.View style={[styles.dot, { opacity: blink, backgroundColor: on ? ink.live : ink.grey500 }]} />;
+  return <Animated.View style={[styles.dot, { opacity: blink, backgroundColor: on ? "#AEEFC5" : ink.grey500 }]} />;
 }
 
 function CameraUnavailable() {
@@ -82,6 +85,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   const [lastSigns, setLastSigns] = useState<{ session: object; signs: DeepReadonly<SignFeedback[]> } | null>(null);
   const now = useNow(500);
   const [expanded, setExpanded] = useState(false);
+  const [diagnostics, setDiagnostics] = useState(false);
   const changeExpanded = useCallback((next: boolean) => {
     setExpanded(next);
     onExpandedChange?.(next);
@@ -99,7 +103,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         const current = sessionRef.current;
         if (current) setLatestDelivery({ session: current, event });
         if (current && event.state === "delivered") {
-          const readings = event.result.sign_feedback?.filter((sign) => sign.reading != null);
+          const readings = event.result.sign_feedback?.filter(isParkingReading);
           if (readings?.length) setLastSigns({ session: current, signs: readings });
         }
       },
@@ -241,13 +245,11 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
       : visibleInference ? "Waiting for server receipt" : "Waiting for first inference";
   const deliveryDetail = delivery?.state === "failed" ? delivery.error.message
     : receipt ? [receipt.pipeline_state, receipt.scene_valid == null ? null : receipt.scene_valid ? "Scene valid" : "No valid scene"].filter(Boolean).join(" · ") : "";
-  const badge = !enabled ? "Preview" : delivery?.state === "failed" ? "Retrying" : receipt ? "Connected" : visibleInference ? "Sending" : "Starting";
-  const deliveryStatus = enabled && (
-    <View style={expanded ? styles.fullScreenDelivery : styles.delivery}>
-      <Text style={styles.deliveryText}>{deliveryText}</Text>
-      {!!deliveryDetail && <Text style={styles.deliveryDetail}>{deliveryDetail}</Text>}
-    </View>
-  );
+  const presentation = scannerPresentation({ running: enabled, inference: visibleInference, analysis: receipt,
+    fresh: !!alignedAnalysis, uploadFailed: delivery?.state === "failed", error: scannerError });
+  const signJustRead = !!receipt?.captured_at && now.getTime() - Date.parse(receipt.captured_at) < 15_000;
+  const currentSign = signJustRead && (visibleInference?.signs.length ?? 0) > 0 ? receipt?.sign_feedback?.find(isParkingReading) ?? null : null;
+  const savedSign = lastSigns?.session === session ? lastSigns.signs[0] ?? null : null;
 
   const cameraSurface = (
     <View style={expanded ? styles.fullScreenPreview : styles.preview}>
@@ -259,11 +261,12 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         onError={onCameraError}
         resizeMode="cover"
       />
-      <DetectionOverlay result={visibleInference} analysis={alignedAnalysis ? receipt : null} />
-      <View style={styles.liveTag}>
+      <DetectionOverlay result={visibleInference} analysis={alignedAnalysis ? receipt : null} compact={!expanded} showSummary={false} showGaps={false} showLabels={diagnostics} />
+      <GhostParkingOverlay inference={visibleInference} analysis={alignedAnalysis ? receipt : null} compact={!expanded} />
+      {!expanded && <View style={styles.liveTag}>
         <LiveDot on={enabled && delivery?.state !== "failed"} reduceMotion={reduceMotion} />
-        <Text style={styles.liveText}>{badge}</Text>
-      </View>
+        <Text style={styles.liveText}>{presentation.badge}</Text>
+      </View>}
       {!expanded && (
         <Pressable
           accessibilityRole="button"
@@ -278,64 +281,39 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   return (
     <View
       style={expanded ? styles.fullScreen : styles.card}
-      accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? `Scanning the curb. ${deliveryText}. ${deliveryDetail}` : "Camera preview. Tap Start Scanning to begin."}
+      accessibilityLabel={`${presentation.title} ${presentation.detail}`}
     >
       {cameraSurface}
       {expanded ? (
         <>
-          <View style={styles.fullScreenHeader}>
-            <View>
-              <Text style={styles.fullScreenTitle}>On-device vision</Text>
-              <Text style={styles.fullScreenSubtitle}>Frames stay on this iPhone</Text>
-            </View>
-          </View>
-          {deliveryStatus}
-          {enabled && <ScannerDetails
-            analysis={receipt}
+          <ScannerExperience presentation={presentation} sign={enabled ? currentSign ?? savedSign : null}
+            previousSign={!currentSign} sampling={sampling} diagnostics={diagnostics} reduceMotion={reduceMotion}
+            error={scannerError} onToggleDiagnostics={() => setDiagnostics((value) => !value)}
+            onPause={() => onStopScan?.()} onStart={() => { setScannerError(null); onStartScan?.(); }}
+            onCloseError={() => { changeExpanded(false); onStopScan?.(); }} />
+          {diagnostics && enabled && <ScannerDetails analysis={receipt}
             lastSigns={lastSigns?.session === session ? lastSigns.signs : []}
-            signCount={visibleInference?.signs.length ?? 0}
-            fresh={!!alignedAnalysis}
-          />}
-          {scannerError && (
-            <View style={styles.fullScreenError}>
-              <Text style={styles.errorTitle}>Scanner stopped</Text>
-              <Text accessibilityRole="alert" style={styles.errorMessage}>{scannerError}</Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => { changeExpanded(false); onStopScan?.(); }}
-                style={({ pressed }) => [styles.errorButton, pressed && { opacity: 0.8 }]}
-              >
-                <Text style={styles.errorButtonText}>Close and stop scanning</Text>
-              </Pressable>
-            </View>
-          )}
+            inference={visibleInference} deliveryText={deliveryText} deliveryDetail={deliveryDetail}
+            signCount={visibleInference?.signs.length ?? 0} fresh={!!alignedAnalysis} />}
           {fullScreenCloseButton}
         </>
       ) : (
         <>
-        {deliveryStatus}
-        {enabled && <Text style={styles.sub}>Expand for gaps + sign text</Text>}
-        {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
-        {sampling ? (
-          <>
-            <Text style={styles.caption}>{enabled ? delivery?.state === "failed" ? "Retrying upload" : "Scanning curb" : "Camera preview"}</Text>
-            <Pressable
-              onPress={onStopScan}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.stopButton, pressed && { opacity: 0.8 }]}
-            >
-              <Text style={styles.stopText}>Stop</Text>
-            </Pressable>
-          </>
-        ) : (
-          <Pressable
-            onPress={() => { setScannerError(null); onStartScan?.(); }}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.startButton, pressed && { opacity: 0.8 }]}
-          >
+          <View style={styles.compactFooter}>
+            <View style={styles.compactCopy}>
+              <Text style={styles.caption} numberOfLines={1}>{presentation.compact}</Text>
+              <Text style={styles.sub}>Tap to expand</Text>
+            </View>
+            {sampling && <Pressable onPress={onStopScan} accessibilityRole="button" accessibilityLabel="Pause scanning"
+              style={({ pressed }) => [styles.compactPause, pressed && { opacity: 0.7 }]}>
+              <SymbolView name="pause.fill" size={12} tintColor="#E0EADD" fallback={<Text style={styles.stopText}>Ⅱ</Text>} />
+            </Pressable>}
+          </View>
+          {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
+          {!sampling && <Pressable onPress={() => { setScannerError(null); onStartScan?.(); }} accessibilityRole="button"
+            style={({ pressed }) => [styles.startButton, pressed && { opacity: 0.8 }]}>
             <Text style={styles.startText}>Start Scanning</Text>
-          </Pressable>
-        )}
+          </Pressable>}
         </>
       )}
     </View>
@@ -343,8 +321,8 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
 }
 
 const styles = StyleSheet.create({
-  card: { width: 104, padding: 5, borderRadius: radius.button, backgroundColor: ink.black, ...shadow.floating },
-  preview: { height: 72, borderRadius: 8, overflow: "hidden", backgroundColor: ink.grey900 },
+  card: { width: 156, padding: 5, borderRadius: 20, borderCurve: "continuous", backgroundColor: "#14271E", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)", ...shadow.floating },
+  preview: { height: 108, borderRadius: 15, overflow: "hidden", backgroundColor: ink.grey900 },
   previewPressed: { opacity: 0.88 },
   expandHitTarget: { ...StyleSheet.absoluteFill },
   previewEmpty: { alignItems: "center", justifyContent: "center" },
@@ -362,50 +340,17 @@ const styles = StyleSheet.create({
   },
   dot: { width: 6, height: 6, borderRadius: 3 },
   liveText: { fontFamily: font.bold, fontSize: 10, color: ink.white, marginTop: 2 },
-  caption: { fontFamily: font.semibold, fontSize: 12, color: ink.white, marginTop: 5, marginLeft: 2 },
-  sub: { fontFamily: font.regular, fontSize: 11, color: ink.grey300, marginLeft: 2, marginBottom: 1 },
-  delivery: { marginTop: 5, marginHorizontal: 2 },
-  fullScreenDelivery: { position: "absolute", left: 18, right: 18, bottom: 48, padding: 12, borderRadius: 12, backgroundColor: "rgba(0,0,0,0.78)" },
-  deliveryText: { fontFamily: font.semibold, fontSize: 11, color: ink.white },
-  deliveryDetail: { marginTop: 3, fontFamily: font.regular, fontSize: 10, color: ink.grey300 },
-  startButton: { marginTop: 5, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.live, alignItems: "center", justifyContent: "center" },
-  startText: { fontFamily: font.bold, fontSize: 11, color: ink.white, marginTop: 1 },
-  stopButton: { marginTop: 4, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.grey900, alignItems: "center", justifyContent: "center" },
+  caption: { fontFamily: font.semibold, fontSize: 11, color: ink.white, marginTop: 5, marginLeft: 2 },
+  sub: { fontFamily: font.regular, fontSize: 10, color: ink.grey300, marginLeft: 2, marginBottom: 1 },
+  startButton: { marginTop: 5, marginHorizontal: 2, height: 36, borderRadius: 18, backgroundColor: "#D3F5DD", alignItems: "center", justifyContent: "center" },
+  startText: { fontFamily: font.bold, fontSize: 11, color: "#14271E", marginTop: 1 },
   stopText: { fontFamily: font.bold, fontSize: 11, color: ink.grey300, marginTop: 1 },
   fullScreen: { flex: 1, backgroundColor: ink.black },
   fallbackCenter: { flex: 1, alignItems: "center", justifyContent: "center" },
   fullScreenPreview: { ...StyleSheet.absoluteFill, overflow: "hidden", backgroundColor: ink.black },
-  fullScreenHeader: {
-    position: "absolute",
-    top: 56,
-    left: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: "rgba(0,0,0,0.68)",
-  },
-  fullScreenTitle: { fontFamily: font.bold, fontSize: 16, color: ink.white },
-  fullScreenSubtitle: { marginTop: 2, fontFamily: font.regular, fontSize: 11, color: ink.grey300 },
-  fullScreenError: {
-    position: "absolute",
-    left: 24,
-    right: 24,
-    bottom: 48,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: "rgba(11,11,12,0.9)",
-  },
-  errorTitle: { fontFamily: font.bold, fontSize: 18, color: ink.white },
-  errorMessage: { marginTop: 6, fontFamily: font.regular, fontSize: 13, color: ink.grey300 },
-  errorButton: {
-    marginTop: 14,
-    minHeight: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ink.live,
-  },
-  errorButtonText: { fontFamily: font.bold, fontSize: 13, color: ink.white },
+  compactFooter: { flexDirection: "row", alignItems: "center", paddingHorizontal: 5, paddingBottom: 3, paddingTop: 1, gap: 2 },
+  compactCopy: { flex: 1, gap: 1 },
+  compactPause: { width: 38, height: 44, alignItems: "center", justifyContent: "center" },
   closeButton: {
     position: "absolute",
     top: 56,
@@ -415,7 +360,8 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.72)",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.24)",
   },
   closeText: { marginTop: -3, fontFamily: font.regular, fontSize: 34, lineHeight: 38, color: ink.white },
 });

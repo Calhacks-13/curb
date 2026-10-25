@@ -332,7 +332,7 @@ export default function FindScreen() {
 
   return (
     <View style={styles.root} onLayout={(e) => setScreen({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
-      <StatusBar style="dark" />
+      <StatusBar style={cameraExpanded && focused ? "light" : "dark"} />
       <CurbMap key={mapKey} ref={mapRef} mood="clay" reduceMotion={reduceMotion} onMapMessage={onMapMessage} />
 
       <View style={[styles.top, { top: insets.top + 8 }]}>

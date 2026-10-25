@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react-native";
+import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import { useState } from "react";
 import { Linking, Platform } from "react-native";
 import type { Frame, UseFrameOutputProps } from "react-native-vision-camera";
@@ -47,6 +47,7 @@ jest.mock("curb-vision", () => ({ getCurbVision: () => mockGetCurbVision() }), {
 const context: FrameContext = { lat: 37.8, lng: -122.4, accuracy_m: 3, heading: 180, device_id: "phone", session_id: "capture" };
 const accepted: FrameAccepted = {
   frame_id: "frame-1", accepted: true,
+  captured_at: new Date().toISOString(), frame_width: 1280, frame_height: 720,
   space: {
     id: "spot", zone_id: "zone", location: { type: "Point", coordinates: [-122.4, 37.8] },
     stall_geometry: { type: "Polygon", coordinates: [] }, internal_state: "OPEN",
@@ -70,6 +71,11 @@ async function emitFrame() {
   await act(async () => { mockFrameOptions.onFrame?.(next); });
   return next;
 }
+async function expandCamera() {
+  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  const details = screen.queryByLabelText("Show diagnostics");
+  if (details) await fireEvent.press(details);
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => { resolve = res; });
@@ -78,6 +84,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  accepted.captured_at = new Date().toISOString();
   mockScheduled.length = 0;
   mockPermission = { hasPermission: true, canRequestPermission: false, status: "authorized", requestPermission: mockRequestPermission };
   mockDevice = { id: "back-camera" };
@@ -156,28 +163,32 @@ it("runs iOS native inference with the required output options, schedules JSON, 
 
 it.each([false, true])("distinguishes waiting from an empty inference received by the server (expanded=%s)", async (expanded) => {
   mockDetect.mockReturnValue({ vehicles: [], signs: [], frameWidth: 1280, frameHeight: 720 });
-  mockFetch.mockResolvedValue({ ok: true, json: async () => ({ frame_id: "empty", accepted: true, vehicle_count: 0, gap_count: 0, pipeline_state: "no scene", scene_valid: false }) });
+  mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ...accepted, space: undefined, vehicle_count: 0, gap_count: 0, pipeline_state: "no scene", scene_valid: false }) });
   await render(<CameraOverlay {...defaults} />);
-  if (expanded) await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
-  expect(screen.getByText("Waiting for first inference")).toBeTruthy();
+  if (expanded) await expandCamera();
+  expect(screen.getByLabelText(/Getting a clear view/)).toBeTruthy();
   expect(screen.queryByText("Live")).toBeNull();
   await emitFrame();
   await flushRN();
+  expect(screen.getByLabelText(/Finding the curb/)).toBeTruthy();
+  if (!expanded) await expandCamera();
   expect(screen.getByText("Server received · 0 vehicles · 0 gaps")).toBeTruthy();
-  expect(screen.getByLabelText(/Server received.*0 vehicles.*0 gaps.*no scene.*No valid scene/)).toBeTruthy();
-  expect(screen.getByText("Connected")).toBeTruthy();
+  expect(screen.getByText(/no scene.*No valid scene/)).toBeTruthy();
   expect(JSON.parse((mockFetch.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual(expect.objectContaining({ vehicles: [], signs: [] }));
 });
 
 it.each([false, true])("keeps inference boxes during HTTP 502 and clears delivery failure on receipt (expanded=%s)", async (expanded) => {
   mockFetch.mockImplementationOnce(async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError("HTML tunnel response"); } }));
   await render(<CameraOverlay {...defaults} />);
-  if (expanded) await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  if (expanded) await expandCamera();
   await emitFrame();
   await flushRN();
+  expect(screen.getByLabelText(/Still looking. Sync paused./)).toBeTruthy();
+  expect(screen.getByTestId("detection-overlay")).toBeTruthy();
+  if (!expanded) await expandCamera();
   await act(async () => screen.getByTestId("detection-overlay").props.onLayout({ nativeEvent: { layout: { width: 128, height: 72 } } }));
   expect(screen.getByText("Upload unavailable")).toBeTruthy();
-  expect(screen.getByLabelText(/Upload unavailable.*HTTP 502.*Retrying/)).toBeTruthy();
+  expect(screen.getByText(/HTTP 502.*Retrying/)).toBeTruthy();
   expect(screen.getByLabelText("car, 90% confidence")).toBeTruthy();
   expect(screen.queryByText("Scanner stopped")).toBeNull();
   expect(screen.getByTestId("native-camera").props.outputs).toEqual([mockFrameOutput]);
@@ -186,7 +197,7 @@ it.each([false, true])("keeps inference boxes during HTTP 502 and clears deliver
   await flushRN();
   expect(screen.queryByText("Upload unavailable")).toBeNull();
   expect(screen.getByText("Server received · 1 vehicle · 2 gaps")).toBeTruthy();
-  expect(screen.getByText("Connected")).toBeTruthy();
+  expect(screen.getByLabelText("Hide diagnostics")).toBeTruthy();
 });
 
 it.each([false, true])("ignores stale receipt or failure after stop/restart (failure=%s)", async (failure) => {
@@ -198,12 +209,12 @@ it.each([false, true])("ignores stale receipt or failure after stop/restart (fai
   await view.rerender(<CameraOverlay {...defaults} sampling={false} />);
   await view.rerender(<CameraOverlay {...defaults} />);
   await act(async () => resolve({ ok: !failure, status: failure ? 502 : 200, json: async () => accepted }));
-  expect(screen.getByText("Waiting for first inference")).toBeTruthy();
+  expect(screen.getByLabelText(/Getting a clear view/)).toBeTruthy();
   expect(screen.queryByText("Upload unavailable")).toBeNull();
   expect(screen.queryByText("Connected")).toBeNull();
   await emitFrame();
   await flushRN();
-  expect(screen.getByText("Server received")).toBeTruthy();
+  expect(screen.getByLabelText(/Reading the sign/)).toBeTruthy();
 });
 
 it("shows processed detections and moves the single live camera into a full-screen view", async () => {
@@ -211,6 +222,9 @@ it("shows processed detections and moves the single live camera into a full-scre
   await emitFrame();
   await flushRN();
 
+  expect(screen.getByTestId("detection-overlay")).toBeTruthy();
+  await expandCamera();
+  expect(screen.getByText("curb")).toBeTruthy();
   await act(async () => {
     screen.getByTestId("detection-overlay").props.onLayout({
       nativeEvent: { layout: { width: 128, height: 72 } },
@@ -221,16 +235,14 @@ it("shows processed detections and moves the single live camera into a full-scre
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
   expect(mockCameraMount).toHaveBeenCalledTimes(1);
   expect(mockCameraUnmount).not.toHaveBeenCalled();
-  expect(within(screen.getByLabelText("Expand live camera preview")).queryByLabelText("car, 90% confidence")).toBeNull();
-
-  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
-  expect(screen.getByText("On-device vision")).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText("Hide diagnostics"));
+  expect(screen.getByLabelText("car, 90% confidence")).toBeTruthy();
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
   expect(mockCameraMount).toHaveBeenCalledTimes(1);
   expect(mockCameraUnmount).not.toHaveBeenCalled();
 
   await fireEvent.press(screen.getByLabelText("Close full-screen camera"));
-  expect(screen.queryByText("On-device vision")).toBeNull();
+  expect(screen.queryByText("curb")).toBeNull();
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
   expect(mockCameraMount).toHaveBeenCalledTimes(1);
   expect(mockCameraUnmount).not.toHaveBeenCalled();
@@ -248,11 +260,15 @@ it("shows server gap details and sign text, retains the last reading, and clears
   };
   mockFetch.mockResolvedValue({ ok: true, json: async () => response });
   const view = await render(<CameraOverlay {...defaults} />);
-  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await expandCamera();
   await emitFrame();
   await flushRN();
+  expect(screen.getByText("Read: Two hour parking")).toBeTruthy();
+  expect(screen.queryByText(/Reading score 90%/)).toBeNull();
+  await fireEvent.press(screen.getByLabelText("Gaps diagnostics"));
   expect(screen.getByText("1 gap · 1 confirmed")).toBeTruthy();
   expect(screen.getByText(/vehicle #1 → vehicle #2/)).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText("Signs diagnostics"));
   expect(screen.getByText("2 HOUR PARKING 8AM–6PM")).toBeTruthy();
   expect(screen.getByText(/Reading score 90%/)).toBeTruthy();
   mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ...response, sign_feedback: [], gap_bboxes: [], tracked_gaps: [] }) });
@@ -271,12 +287,13 @@ it("hides delayed server geometry and shows sign-reading configuration failures"
     sign_feedback: [{ track_id: 1, bbox: [200, 20, 230, 80], observations: 1, required_observations: 3, state: "unavailable", reading: null }],
   }) });
   await render(<CameraOverlay {...defaults} />);
-  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await expandCamera();
   await emitFrame();
   await flushRN();
   await act(async () => screen.getByTestId("detection-overlay").props.onLayout({ nativeEvent: { layout: { width: 128, height: 72 } } }));
   expect(screen.getByText("Analysis delayed — gap overlay hidden")).toBeTruthy();
   expect(screen.queryByLabelText(/Gap 1/)).toBeNull();
+  await fireEvent.press(screen.getByLabelText("Signs diagnostics"));
   expect(screen.getByText(/Reading unavailable — server API key missing/)).toBeTruthy();
 });
 
@@ -286,7 +303,7 @@ it("surfaces a full-screen scanner failure and lets the user stop scanning", asy
     return <CameraOverlay {...defaults} sampling={sampling} onStopScan={() => setSampling(false)} onStartScan={() => setSampling(true)} />;
   }
   await render(<RecoverableCamera />);
-  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await expandCamera();
   mockDetect.mockImplementation(() => { throw new Error("CoreML prediction failed"); });
 
   await emitFrame();
@@ -295,7 +312,7 @@ it("surfaces a full-screen scanner failure and lets the user stop scanning", asy
   expect(screen.getByText("Scanner stopped")).toBeTruthy();
   expect(screen.getAllByText("CoreML prediction failed").length).toBeGreaterThan(0);
   await fireEvent.press(screen.getByText("Close and stop scanning"));
-  expect(screen.queryByText("On-device vision")).toBeNull();
+  expect(screen.queryByText("curb")).toBeNull();
   expect(screen.getByText("Start Scanning")).toBeTruthy();
 });
 
@@ -305,7 +322,7 @@ it("keeps preview active through Stop and Start while toggling inference and sub
     return <CameraOverlay {...defaults} sampling={sampling} onStopScan={() => setSampling(false)} onStartScan={() => setSampling(true)} />;
   }
   await render(<ToggleCamera />);
-  await fireEvent.press(screen.getByText("Stop"));
+  await fireEvent.press(screen.getByLabelText("Pause scanning"));
   expect(screen.getByTestId("native-camera").props).toEqual(expect.objectContaining({ isActive: true, outputs: [] }));
   const next = await emitFrame();
   await flushRN();
@@ -351,7 +368,7 @@ it("stops uploading on permission loss and suppresses an in-flight confirmation"
 
 it("keeps a full-screen close control when camera permission is lost", async () => {
   const view = await render(<CameraOverlay {...defaults} />);
-  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await expandCamera();
   mockPermission = { ...mockPermission, hasPermission: false, status: "denied" };
   await view.rerender(<CameraOverlay {...defaults} />);
 
@@ -362,7 +379,7 @@ it("keeps a full-screen close control when camera permission is lost", async () 
 
 it("keeps a full-screen close control when the camera becomes unavailable", async () => {
   const view = await render(<CameraOverlay {...defaults} />);
-  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await expandCamera();
   mockDevice = undefined;
   await view.rerender(<CameraOverlay {...defaults} />);
 

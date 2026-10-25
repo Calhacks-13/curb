@@ -8,11 +8,13 @@ sends to Claude Vision API, returns structured SignRules or SignPoleReading.
 import base64
 import json
 import logging
+import re
 
 import anthropic
 
 from app.config import settings
 from app.models import SignRules, SignPoleReading, SignReading
+from app.domain.sign_rules import assess_reading
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +93,7 @@ async def read_sign(image_bytes: bytes) -> SignRules:
 def _parse_and_score(raw_text: str) -> SignRules:
     """Parse Claude response and compute confidence score."""
     try:
-        data = json.loads(raw_text)
+        data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip(), flags=re.I))
         json_parsed = True
     except json.JSONDecodeError:
         data = {}
@@ -127,6 +129,11 @@ def _parse_and_score(raw_text: str) -> SignRules:
 SIGN_POLE_PROMPT = (
     "This image shows one or more parking/traffic signs. "
     "It may be a street parking sign, a parking garage/lot directional sign, or a sign on a pole.\n\n"
+    "Distinguish street-name/directional signs from actual curb parking regulations. "
+    "A street name such as LYON is informational and is not a parking rule. "
+    "Use sign_category informational for these signs, and unreadable when text cannot be read. "
+    "Never infer a garage from a street name or fill missing text from context. "
+    "Preserve exact clock times, weekdays, and monthly ordinals such as 3rd Tuesday.\n\n"
     "For EACH individual sign visible, extract a JSON object with these fields:\n"
     '- "sign_type": one of "parking", "no_parking", "street_cleaning", "meter", '
     '"time_limit", "permit", "loading_zone", "garage", "lot", "directional", "other"\n'
@@ -140,7 +147,7 @@ SIGN_POLE_PROMPT = (
     "Then synthesize ALL signs into a combined result. Return a JSON object:\n"
     "{\n"
     '  "signs": [<array of individual sign objects above>],\n'
-    '  "sign_category": "street" if curb/street parking rules, "garage" if parking garage/structure, "lot" if parking lot,\n'
+    '  "sign_category": "street", "garage", "lot", "informational", or "unreadable",\n'
     '  "garage_name": name of the garage/lot if visible, or null,\n'
     '  "combined_summary": "<plain English one-liner of the rules or directions>",\n'
     '  "combined_hours": "<when rules apply overall or null>",\n'
@@ -171,7 +178,7 @@ async def read_sign_pole(image_bytes: bytes) -> SignPoleReading:
     try:
         response = await client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1024,
+            max_tokens=2048,
             messages=[
                 {
                     "role": "user",
@@ -201,9 +208,16 @@ async def read_sign_pole(image_bytes: bytes) -> SignPoleReading:
 
 
 def _parse_pole_reading(raw_text: str) -> SignPoleReading:
+    try:
+        return _decode_pole_reading(raw_text)
+    except (ValueError, TypeError, AttributeError):
+        return SignPoleReading(combined_summary="Sign reading could not be interpreted. Try a clearer view.", flagged=True)
+
+
+def _decode_pole_reading(raw_text: str) -> SignPoleReading:
     """Parse Claude response into SignPoleReading with confidence scoring."""
     try:
-        data = json.loads(raw_text)
+        data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text.strip(), flags=re.I))
         json_parsed = True
     except json.JSONDecodeError:
         data = {}
@@ -224,7 +238,7 @@ def _parse_pole_reading(raw_text: str) -> SignPoleReading:
 
     reading = SignPoleReading(
         signs=signs,
-        combined_summary=data.get("combined_summary", raw_text[:200] if not json_parsed else ""),
+        combined_summary=data.get("combined_summary", "Sign reading could not be interpreted. Try a clearer view." if not json_parsed else ""),
         combined_hours=data.get("combined_hours"),
         combined_max_duration_min=data.get("combined_max_duration_min"),
         combined_price=data.get("combined_price"),
@@ -249,7 +263,7 @@ def _parse_pole_reading(raw_text: str) -> SignPoleReading:
 
     reading.confidence_score = round(score, 2)
     reading.flagged = score < settings.sign_read_confidence_threshold
-    return reading
+    return assess_reading(reading)
 
 
 async def close_client() -> None:

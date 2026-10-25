@@ -222,6 +222,87 @@ VehicleTracker, GapTracker, SignTracker, sign triangulation, best-crop Claude
 reading, confirmed-space lifecycle, Cosmos, and Web PubSub. It loads no YOLO/depth
 models and accepts no binary camera inference stream.
 
+## Gap visibility and spot lifecycle
+
+Tracking loss does not prove occupancy. When the camera turns, moves, rotates,
+loses a boundary vehicle, stops submitting, or times out, the last open observation
+keeps its original timestamp. The map ages it through its existing freshness colors
+and hides it after five minutes. A one-second server maintenance task also marks
+stale spots `expired`/`UNKNOWN` and emits `space.expired` without requiring another
+camera upload. Mapping-mode seed spots remain exempt from expiry.
+
+An occupied transition requires both real boundary vehicles to remain stable and
+the same sufficiently confident vehicle to cover the opening in the same image
+row for at least two seconds and three observations. Both the anchors and blocker
+must remain stable against their reference boxes. Missing observations reset the
+obstruction evidence. Frame-edge gaps cannot prove occupancy. Fresh contradictory
+open-gap evidence from another session suppresses an occupied transition.
+These conservative image checks still require physical-device validation; they
+do not measure vehicle fit or establish curb legality.
+
+`CURB_OCCUPANCY_CONFIRM_SEC` / `CURB_OCCUPANCY_CONFIRM_HITS` default to 2 / 3.
+Anchor and blocker IoU thresholds default to 0.8; gap coverage and minimum blocker
+confidence default to 0.6. Heading changes over 10 degrees, GPS steps over 5 metres,
+or changed buffer dimensions invalidate the old viewpoint. These limits favor
+retaining an aging observation over guessing occupancy from ambiguous footage.
+
+Reobservations reuse the spot ID/version stored for the same directional road
+segment, including after tracking/session loss, occupancy, expiry, or server
+restart. Upload self-feedback, canonical nearby reads, and realtime events use
+that same identity. This preserves the existing segment-based map granularity;
+it does not distinguish multiple individually located stalls in one segment.
+All outgoing observation timestamps explicitly carry UTC.
+
+Structured `cv_transition` server logs and the bounded `transitions` history at
+`GET /v1/debug/state` record open/refresh/occupied/expired decisions and gap-loss
+reasons. `gap_diagnostics` exposes current visibility and pending obstruction
+evidence. The history holds 500 entries and resets on server restart. It contains
+no camera images or sign crops.
+
+## Sign evidence and rule selection
+
+The expanded scanner presents CV geometry by default: mint vehicle contours,
+amber sign frames, and cyan candidate/confirmed gap bands. Compact live counts
+replace the large status card. The dark diagnostics panel opens on Overview,
+with Gaps and Signs tabs exposing measurements, tracking state, extracted text,
+reading scores and server receipts. The sliders control hides/shows the panel;
+detections stay visible. Expansion, diagnostics and pause/resume retain the same
+native camera. Previous sign readings are explicitly labeled.
+
+Every selected sign crop is read individually (at most two per submission), so
+a street-name plate cannot displace the regulatory sign below it on the same pole.
+Street names, directional plates and unreadable text are excluded from curb-rule
+association. Completeness of a JSON response is not sufficient: an illegible
+reading is flagged and capped at a 0.25 score. A failed/uncertain track can retry
+up to three times after additional observations and a materially better crop.
+
+New tracks are classified before deduplication. An existing sign requires both a
+compatible location/direction and matching sign type/text; proximity alone cannot
+reuse a different sign's reading. The in-memory read cache uses exact crop hashes
+and direction, not GPS alone. Newly validated rules also update already-open spots
+without extending their availability timestamps.
+
+Scanner rule evidence retains raw time/date text. Supported explicit daily,
+weekly, and single nth-weekday monthly time windows are evaluated in
+`America/Los_Angeles`, including the observed third-Tuesday 11 AM–1 PM restriction.
+The restriction is not stored as an all-day ban. Ambiguous clocks, multiple distinct
+windows, permit eligibility, holidays, last-weekday and other unsupported schedules
+remain unknown. No validated parking sign also means legality is unknown. The map
+can show observed unsigned openings as availability estimates; known illegal zones
+are excluded, and unsigned details make no legality claim. Nearby reads, details, and realtime
+zone payloads share this interpretation; maintenance publishes time-boundary changes
+while a spot is fresh.
+
+Polling event cursors start from a JavaScript-safe microsecond timestamp rather
+than zero, so an installed phone's cursor can advance after a normal API restart.
+To repair older scanner data after these changes, the area-scoped helper preserves
+source text and observation times and retires old segment-ID aliases:
+
+```sh
+cd server
+PYTHONPATH=. .venv/bin/python scripts/repair_scan_rules.py --lat 37.8043 --lng -122.4484 --radius-m 100
+```
+
 ## Troubleshooting and profiling
 
 - **Upload unavailable/tunnel errors:** `EXPO_PUBLIC_API_URL` is inlined into the
@@ -304,3 +385,21 @@ References: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/),
 [VisionCamera frame outputs](https://visioncamera.margelo.com/docs/frame-output),
 [Apple model performance reports](https://developer.apple.com/documentation/coreml/analyzing-a-core-ml-model-s-performance-in-xcode),
 and [Core ML Instruments](https://developer.apple.com/videos/play/wwdc2022/10027/).
+
+## Ghost-car scanner preview
+
+The immersive camera now replaces full-height gap bands with a translucent,
+shaded native 3D car. Details open on demand in a light, compact sheet; contour
+labels appear with diagnostics. The same native camera remains mounted.
+
+A car is illustrated only for confirmed interior gaps with two currently visible
+neighboring vehicles and fresh matching frame dimensions. Adjacent car boxes
+supply approximate image position/scale. Candidates, edges, narrow openings and
+misaligned/delayed geometry do not receive a model. This does not measure depth,
+fit, road-plane pose or occlusion, and is labeled as an unverified fit preview.
+See `mobile/modules/curb-ghost/README.md` for native build and model credits.
+
+Curb display summaries are separate from the complete OCR evidence used for
+schedule evaluation. Next-change rows include the calendar date and Pacific time,
+so a monthly restriction is not displayed as a bare “11 AM”. Fenced OCR JSON is
+accepted; malformed replies show a readable retry message rather than JSON.

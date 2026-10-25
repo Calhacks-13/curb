@@ -225,7 +225,8 @@ def test_confirmed_scan_is_saved_to_the_canonical_map_repository(seed):
     assert [space["id"] for space in body["spaces"]] == [scan.segment_id]
     assert body["spaces"][0]["location"]["coordinates"] == [scan.lng, scan.lat]
     assert body["spaces"][0]["detection_confidence"] == 0.87
-    assert body["zones"][0]["current_rules"].startswith("Scanner-confirmed")
+    assert body["zones"][0]["legal_status_now"] == "UNKNOWN"
+    assert body["zones"][0]["sign_rule_id"] is None
 
 
 def test_sessions_are_idempotent_validate_profiles_and_do_not_refresh_seed(seed):

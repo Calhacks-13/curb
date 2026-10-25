@@ -8,6 +8,7 @@ from app.models.domain import (
     SignRuleView, SpaceDetail,
 )
 from app.repositories.protocols import ParkingRepository
+from app.domain.sign_rules import evaluate_rule_text
 
 
 class ParkingService:
@@ -41,6 +42,12 @@ class ParkingService:
         """
         zones = [zone for zone in await self.repository.list_zones()
                  if distance_to_line_m(origin, zone.geometry) <= radius_m]
+        for index, zone in enumerate(zones):
+            if zone.sign_rule_id and zone.sign_rule_id.startswith("scan-rule:"):
+                rule = await self.repository.get_rule(zone.sign_rule_id)
+                if rule is not None:
+                    status, change = evaluate_rule_text(rule.evidence_text, now)
+                    zones[index] = zone.model_copy(update={"legal_status_now": status, "next_change_at": change})
         by_id = {zone.id: zone for zone in zones}
         spaces = []
         for space in await self.repository.list_spaces():
@@ -91,9 +98,15 @@ class ParkingService:
         if zone is None:
             return None
         rule = await self._zone_rule(zone)
+        summary = zone.current_rules
+        if rule is not None and rule.id.startswith("scan-rule:"):
+            _, change = evaluate_rule_text(rule.evidence_text, now)
+            zone = zone.model_copy(update={"next_change_at": change})
+            if rule.evidence_text:
+                summary = rule.evidence_text.splitlines()[0]
         return SpaceDetail(
             **self._space_view(space, now).model_dump(), sign_rule=rule,
-            current_rules=zone.current_rules,
+            current_rules=summary,
             max_minutes=rule.max_minutes if rule else None,
             next_change_at=zone.next_change_at,
         )

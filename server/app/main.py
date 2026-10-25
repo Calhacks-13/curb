@@ -1,4 +1,6 @@
-from contextlib import asynccontextmanager
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,16 +50,35 @@ async def lifespan(app: FastAPI):
         app.state.driveway_service,
         HttpPaymentExecutor(settings.payment_service_url),
     )
-    yield
-    # Shutdown
-    from app.cv.sign_reader import close_client
+    from app.cv.pipeline import get_pipeline
 
-    await app.state.agent_demo_runner.close()
-    await close_client()
-    await cosmos.close()
-    await signalr.close()
-    if isinstance(repository, CosmosParkingRepository):
-        await repository.close()
+    pipeline = get_pipeline()
+    pipeline.set_repository(repository)
+
+    async def maintain_spots():
+        while True:
+            try:
+                await pipeline.maintain()
+            except Exception:
+                logging.getLogger("uvicorn.error").exception("Curb spot maintenance failed")
+            await asyncio.sleep(1)
+
+    maintenance = asyncio.create_task(maintain_spots())
+    try:
+        yield
+    finally:
+        maintenance.cancel()
+        with suppress(asyncio.CancelledError):
+            await maintenance
+        # Shutdown
+        from app.cv.sign_reader import close_client
+
+        await app.state.agent_demo_runner.close()
+        await close_client()
+        await cosmos.close()
+        await signalr.close()
+        if isinstance(repository, CosmosParkingRepository):
+            await repository.close()
 
 
 app = FastAPI(title="Curb API", version="0.2.0", lifespan=lifespan)

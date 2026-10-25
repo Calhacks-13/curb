@@ -99,3 +99,13 @@ export function toLaHhmm(value: string): string {
   const p = laParts(new Date(value));
   return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
 }
+
+/** Date is essential: the next monthly restriction can be weeks away. */
+export function formatLaChange(iso: string): string | null {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return null;
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: LA_TZ, weekday: "short", month: "short", day: "numeric", year: "numeric",
+  }).format(date);
+  return `${day} at ${formatLaClockShort(date)} PT`;
+}

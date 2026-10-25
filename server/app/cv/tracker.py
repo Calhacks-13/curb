@@ -186,6 +186,9 @@ class TrackedGap:
     __slots__ = (
         "left_track_id", "right_track_id", "bbox", "first_seen", "last_seen",
         "observation_count", "_width_samples",
+        "anchor_boxes", "visible", "loss_reason", "blocker_id", "blocked_since",
+        "blocked_last_seen", "blocked_hits",
+        "blocker_bbox",
     )
 
     _MAX_WIDTH_SAMPLES = 10
@@ -198,6 +201,17 @@ class TrackedGap:
         self.last_seen = time.monotonic()
         self.observation_count = 1
         self._width_samples: list[float] = []
+        self.anchor_boxes: dict[int, list[float]] = {}
+        self.visible = True
+        self.loss_reason: str | None = None
+        self.clear_obstruction()
+
+    def clear_obstruction(self):
+        self.blocker_id: int | None = None
+        self.blocked_since: float | None = None
+        self.blocked_last_seen: float | None = None
+        self.blocked_hits = 0
+        self.blocker_bbox: list[float] | None = None
 
     def add_width_sample(self, width_m: float):
         """Record a gap width measurement for multi-frame averaging."""
@@ -244,6 +258,7 @@ class GapTracker:
         frame_height: int,
         gap_measurements: list | None = None,
         current_tracks: list[Track] | None = None,
+        allow_occupancy: bool = True,
     ) -> tuple[list[TrackedGap], list[TrackedGap], list[TrackedGap]]:
         """
         Compute gaps from sorted tracks, match to existing tracked gaps.
@@ -255,8 +270,13 @@ class GapTracker:
         # Retire evidence that timed out during a submission hiatus before
         # matching can refresh last_seen for the same vehicle identities.
         expired_confirmed = self._expire_old(now)
+        for gap in self._gaps.values():
+            gap.visible = False
 
         if len(confirmed_tracks) < 1:
+            for gap in self._gaps.values():
+                gap.clear_obstruction()
+                gap.loss_reason = "boundaries_not_visible"
             return [], [], expired_confirmed
 
         # Fresh unconfirmed vehicles block openings immediately, but cannot
@@ -282,6 +302,11 @@ class GapTracker:
             else:
                 # New gap
                 self._gaps[key] = TrackedGap(key[0], key[1], bbox)
+            gap = self._gaps[key]
+            gap.visible = True
+            gap.loss_reason = None
+            gap.clear_obstruction()
+            gap.anchor_boxes = {track.id: list(track.bbox) for track in blockers if track.id in key}
 
         # Ingest width measurements into the matching tracked gaps
         if gap_measurements:
@@ -289,7 +314,30 @@ class GapTracker:
 
         # Expire gaps not seen this frame
         visible_track_ids = {track.id for track in blockers} | {LEFT_FRAME_ID, RIGHT_FRAME_ID}
-        expired_confirmed.extend(self._expire_old(now, active_keys, visible_track_ids))
+        for key, gap in list(self._gaps.items()):
+            if key in active_keys:
+                continue
+            blocker, reason = self._occupancy_evidence(gap, blockers, allow_occupancy)
+            if blocker is not None and key in self._confirmed:
+                if (gap.blocker_id != blocker.id or gap.blocked_since is None
+                        or gap.blocker_bbox is None
+                        or _iou(gap.blocker_bbox, blocker.bbox) < settings.occupancy_blocker_iou):
+                    gap.clear_obstruction()
+                    gap.blocker_id = blocker.id
+                    gap.blocker_bbox = list(blocker.bbox)
+                    gap.blocked_since = now
+                gap.blocked_last_seen = now
+                gap.blocked_hits += 1
+                gap.loss_reason = "occupancy_pending"
+                if (gap.blocked_hits >= settings.occupancy_confirm_hits
+                        and now - gap.blocked_since >= settings.occupancy_confirm_sec):
+                    expired_confirmed.extend(self._remove(key, "vehicle_observed"))
+            else:
+                gap.clear_obstruction()
+                gap.loss_reason = reason
+                if set(key) <= visible_track_ids:
+                    expired_confirmed.extend(self._remove(key, reason))
+        expired_confirmed.extend(self._expire_old(now))
 
         # Check for newly confirmed gaps
         all_gaps = list(self._gaps.values())
@@ -301,6 +349,45 @@ class GapTracker:
                     newly_confirmed.append(gap)
 
         return all_gaps, newly_confirmed, expired_confirmed
+
+    def _occupancy_evidence(self, gap, tracks, allow_occupancy):
+        """Only a repeated blocker between two stable, real anchors is evidence.
+
+        Frame edges, missing anchors and viewpoint changes never prove occupancy.
+        Vertical overlap rejects vehicles in a different image row/traffic lane.
+        """
+        if min(gap.gap_key) < 0:
+            return None, "frame_edge_changed"
+        by_id = {track.id: track for track in tracks}
+        if not set(gap.gap_key) <= by_id.keys():
+            return None, "boundaries_not_visible"
+        if not allow_occupancy or len(gap.anchor_boxes) != 2:
+            return None, "camera_or_boundaries_moved"
+        if any(_iou(gap.anchor_boxes[key], by_id[key].bbox) < settings.occupancy_anchor_iou
+               for key in gap.gap_key):
+            return None, "camera_or_boundaries_moved"
+        left, right = (by_id[key] for key in gap.gap_key)
+        start, end = left.bbox[2], right.bbox[0]
+        if end <= start:
+            return None, "geometry_changed"
+        top, bottom = max(left.bbox[1], right.bbox[1]), min(left.bbox[3], right.bbox[3])
+        if bottom <= top:
+            return None, "geometry_changed"
+        for track in tracks:
+            if track.id in gap.gap_key or track.confidence < settings.occupancy_min_confidence:
+                continue
+            horizontal = max(0, min(end, track.bbox[2]) - max(start, track.bbox[0])) / (end - start)
+            vertical = max(0, min(bottom, track.bbox[3]) - max(top, track.bbox[1])) / (bottom - top)
+            if horizontal >= settings.occupancy_gap_overlap and vertical >= settings.occupancy_gap_overlap:
+                return track, "occupancy_pending"
+        return None, "geometry_changed"
+
+    def _remove(self, key, reason):
+        gap = self._gaps.pop(key)
+        gap.loss_reason = reason
+        confirmed = key in self._confirmed
+        self._confirmed.discard(key)
+        return [gap] if confirmed else []
 
     def _ingest_measurements(self, current_gaps, gap_measurements):
         """Match detector gap_measurements to tracked gaps by bbox overlap and record width samples."""
@@ -321,37 +408,28 @@ class GapTracker:
             if best_key and best_key in self._gaps:
                 self._gaps[best_key].add_width_sample(gm.width_meters)
 
-    def _expire_old(
-        self,
-        now: float,
-        active_keys: set | None = None,
-        visible_track_ids: set[int] | None = None,
-    ) -> list[TrackedGap]:
+    def _expire_old(self, now: float) -> list[TrackedGap]:
         """Remove gaps not seen recently. Returns expired gaps that were confirmed."""
         dead = []
         for key, gap in self._gaps.items():
-            # Missing boundaries may be a temporary detection dropout. Only
-            # invalidate geometry immediately when both boundaries are visible;
-            # otherwise retain the gap until its last real sighting times out.
-            if (active_keys is not None and key not in active_keys
-                    and visible_track_ids is not None
-                    and set(key) <= visible_track_ids):
-                dead.append(key)
-            elif now - gap.last_seen > settings.gap_expire_sec:
+            if now - max(gap.last_seen, gap.blocked_last_seen or gap.last_seen) > settings.gap_expire_sec:
                 dead.append(key)
         expired_confirmed = []
         for key in dead:
-            if key in self._confirmed:
-                gap = self._gaps.get(key)
-                if gap is not None:
-                    expired_confirmed.append(gap)
-            self._gaps.pop(key, None)
-            self._confirmed.discard(key)
+            gap = self._gaps[key]
+            reason = gap.loss_reason if gap.loss_reason not in (None, "occupancy_pending") else "observation_timeout"
+            expired_confirmed.extend(self._remove(key, reason))
         return expired_confirmed
 
     def expire(self) -> list[TrackedGap]:
         """Expire timed-out gaps without requiring another detection from this session."""
         return self._expire_old(time.monotonic())
+
+    def invalidate(self, reason: str) -> list[TrackedGap]:
+        losses = []
+        for key in list(self._gaps):
+            losses.extend(self._remove(key, reason))
+        return losses
 
     def get_state_string(self) -> str:
         """Human-readable state for debug panel."""
@@ -361,7 +439,9 @@ class GapTracker:
         for gap in self._gaps.values():
             dur = gap.duration
             confirmed = gap.gap_key in self._confirmed
-            status = "confirmed" if confirmed else f"{dur:.1f}s/{settings.gap_confirm_sec}s"
+            status = ("occupancy pending" if gap.blocked_hits else "unseen") if not gap.visible else (
+                "confirmed" if confirmed else f"{dur:.1f}s/{settings.gap_confirm_sec}s"
+            )
             left = "left edge" if gap.left_track_id == LEFT_FRAME_ID else f"T{gap.left_track_id}"
             right = "right edge" if gap.right_track_id == RIGHT_FRAME_ID else f"T{gap.right_track_id}"
             parts.append(f"{left}-{right}: {status}")
@@ -395,6 +475,7 @@ class SignTrack:
         "hits", "time_since_update",
         "best_crop_bytes", "best_crop_confidence",
         "gps_observations", "read_result", "read_requested",
+        "read_attempts", "read_confidence", "read_area", "read_hits", "best_crop_area",
     )
 
     _next_id = 1
@@ -411,15 +492,22 @@ class SignTrack:
         self.gps_observations: list[GPSObservation] = []
         self.read_result = None  # Will hold SignPoleReading once read
         self.read_requested = False
+        self.read_attempts = 0
+        self.read_confidence = 0.0
+        self.read_area = 0.0
+        self.read_hits = 0
+        self.best_crop_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
 
     def update(self, bbox: list[float], confidence: float, crop_bytes: bytes):
         self.bbox = bbox
         self.confidence = confidence
         self.hits += 1
         self.time_since_update = 0
-        if confidence > self.best_crop_confidence:
+        area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+        if confidence > self.best_crop_confidence or (area >= self.best_crop_area * 1.5 and confidence >= 0.5):
             self.best_crop_bytes = crop_bytes
             self.best_crop_confidence = confidence
+            self.best_crop_area = area
 
     def add_gps(self, lat: float, lng: float, heading: float, bbox_center_x: float, frame_w: float):
         self.gps_observations.append(GPSObservation(lat, lng, heading, bbox_center_x, frame_w))
@@ -437,7 +525,16 @@ class SignTrack:
 
     @property
     def needs_reading(self) -> bool:
-        return self.is_confirmed and not self.read_requested
+        if not self.is_confirmed or self.time_since_update:
+            return False
+        if not self.read_requested:
+            return True
+        # Retry a poor reading only after a materially improved crop; never spin
+        # on every frame or keep an illegible result permanently locked in.
+        return bool(self.read_result and self.read_result.flagged and self.read_attempts < 3
+                    and self.hits >= self.read_hits + 3
+                    and (self.best_crop_confidence >= self.read_confidence + 0.05
+                         or self.best_crop_area >= self.read_area * 1.5))
 
 
 class SignTracker:
