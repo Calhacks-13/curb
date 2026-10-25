@@ -1,5 +1,5 @@
 import { ink, status } from "../../config/tokens";
-import { PALETTE, ROUTE_LAYERS, STALL_FILL_ID, SUPPLY_LAYERS, ZONE_LAYER_ID } from "../curbLayers";
+import { PALETTE, ROUTE_LAYERS, STALL_FILL_ID, SUPPLY_LAYERS } from "../curbLayers";
 import {
   BASEMAP_STATIC_CONFIG,
   HOME_CAMERA,
@@ -75,7 +75,6 @@ export function buildMapHtml({ token, mood, reduceMotion }: MapHtmlOptions): str
     moodTransitionMs: MOOD_TRANSITION_MS,
     supplyLayers: SUPPLY_LAYERS,
     palette: PALETTE,
-    zoneLayerId: ZONE_LAYER_ID,
     stallFillId: STALL_FILL_ID,
     routeLayers: ROUTE_LAYERS,
     models: MODELS,

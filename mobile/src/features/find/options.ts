@@ -1,12 +1,12 @@
 // Turns parking state into what the Find screen shows: map payloads and a ranked
 // list of options. Pure, so it's easy to test and cheap to recompute each tick.
 
-import type { CurbZone, Driveway, LngLat } from "@/api/types";
+import type { Driveway, LngLat } from "@/api/types";
 import { SEP } from "@/config/tokens";
 import { distanceM } from "@/data/geo";
 import { formatHhmm, inLaWindow } from "@/lib/laTime";
 import type { StallKind } from "@/map/curbLayers";
-import type { MapPill, MapStall, MapZone } from "@/map/messages";
+import type { MapPill, MapStall } from "@/map/messages";
 import type { ParkingState } from "@/realtime/reducer";
 
 import { displayOpenPercent } from "./confidence";
@@ -165,12 +165,6 @@ function drivewayRing([lng, lat]: LngLat): LngLat[] {
     [lng - dLng, lat + dLat],
     [lng - dLng, lat - dLat],
   ];
-}
-
-export function mapZones(zones: Record<string, CurbZone>, area: SearchArea | null = null): MapZone[] {
-  return Object.values(zones)
-    .filter((z) => z.legal_status_now === "LEGAL" && z.geometry.coordinates.some((p) => inArea(p, area)))
-    .map((z) => ({ id: z.id, coordinates: z.geometry.coordinates }));
 }
 
 export function mapStalls(options: FindOption[]): MapStall[] {

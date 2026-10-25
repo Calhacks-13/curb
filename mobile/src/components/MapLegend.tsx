@@ -2,7 +2,7 @@ import { SymbolView } from "expo-symbols";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { font, ink, radius, shadow, status } from "@/config/tokens";
+import { font, ink, radius, shadow } from "@/config/tokens";
 
 import { roundButton } from "./roundButton";
 import { OptionChip } from "./OptionIcon";
@@ -37,15 +37,6 @@ export function MapLegend() {
       </Pressable>
       {open && (
         <View style={styles.card} accessibilityRole="summary">
-          <View style={styles.row}>
-            <View style={styles.glyph}>
-              <View style={styles.curb} />
-            </View>
-            <View style={styles.text}>
-              <Text style={styles.label}>Legal to park now</Text>
-              <Text style={styles.note}>availability unknown</Text>
-            </View>
-          </View>
           {ROWS.map((r) => (
             <View key={r.kind} style={styles.row}>
               <View style={styles.glyph}>
@@ -88,7 +79,6 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: "row", alignItems: "center", gap: 12 },
   glyph: { width: 24, alignItems: "center" },
-  curb: { width: 22, height: 4, borderRadius: 1, backgroundColor: status.legal },
   text: { flex: 1 },
   label: { fontFamily: font.semibold, fontSize: 14, color: ink.black, marginTop: 2 },
   note: { fontFamily: font.regular, fontSize: 12, color: ink.grey500 },

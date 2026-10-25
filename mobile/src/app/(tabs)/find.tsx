@@ -33,7 +33,6 @@ import {
   mapPills,
   mapSignature,
   mapStalls,
-  mapZones,
   myReservation,
   type FindOption,
   type SearchArea,
@@ -185,10 +184,6 @@ export default function FindScreen() {
   const spaceAge = (id: string) => ageSeconds(state.spaces[id]?.last_observed_at ?? null, now);
 
   // --- push state to the map (only when what's drawn changes) ---------------
-
-  useEffect(() => {
-    send({ type: "setZones", zones: searchCenter ? mapZones(state.zones, area) : [] });
-  }, [state.zones, area, searchCenter, send, mapGen]);
 
   useEffect(() => {
     send({ type: "setStalls", stalls: mapStalls(offered) });
@@ -371,7 +366,7 @@ export default function FindScreen() {
           (live && location.status === "denied" ? (
             <View style={styles.locationOff}>
               <Text style={styles.locationTitle}>Location is off</Text>
-              <Text style={styles.locationText}>Curb uses your precise location to find legal parking within half a mile.</Text>
+              <Text style={styles.locationText}>Curb uses your precise location to find open parking within half a mile.</Text>
               <Pressable
                 onPress={() => (location.canAskAgain ? location.request() : Linking.openSettings())}
                 accessibilityRole="button"

@@ -124,8 +124,7 @@ export const MAP_RUNTIME_JS = String.raw`
 
   function setNight(g) {
     night = g;
-    if (map.getLayer(C.zoneLayerId)) {
-      map.setPaintProperty(C.zoneLayerId, "line-color", mix(C.palette.legal.day, C.palette.legal.night, g));
+    if (map.getLayer(C.stallFillId)) {
       map.setPaintProperty(C.stallFillId, "fill-color", stallColors(g));
       map.setPaintProperty("stall-pulse", "line-color", stallColors(g));
       map.setPaintProperty("stall-select", "line-color", mix(C.palette.select.day, C.palette.select.night, g));
@@ -172,15 +171,6 @@ export const MAP_RUNTIME_JS = String.raw`
   }
 
   // --- supply ---------------------------------------------------------------------
-
-  function setZones(zones) {
-    map.getSource("zones").setData({
-      type: "FeatureCollection",
-      features: zones.map(function (z) {
-        return { type: "Feature", properties: { id: z.id }, geometry: { type: "LineString", coordinates: z.coordinates } };
-      }),
-    });
-  }
 
   function setStalls(stalls) {
     var next = {};
@@ -375,7 +365,7 @@ export const MAP_RUNTIME_JS = String.raw`
   });
 
   map.on("load", function () {
-    ["route", "zones", "stalls"].forEach(function (id) {
+    ["route", "stalls"].forEach(function (id) {
       map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
     });
     map.addSource("ego", { type: "geojson", data: { type: "FeatureCollection", features: [] }, dynamic: true });
@@ -405,7 +395,6 @@ export const MAP_RUNTIME_JS = String.raw`
     switch (msg.type) {
       case "setMood": return setMood(msg.mood, msg.animate);
       case "setReduceMotion": reduceMotion = msg.reduceMotion; return;
-      case "setZones": return setZones(msg.zones);
       case "setStalls": return setStalls(msg.stalls);
       case "setPills": return setPills(msg.pills);
       case "selectSpot": return selectSpot(msg.id);

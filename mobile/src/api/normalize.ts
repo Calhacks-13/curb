@@ -43,6 +43,7 @@ export function normalizeNearby(wire: WireNearby | NearbyParkingResponse): Nearb
 export function normalizeSpaceDetail(wire: WireDetail | SpaceDetail): SpaceDetail {
   if ("space" in wire) return { ...wire, space: normalizeParkingSpace(wire.space) };
   const { sign_rule: rule, current_rules, max_minutes, next_change_at, ...space } = wire;
+  if (!rule) return { space: normalizeParkingSpace(space), rule: null };
   return {
     space: normalizeParkingSpace(space),
     rule: {
