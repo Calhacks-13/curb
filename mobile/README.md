@@ -1,18 +1,37 @@
 # Curb mobile
 
-Expo (SDK 58) app for finding street parking in San Francisco. Runs in Expo Go;
+Expo SDK 58 / React Native 0.88 app for finding street parking in San Francisco.
+Requires a native development build with Xcode 26.4+ and iOS 16.4+;
 the map is Mapbox GL JS v3 inside a full-screen `react-native-webview`, and all
 chrome (search, sheet, slider, nav) is native React Native on top.
 
 ## Run it
 
+From `mobile/`:
+
 ```bash
-cp .env.example .env          # then paste your Mapbox public token (pk.…)
-npx expo start                # scan the QR with the iPhone camera → Expo Go
-npx expo start --tunnel       # if the Wi-Fi blocks device-to-device traffic
+cp .env.example .env          # paste your Mapbox public token (pk.…) and API URL
+npm ci --prefix ..            # install workspace dependencies at the repo root
+UV_CACHE_DIR=/tmp/curb-uv-cache uv run --python 3.11 scripts/export-coreml-models.py
+brew install cocoapods        # once, if pod is missing
+CI=1 npx expo prebuild --clean --platform ios
+npx expo run:ios --device     # install native debug app and start Metro
 ```
 
-Expo Go and Expo CLI must be signed in to the same Expo account.
+Expo Go cannot load the custom CurbVision/VisionCamera native modules. For later
+JS-only work, use `npx expo start` with the installed native app. Rebuild after
+native dependency, configuration, or model changes. Open `ios/Curb.xcworkspace`
+in Xcode, select the Curb scheme/iPhone, and set your signing team. Keep persistent
+changes in `app.json` or the local module: `ios/` is ignored generated output.
+
+The exporter downloads pinned Python dependencies, both checkpoints, and CLIP;
+allow several minutes on a fresh machine. Its ignored packages total about
+75 MiB under `modules/curb-vision/models/`. Xcode compiles them as
+`yolov8s-seg.mlmodelc` and `yolov8m-worldv2.mlmodelc` in
+`CurbVisionModels.bundle`. Fresh checkouts must export before prebuild.
+See [the complete build and profiling guide](../ON_DEVICE_CV.md) for exact sign
+prompts, model validation, CocoaPods/codegen troubleshooting, the simulator
+compile command, signing, privacy, and physical-iPhone checks.
 
 ## Layout
 
@@ -23,7 +42,7 @@ src/
   app/(tabs)/host.tsx      Host: the owner's driveway
   features/session/        Seeded demo session, remembered in SecureStore
   features/host/           Owner listing editor, recovery, booking receipt
-  features/capture/        Camera frame sampler (2 fps, one upload in flight), location
+  features/capture/        Detection JSON transport (one request in flight), location
   api/types.ts             Backend contract (spec sections 11-13); swap for @curb/contracts
   api/client.ts            CurbApi interface + HTTP client; getApi() picks live or demo
   realtime/reducer.ts      Pure versioned event reducer (never rolls an entity back)
@@ -89,11 +108,16 @@ owner's Return to available button relies on the server's 409 while a payment
 is in flight.
 
 Camera: Find shows a live preview in the corner card whenever it's focused and
-the app is in the foreground. Against the real backend it samples ~2 JPEG
-frames per second with location, heading, device and session ids, keeps at most
-one upload in flight (dropping, not queueing), and deletes every frame after
-upload. In Demo replay it's preview only and says "Not uploading". Location is
-foreground-only and is used in live mode for centering and distances.
+the app is in the foreground. On iOS with a live API and location fix,
+VisionCamera v5 `useFrameOutput` calls the CoreML Nitro module on native buffers.
+Physical buffer rotation keeps boxes/crops upright; every frame is disposed in
+`finally`. Only boxes/classes/confidences, sign-crop JPEGs, dimensions, GPS/heading,
+device/session ids, and capture time are posted as JSON to
+`/v1/vision/detections`. Full frames stay on device. One request may be in flight;
+intermediate results are dropped. Stop, blur, backgrounding, permission loss, and
+native errors disable inference/submission. Demo replay and Android are preview
+only; web shows an unavailable camera card. Android/web never load the iOS module.
+Device FPS and Neural Engine placement require profiling.
 
 Every screen has designed loading, empty, error and permission states; the map
 has its own error card with Try again, and a "Reconnecting" pill shows while
@@ -107,7 +131,7 @@ events, version conflicts, idempotent payment, DST).
 ## 3D car
 
 The user's car is a small glTF model generated in code by `scripts/build-models.mjs`
-and embedded as a data URI, so it works in Expo Go. Run `node scripts/build-models.mjs`
+and embedded as a data URI. Run `node scripts/build-models.mjs`
 after editing it.
 
 ## Desktop preview of the map
