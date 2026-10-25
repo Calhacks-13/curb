@@ -200,7 +200,7 @@ class ParkingSpaceView(ContractModel):
 
 
 class SpaceDetail(ParkingSpaceView):
-    sign_rule: SignRuleView
+    sign_rule: SignRuleView | None
     current_rules: str = Field(min_length=1)
     max_minutes: int | None = Field(gt=0)
     next_change_at: UtcDateTime | None
