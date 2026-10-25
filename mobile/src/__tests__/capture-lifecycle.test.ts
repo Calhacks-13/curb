@@ -1,4 +1,5 @@
 import type { DetectionSubmission, FrameAccepted, OnDeviceInference } from "@/api/types";
+import { ApiError } from "@/api/errors";
 import { DetectionUploadController } from "@/features/capture/DetectionUploadController";
 import type { FrameContext } from "@/features/capture/detectionUpload";
 
@@ -29,6 +30,111 @@ beforeEach(() => jest.useFakeTimers({ now: new Date("2026-10-24T21:00:00.000Z") 
 afterEach(() => jest.useRealTimers());
 
 describe("DetectionUploadController", () => {
+  it("prevents delivery subscribers from mutating nested space, zone, and geometry confirmation data", async () => {
+    const response: FrameAccepted = {
+      ...accepted,
+      space: {
+        ...accepted.space!,
+        location: { type: "Point", coordinates: [-122.4, 37.8] },
+        stall_geometry: { type: "Polygon", coordinates: [[[-122.4, 37.8], [-122.3, 37.8], [-122.4, 37.8]]] },
+      },
+      zone: { id: "zone", geometry: { type: "LineString", coordinates: [[-122.4, 37.8], [-122.3, 37.8]] }, sign_rule_id: null, legal_status_now: "LEGAL", next_change_at: null, version: 1 },
+    };
+    const mutations: boolean[] = [];
+    const onSpotConfirmed = jest.fn();
+    const controller = new DetectionUploadController({
+      context: () => context, upload: async () => response, onSpotConfirmed,
+      onDelivery: (event) => {
+        if (event.state !== "delivered") return;
+        // Deliberately bypass static readonly checks to simulate a bad subscriber.
+        const result = event.result as FrameAccepted;
+        mutations.push(
+          Reflect.set(result.space!, "internal_state", "OCCUPIED"),
+          Reflect.set(result.space!.location.coordinates, 0, 0),
+          Reflect.set(result.space!.stall_geometry.coordinates, 1, []),
+          Reflect.set(result.space!.stall_geometry.coordinates[0], 1, [0, 0]),
+          Reflect.set(result.space!.stall_geometry.coordinates[0][0], 0, 0),
+          Reflect.set(result.zone!, "legal_status_now", "ILLEGAL"),
+          Reflect.set(result.zone!.geometry.coordinates, 1, [0, 0]),
+          Reflect.set(result.zone!.geometry.coordinates[0], 0, 0),
+        );
+      },
+    });
+    controller.start();
+    controller.submit(inference);
+    await flush();
+    expect(mutations).toEqual([false, false, false, false, false, false, false, false]);
+    expect(onSpotConfirmed).toHaveBeenCalledWith(expect.objectContaining({
+      space: expect.objectContaining({ internal_state: "OPEN", location: { type: "Point", coordinates: [-122.4, 37.8] }, stall_geometry: { type: "Polygon", coordinates: [[[-122.4, 37.8], [-122.3, 37.8], [-122.4, 37.8]]] } }),
+      zone: expect.objectContaining({ legal_status_now: "LEGAL", geometry: { type: "LineString", coordinates: [[-122.4, 37.8], [-122.3, 37.8]] } }),
+    }));
+  });
+
+  it("suppresses spot confirmation when a delivery subscriber stops the controller", async () => {
+    const onSpotConfirmed = jest.fn();
+    const controller = new DetectionUploadController({
+      context: () => context, upload: async () => accepted, onSpotConfirmed,
+      onDelivery: () => controller.stop(),
+    });
+    controller.start();
+    controller.submit(inference);
+    await flush();
+    expect(controller.running).toBe(false);
+    expect(onSpotConfirmed).not.toHaveBeenCalled();
+    expect(controller.stats).toEqual({ sent: 1, dropped: 0, failed: 0 });
+  });
+
+  it("reports safe failures and later receipt with immutable stats snapshots", async () => {
+    const onDelivery = jest.fn();
+    const upload = jest.fn().mockRejectedValueOnce(new ApiError(502, "POST /v1/vision/detections failed (502)"))
+      .mockResolvedValue({ ...accepted, vehicle_count: 0, gap_count: 0, scene_valid: false });
+    const controller = new DetectionUploadController({ context: () => context, upload, onDelivery });
+    controller.start();
+    controller.submit(inference);
+    await flush();
+    const failure = onDelivery.mock.calls[0]?.[0];
+    expect(failure).toEqual({ state: "failed", error: { status: 502, message: "Upload failed (HTTP 502). Retrying with the next frame." }, stats: { sent: 0, dropped: 0, failed: 1 } });
+    controller.submit(inference);
+    await flush();
+    const receipt = onDelivery.mock.calls[1][0];
+    expect(receipt).toEqual({ state: "delivered", result: expect.objectContaining({ vehicle_count: 0, gap_count: 0, scene_valid: false }), stats: { sent: 1, dropped: 0, failed: 1 } });
+    expect(failure.stats).toEqual({ sent: 0, dropped: 0, failed: 1 });
+    expect(Object.isFrozen(failure)).toBe(true);
+    expect(Object.isFrozen(failure.stats)).toBe(true);
+    expect(Object.isFrozen(failure.error)).toBe(true);
+  });
+
+  it.each([new Error("private payload/token"), new ApiError(0, "private payload/token", "request_timeout")])("releases failed requests and sanitizes errors (%s)", async (error) => {
+    const onDelivery = jest.fn();
+    const upload = jest.fn().mockRejectedValueOnce(error).mockResolvedValue(accepted);
+    const controller = new DetectionUploadController({ context: () => context, upload, onDelivery });
+    controller.start();
+    controller.submit(inference);
+    await flush();
+    expect(onDelivery).toHaveBeenCalledWith(expect.objectContaining({ state: "failed", error: expect.objectContaining({ message: expect.not.stringContaining("private") }) }));
+    controller.submit(inference);
+    await flush();
+    expect(onDelivery).toHaveBeenLastCalledWith(expect.objectContaining({ state: "delivered" }));
+  });
+
+  it.each(["resolve", "reject"])("suppresses old-generation delivery events after stop/restart (%s)", async (settle) => {
+    const pending = deferred<FrameAccepted>();
+    const onDelivery = jest.fn();
+    const upload = jest.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(accepted);
+    const controller = new DetectionUploadController({ context: () => context, upload, onDelivery });
+    controller.start();
+    controller.submit(inference);
+    controller.stop();
+    controller.start();
+    if (settle === "resolve") pending.resolve(accepted);
+    else pending.reject(new ApiError(502, "bad gateway"));
+    await flush();
+    expect(onDelivery).not.toHaveBeenCalled();
+    controller.submit(inference);
+    await flush();
+    expect(onDelivery).toHaveBeenCalledTimes(1);
+    expect(onDelivery).toHaveBeenCalledWith(expect.objectContaining({ state: "delivered" }));
+  });
   it("returns immediately, permits one request, and drops arrivals without replay", async () => {
     const pending = deferred<FrameAccepted>();
     const upload = jest.fn(() => pending.promise);

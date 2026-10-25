@@ -188,6 +188,68 @@ def test_detection_endpoint_accepts_empty_lists(monkeypatch):
     assert pipeline.calls[0]["signs"] == []
 
 
+def test_debug_state_reports_latest_submission_without_retaining_detections(monkeypatch):
+    from app.cv import pipeline as pipeline_module
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "min_gap_fraction", 0.15)
+    monkeypatch.setattr(settings, "max_edge_gap_fraction", 0.5)
+    monkeypatch.setattr(settings, "track_confirm_hits", 2)
+    pipeline = pipeline_module.Pipeline()
+    monkeypatch.setattr(pipeline_module, "_pipeline", pipeline)
+    client, _ = build_client(monkeypatch, pipeline)
+
+    with client:
+        for empty_count in [1, 2]:
+            accepted = client.post("/v1/vision/detections", json=submission(vehicles=[], signs=[]))
+            assert accepted.status_code == 200
+            assert {key: accepted.json()[key] for key in (
+                "accepted", "pipeline_state", "vehicle_count", "gap_count", "scene_valid",
+            )} == {
+                "accepted": True, "pipeline_state": "no_scene", "vehicle_count": 0,
+                "gap_count": 0, "scene_valid": False,
+            }
+            state = client.get("/v1/debug/state").json()["sessions"]["cap_123"]
+            assert "last_submission" in state
+            latest = state["last_submission"]
+            assert datetime.fromisoformat(latest["received_at"]).utcoffset().total_seconds() == 0
+            assert {key: value for key, value in latest.items() if key != "received_at"} == {
+                "frame_width": 1280, "frame_height": 720, "vehicle_count": 0, "sign_count": 0,
+                "visible_confirmed_tracks": 0, "candidate_count": 0,
+                "consecutive_empty_submissions": empty_count, "pipeline_state": "no_scene",
+            }
+
+        vehicle = [{"bbox": [400, 20, 880, 300], "cls": "car", "confidence": 0.9}]
+        for hits in [1, 2]:
+            accepted = client.post("/v1/vision/detections", json=submission(vehicles=vehicle, signs=[]))
+            assert accepted.status_code == 200
+            assert accepted.json()["vehicle_count"] == 1
+            assert accepted.json()["gap_count"] == 2
+            latest = client.get("/v1/debug/state").json()["sessions"]["cap_123"]["last_submission"]
+            assert latest["vehicle_count"] == 1
+            assert latest["sign_count"] == 0
+            assert latest["candidate_count"] == 2
+            assert latest["visible_confirmed_tracks"] == hits - 1
+            assert latest["consecutive_empty_submissions"] == 0
+            assert latest["pipeline_state"] == accepted.json()["pipeline_state"]
+
+        accepted = client.post("/v1/vision/detections", json=submission(vehicles=[], signs=[]))
+        state = client.get("/v1/debug/state").json()["sessions"]["cap_123"]
+        # Retained tracks differ from current submitted/visible counts.
+        assert state["vehicle_tracks"] == 1
+        assert state["last_submission"]["vehicle_count"] == 0
+        assert state["last_submission"]["visible_confirmed_tracks"] == 0
+        assert state["last_submission"]["consecutive_empty_submissions"] == 1
+        # A sign-only input is an observed scene, but never parking evidence.
+        accepted = client.post("/v1/vision/detections", json=submission(vehicles=[]))
+        latest = client.get("/v1/debug/state").json()["sessions"]["cap_123"]["last_submission"]
+        assert latest["vehicle_count"] == 0
+        assert latest["sign_count"] == 1
+        assert latest["candidate_count"] == 0
+        assert latest["consecutive_empty_submissions"] == 0
+        assert "space" not in accepted.json()
+
+
 @pytest.mark.parametrize(
     "change",
     [

@@ -163,6 +163,10 @@ export type OnDeviceInference = {
 export type FrameAccepted = {
   frame_id: string;
   accepted: boolean;
+  pipeline_state?: string;
+  vehicle_count?: number;
+  gap_count?: number;
+  scene_valid?: boolean;
   /** Present when the server confirmed a spot from this frame. */
   space?: ParkingSpace;
   zone?: CurbZone;

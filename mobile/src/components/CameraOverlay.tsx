@@ -9,7 +9,7 @@ import { getApi } from "@/api/client";
 import type { FrameAccepted, OnDeviceInference } from "@/api/types";
 import { font, ink, radius, shadow } from "@/config/tokens";
 import { DetectionOverlay } from "@/components/DetectionOverlay";
-import { DetectionUploadController } from "@/features/capture/DetectionUploadController";
+import { DetectionUploadController, type DetectionDeliveryEvent } from "@/features/capture/DetectionUploadController";
 import type { FrameContext } from "@/features/capture/detectionUpload";
 
 type Props = {
@@ -76,12 +76,14 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   const [native, setNative] = useState<CurbVision | null>(null);
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [latestInference, setLatestInference] = useState<{ session: object; result: OnDeviceInference } | null>(null);
+  const [latestDelivery, setLatestDelivery] = useState<{ session: object; event: DetectionDeliveryEvent } | null>(null);
   const [expanded, setExpanded] = useState(false);
   const changeExpanded = useCallback((next: boolean) => {
     setExpanded(next);
     onExpandedChange?.(next);
   }, [onExpandedChange]);
   const latest = useRef({ frameContext, onSpotConfirmed });
+  const sessionRef = useRef<object | null>(null);
   useEffect(() => { latest.current = { frameContext, onSpotConfirmed }; }, [frameContext, onSpotConfirmed]);
   const controller = useRef<DetectionUploadController | null>(null);
   useEffect(() => {
@@ -89,6 +91,10 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
       context: () => latest.current.frameContext(),
       upload: (payload) => getApi().uploadDetections(payload),
       onSpotConfirmed: (result) => latest.current.onSpotConfirmed?.(result),
+      onDelivery: (event) => {
+        const current = sessionRef.current;
+        if (current) setLatestDelivery({ session: current, event });
+      },
     });
     return () => { controller.current?.stop(); controller.current = null; };
   }, []);
@@ -113,7 +119,6 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   // RN callbacks retain session identity; delayed worklet deliveries from a
   // previous Stop/blur can never become uploads in a later scanning session.
   const session = useMemo(() => ({ enabled }), [enabled]);
-  const sessionRef = useRef<object | null>(null);
   useEffect(() => {
     if (enabled) {
       sessionRef.current = session;
@@ -215,6 +220,22 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   }
 
   const visibleInference = enabled && latestInference?.session === session ? latestInference.result : null;
+  const delivery = enabled && latestDelivery?.session === session ? latestDelivery.event : null;
+  const receipt = delivery?.state === "delivered" ? delivery.result : null;
+  const count = (value: number | undefined, noun: string) => value == null ? null : `${value} ${noun}${value === 1 ? "" : "s"}`;
+  const receiptText = ["Server received", count(receipt?.vehicle_count, "vehicle"), count(receipt?.gap_count, "gap")].filter(Boolean).join(" · ");
+  const deliveryText = delivery?.state === "failed" ? "Upload unavailable"
+    : receipt ? receiptText
+      : visibleInference ? "Waiting for server receipt" : "Waiting for first inference";
+  const deliveryDetail = delivery?.state === "failed" ? delivery.error.message
+    : receipt ? [receipt.pipeline_state, receipt.scene_valid == null ? null : receipt.scene_valid ? "Scene valid" : "No valid scene"].filter(Boolean).join(" · ") : "";
+  const badge = !enabled ? "Preview" : delivery?.state === "failed" ? "Retrying" : receipt ? "Connected" : visibleInference ? "Sending" : "Starting";
+  const deliveryStatus = enabled && (
+    <View style={expanded ? styles.fullScreenDelivery : styles.delivery}>
+      <Text style={styles.deliveryText}>{deliveryText}</Text>
+      {!!deliveryDetail && <Text style={styles.deliveryDetail}>{deliveryDetail}</Text>}
+    </View>
+  );
 
   const cameraSurface = (
     <View style={expanded ? styles.fullScreenPreview : styles.preview}>
@@ -228,8 +249,8 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
       />
       <DetectionOverlay result={visibleInference} />
       <View style={styles.liveTag}>
-        <LiveDot on={enabled} reduceMotion={reduceMotion} />
-        <Text style={styles.liveText}>{enabled ? "Live" : "Preview"}</Text>
+        <LiveDot on={enabled && delivery?.state !== "failed"} reduceMotion={reduceMotion} />
+        <Text style={styles.liveText}>{badge}</Text>
       </View>
       {!expanded && (
         <Pressable
@@ -245,7 +266,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   return (
     <View
       style={expanded ? styles.fullScreen : styles.card}
-      accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
+      accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? `Scanning the curb. ${deliveryText}. ${deliveryDetail}` : "Camera preview. Tap Start Scanning to begin."}
     >
       {cameraSurface}
       {expanded ? (
@@ -256,6 +277,7 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
               <Text style={styles.fullScreenSubtitle}>Frames stay on this iPhone</Text>
             </View>
           </View>
+          {deliveryStatus}
           {scannerError && (
             <View style={styles.fullScreenError}>
               <Text style={styles.errorTitle}>Scanner stopped</Text>
@@ -273,10 +295,11 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         </>
       ) : (
         <>
+        {deliveryStatus}
         {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
         {sampling ? (
           <>
-            <Text style={styles.caption}>{enabled ? "Scanning curb" : "Camera preview"}</Text>
+            <Text style={styles.caption}>{enabled ? delivery?.state === "failed" ? "Retrying upload" : "Scanning curb" : "Camera preview"}</Text>
             <Pressable
               onPress={onStopScan}
               accessibilityRole="button"
@@ -322,6 +345,10 @@ const styles = StyleSheet.create({
   liveText: { fontFamily: font.bold, fontSize: 10, color: ink.white, marginTop: 2 },
   caption: { fontFamily: font.semibold, fontSize: 12, color: ink.white, marginTop: 5, marginLeft: 2 },
   sub: { fontFamily: font.regular, fontSize: 11, color: ink.grey300, marginLeft: 2, marginBottom: 1 },
+  delivery: { marginTop: 5, marginHorizontal: 2 },
+  fullScreenDelivery: { position: "absolute", left: 18, right: 18, bottom: 48, padding: 12, borderRadius: 12, backgroundColor: "rgba(0,0,0,0.78)" },
+  deliveryText: { fontFamily: font.semibold, fontSize: 11, color: ink.white },
+  deliveryDetail: { marginTop: 3, fontFamily: font.regular, fontSize: 10, color: ink.grey300 },
   startButton: { marginTop: 5, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.live, alignItems: "center", justifyContent: "center" },
   startText: { fontFamily: font.bold, fontSize: 11, color: ink.white, marginTop: 1 },
   stopButton: { marginTop: 4, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.grey900, alignItems: "center", justifyContent: "center" },

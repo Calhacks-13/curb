@@ -52,12 +52,40 @@ it("posts authenticated JSON with the exact body and no full-frame or multipart 
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(fetchMock).toHaveBeenCalledWith("https://api.test/v1/vision/detections", {
     method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer driver-token" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(payload), signal: expect.anything(),
   });
 });
 it("uses the shared HTTP error contract for rejected detections", async () => {
   const { api } = liveApi(false);
   await expect(api.uploadDetections(payload)).rejects.toMatchObject({ status: 422, code: "invalid_detection" });
+});
+it("retains HTTP 502 when a tunnel returns HTML instead of JSON", async () => {
+  const { api, fetchMock } = liveApi();
+  fetchMock.mockImplementation(async () => ({
+    ok: false, status: 502, json: async () => { throw new SyntaxError("HTML response"); },
+  }));
+  await expect(api.uploadDetections(payload)).rejects.toMatchObject({ status: 502, code: null });
+});
+it("aborts a never-settling detection upload after ten seconds and permits a later upload", async () => {
+  jest.useFakeTimers();
+  const { api, fetchMock } = liveApi();
+  fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+  const outcome = api.uploadDetections(payload).catch((error: unknown) => error);
+  const request = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+  await jest.advanceTimersByTimeAsync(9999);
+  expect(request.signal?.aborted).toBe(false);
+  await jest.advanceTimersByTimeAsync(1);
+  expect(request.signal?.aborted).toBe(true);
+  await expect(outcome).resolves.toMatchObject({ status: 0, code: "request_timeout" });
+  await expect(api.uploadDetections(payload)).resolves.toEqual({ frame_id: "frame-1", accepted: true });
+  expect(jest.getTimerCount()).toBe(0);
+});
+it("leaves unrelated HTTP calls without the detection upload deadline", async () => {
+  jest.useFakeTimers();
+  const { api, fetchMock } = liveApi();
+  await api.startSession("driver");
+  expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].signal).toBeUndefined();
+  expect(jest.getTimerCount()).toBe(0);
 });
 it("keeps demo detection submission non-confirming and deterministic without network I/O", async () => {
   jest.useFakeTimers({ now: new Date("2026-10-24T21:00:00.000Z") });

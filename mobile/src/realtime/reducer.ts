@@ -11,11 +11,38 @@ export type ParkingState = {
   driveways: Record<string, Driveway>;
   bookings: Record<string, Booking>;
   garages: Record<string, Garage>;
-  /** Highest version seen per entity id. */
+  /** Highest version seen per collection-qualified entity id (e.g. space:<id>). */
   versions: Record<string, number>;
 };
 
 export const emptyParkingState: ParkingState = { zones: {}, spaces: {}, driveways: {}, bookings: {}, garages: {}, versions: {} };
+
+type EntityCollection = "space" | "zone" | "driveway" | "booking" | "garage";
+
+function eventCollection(type: RealtimeEvent["type"]): EntityCollection {
+  switch (type) {
+    case "space.opened":
+    case "space.refreshed":
+    case "space.occupied":
+    case "space.expired":
+      return "space";
+    case "sign_rule.updated":
+      return "zone";
+    case "driveway.updated":
+    case "driveway.held":
+    case "driveway.released":
+      return "driveway";
+    case "booking.confirmed":
+    case "payment.failed":
+      return "booking";
+    case "garage.detected":
+      return "garage";
+  }
+}
+
+function versionKey(collection: EntityCollection, id: string): string {
+  return `${collection}:${id}`;
+}
 
 function byId<T extends { id: string; version: number }>(items: T[]): Record<string, T> {
   return Object.fromEntries(items.map((i) => [i.id, i]));
@@ -24,21 +51,22 @@ function byId<T extends { id: string; version: number }>(items: T[]): Record<str
 /** Seeds state from a nearby query, keeping any newer versions already applied. */
 export function fromNearby(prev: ParkingState, res: NearbyParkingResponse): ParkingState {
   const versions = { ...prev.versions };
-  const keepNewer = <T extends { id: string; version: number }>(incoming: Record<string, T>, current: Record<string, T>) => {
+  const keepNewer = <T extends { id: string; version: number }>(collection: EntityCollection, incoming: Record<string, T>, current: Record<string, T>) => {
     const out: Record<string, T> = { ...incoming };
     for (const [id, item] of Object.entries(incoming)) {
       const cur = current[id];
       if (cur && cur.version > item.version) out[id] = cur;
-      versions[id] = Math.max(versions[id] ?? 0, out[id].version);
+      const key = versionKey(collection, id);
+      versions[key] = Math.max(versions[key] ?? 0, out[id].version);
     }
     return out;
   };
   return {
-    zones: keepNewer(byId(res.zones), prev.zones),
-    spaces: keepNewer(byId(res.spaces), prev.spaces),
-    driveways: keepNewer(byId(res.driveways), prev.driveways),
+    zones: keepNewer("zone", byId(res.zones), prev.zones),
+    spaces: keepNewer("space", byId(res.spaces), prev.spaces),
+    driveways: keepNewer("driveway", byId(res.driveways), prev.driveways),
     bookings: prev.bookings,
-    garages: res.garages?.length ? keepNewer(byId(res.garages), prev.garages) : prev.garages,
+    garages: res.garages?.length ? keepNewer("garage", byId(res.garages), prev.garages) : prev.garages,
     versions,
   };
 }
@@ -55,10 +83,11 @@ function contractDriveway(payload: object): Partial<Driveway> | null {
 }
 
 export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): ParkingState {
-  const held = state.versions[event.entity_id] ?? 0;
+  const key = versionKey(eventCollection(event.type), event.entity_id);
+  const held = state.versions[key] ?? 0;
   if (event.entity_version <= held) return state;
 
-  const versions = { ...state.versions, [event.entity_id]: event.entity_version };
+  const versions = { ...state.versions, [key]: event.entity_version };
   const patch = { ...event.payload, version: event.entity_version };
 
   switch (event.type) {
@@ -98,10 +127,10 @@ export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): P
       let next: ParkingState = { ...state, versions, bookings: { ...state.bookings, [event.entity_id]: booking } };
       const dw = contractDriveway(payload);
       const dwId = (payload.driveway as { id?: string } | undefined)?.id;
-      if (dw && dwId && next.driveways[dwId] && (dw.version ?? 0) > (next.versions[dwId] ?? 0)) {
+      if (dw && dwId && next.driveways[dwId] && (dw.version ?? 0) > (next.versions[versionKey("driveway", dwId)] ?? 0)) {
         next = {
           ...next,
-          versions: { ...next.versions, [dwId]: dw.version! },
+          versions: { ...next.versions, [versionKey("driveway", dwId)]: dw.version! },
           driveways: { ...next.driveways, [dwId]: { ...next.driveways[dwId], ...dw } },
         };
       }

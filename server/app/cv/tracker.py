@@ -11,6 +11,37 @@ import numpy as np
 from app.config import settings
 
 
+LEFT_FRAME_ID = -1
+RIGHT_FRAME_ID = -2
+
+
+def gap_candidates(
+    boundaries: list[tuple[int, list[float]]], frame_width: int, frame_height: int,
+) -> dict[tuple[int, int], list[float]]:
+    """Pixel openings between ordered real vehicles and bounded frame edges.
+
+    Frame boundaries never create a candidate without a real vehicle. Merge
+    overlapping horizontal extents so a contained box cannot expose false space.
+    """
+    if not boundaries:
+        return {}
+    minimum = frame_width * settings.min_gap_fraction
+    edge_maximum = frame_width * settings.max_edge_gap_fraction
+    candidates = {}
+    first_id, first_bbox = boundaries[0]
+    if minimum <= first_bbox[0] <= edge_maximum:
+        candidates[(LEFT_FRAME_ID, first_id)] = [0, 0, first_bbox[0], frame_height]
+    right_id, right_edge = first_id, first_bbox[2]
+    for track_id, bbox in boundaries[1:]:
+        if bbox[0] - right_edge >= minimum:
+            candidates[(right_id, track_id)] = [right_edge, 0, bbox[0], frame_height]
+        if bbox[2] > right_edge:
+            right_id, right_edge = track_id, bbox[2]
+    if minimum <= frame_width - right_edge <= edge_maximum:
+        candidates[(right_id, RIGHT_FRAME_ID)] = [right_edge, 0, frame_width, frame_height]
+    return candidates
+
+
 class Track:
     """Single tracked object."""
     __slots__ = (
@@ -151,7 +182,7 @@ class VehicleTracker:
 
 
 class TrackedGap:
-    """A gap defined by two adjacent track IDs, with rolling width measurements."""
+    """A gap between real vehicle IDs or one virtual frame boundary."""
     __slots__ = (
         "left_track_id", "right_track_id", "bbox", "first_seen", "last_seen",
         "_width_samples",
@@ -194,7 +225,7 @@ class TrackedGap:
 
 class GapTracker:
     """
-    Tracks gaps between adjacent vehicles using track IDs.
+    Tracks gaps between vehicles and bounded frame edges using stable IDs.
 
     A gap is "confirmed" when the same pair of track IDs has had a gap
     between them for >= confirmation_sec seconds continuously.
@@ -211,6 +242,7 @@ class GapTracker:
         frame_width: int,
         frame_height: int,
         gap_measurements: list | None = None,
+        current_tracks: list[Track] | None = None,
     ) -> tuple[list[TrackedGap], list[TrackedGap], list[TrackedGap]]:
         """
         Compute gaps from sorted tracks, match to existing tracked gaps.
@@ -219,28 +251,23 @@ class GapTracker:
         Returns (all_gaps, newly_confirmed_gaps, expired_confirmed_gaps).
         """
         now = time.monotonic()
+        # Retire evidence that timed out during a submission hiatus before
+        # matching can refresh last_seen for the same vehicle identities.
+        expired_confirmed = self._expire_old(now)
 
         if len(confirmed_tracks) < 1:
-            # No tracks — expire all gaps
-            expired_confirmed = self._expire_old(now)
             return [], [], expired_confirmed
 
-        # Sort by x-center
-        sorted_tracks = sorted(confirmed_tracks, key=lambda t: (t.bbox[0] + t.bbox[2]) / 2)
-
-        # Find gaps between adjacent tracks
-        current_gaps: dict[tuple[int, int], list[float]] = {}
-        min_gap_px = frame_width * settings.min_gap_fraction
-
-        # Only count gaps BETWEEN two tracked vehicles — skip frame-edge gaps.
-        # Edge gaps are unreliable: the frame boundary may cut through a parked
-        # car, or there may be more cars just outside the frame.
-        for i in range(len(sorted_tracks) - 1):
-            right_edge = sorted_tracks[i].bbox[2]
-            left_edge = sorted_tracks[i + 1].bbox[0]
-            if left_edge - right_edge >= min_gap_px:
-                key = (sorted_tracks[i].id, sorted_tracks[i + 1].id)
-                current_gaps[key] = [right_edge, 0, left_edge, frame_height]
+        # Fresh unconfirmed vehicles block openings immediately, but cannot
+        # anchor their own gap until the normal vehicle hit threshold is met.
+        blockers = current_tracks if current_tracks is not None else confirmed_tracks
+        sorted_tracks = sorted(blockers, key=lambda track: track.bbox[0])
+        eligible_ids = {track.id for track in confirmed_tracks} | {LEFT_FRAME_ID, RIGHT_FRAME_ID}
+        current_gaps = {
+            key: bbox for key, bbox in gap_candidates(
+                [(track.id, track.bbox) for track in sorted_tracks], frame_width, frame_height,
+            ).items() if set(key) <= eligible_ids
+        }
 
         # Match current gaps to tracked gaps
         active_keys = set()
@@ -259,14 +286,14 @@ class GapTracker:
             self._ingest_measurements(current_gaps, gap_measurements)
 
         # Expire gaps not seen this frame
-        visible_track_ids = {track.id for track in confirmed_tracks}
-        expired_confirmed = self._expire_old(now, active_keys, visible_track_ids)
+        visible_track_ids = {track.id for track in blockers} | {LEFT_FRAME_ID, RIGHT_FRAME_ID}
+        expired_confirmed.extend(self._expire_old(now, active_keys, visible_track_ids))
 
         # Check for newly confirmed gaps
         all_gaps = list(self._gaps.values())
         newly_confirmed = []
         for gap in all_gaps:
-            if gap.gap_key not in self._confirmed:
+            if gap.gap_key in active_keys and gap.gap_key not in self._confirmed:
                 if gap.duration >= settings.gap_confirm_sec:
                     self._confirmed.add(gap.gap_key)
                     newly_confirmed.append(gap)
@@ -320,6 +347,10 @@ class GapTracker:
             self._confirmed.discard(key)
         return expired_confirmed
 
+    def expire(self) -> list[TrackedGap]:
+        """Expire timed-out gaps without requiring another detection from this session."""
+        return self._expire_old(time.monotonic())
+
     def get_state_string(self) -> str:
         """Human-readable state for debug panel."""
         if not self._gaps:
@@ -329,7 +360,9 @@ class GapTracker:
             dur = gap.duration
             confirmed = gap.gap_key in self._confirmed
             status = "confirmed" if confirmed else f"{dur:.1f}s/{settings.gap_confirm_sec}s"
-            parts.append(f"T{gap.left_track_id}-T{gap.right_track_id}: {status}")
+            left = "left edge" if gap.left_track_id == LEFT_FRAME_ID else f"T{gap.left_track_id}"
+            right = "right edge" if gap.right_track_id == RIGHT_FRAME_ID else f"T{gap.right_track_id}"
+            parts.append(f"{left}-{right}: {status}")
         return " | ".join(parts)
 
     def reset(self):

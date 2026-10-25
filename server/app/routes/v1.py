@@ -406,6 +406,7 @@ async def debug_state():
                 (f"{k[0]},{k[1]}", v) for k, v in sess.confirmed_gap_segments.items()
             ),
             "last_sign_reading": sess.last_sign_reading.combined_summary if sess.last_sign_reading else None,
+            "last_submission": sess.last_submission,
         }
 
     spots_info = {}

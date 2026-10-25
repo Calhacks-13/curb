@@ -55,7 +55,7 @@ export interface CurbApi {
 function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
   let token: string | null = null;
 
-  async function call<T>(method: string, path: string, body?: unknown, base = baseUrl): Promise<T> {
+  async function call<T>(method: string, path: string, body?: unknown, base = baseUrl, signal?: AbortSignal): Promise<T> {
     const res = await fetch(`${base}${path}`, {
       method,
       headers: {
@@ -63,6 +63,7 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
@@ -109,7 +110,25 @@ function createHttpApi(baseUrl: string, paymentsUrl: string): CurbApi {
     wallet: () => call("GET", "/v1/wallet", undefined, paymentsUrl),
     topUpWallet: () => call("POST", "/v1/wallet/top-up", undefined, paymentsUrl),
     booking: (id) => call("GET", `/v1/bookings/${encodeURIComponent(id)}`),
-    uploadDetections: (payload) => call("POST", "/v1/vision/detections", payload),
+    async uploadDetections(payload) {
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // Reject explicitly even if a fetch implementation ignores abort.
+          reject(new ApiError(0, "Detection upload timed out. Retrying with the next frame.", "request_timeout"));
+          controller.abort();
+        }, 10_000);
+      });
+      try {
+        return await Promise.race([
+          call<FrameAccepted>("POST", "/v1/vision/detections", payload, baseUrl, controller.signal),
+          deadline,
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     connectRealtime(onEvent, onStatus) {
       return connectWebPubSub(
         async () => (await call<{ url: string }>("POST", "/v1/realtime/negotiate")).url,

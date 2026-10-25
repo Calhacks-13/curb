@@ -16,6 +16,30 @@ from app.config import settings
 from app.models import SignDetection, SignPoleReading, VehicleDetection
 
 
+@pytest.mark.parametrize("boundaries,expected", [
+    ([], {}),
+    ([(10, [150, 10, 500, 300])], {
+        (-1, 10): [0, 0, 150, 600], (10, -2): [500, 0, 1000, 600],
+    }),
+    ([(10, [149, 10, 499, 300])], {}),
+    ([(10, [501, 10, 851, 300])], {}),
+    ([(10, [0, 10, 100, 300]), (20, [850, 10, 1000, 300])], {
+        (10, 20): [100, 0, 850, 600],
+    }),
+    ([(10, [0, 10, 200, 300]), (20, [350, 10, 1000, 300])], {
+        (10, 20): [200, 0, 350, 600],
+    }),
+])
+def test_bounded_gap_candidates(boundaries, expected, monkeypatch):
+    from app.cv import tracker
+
+    monkeypatch.setattr(settings, "min_gap_fraction", 0.15)
+    monkeypatch.setattr(settings, "max_edge_gap_fraction", 0.5)
+    # Assert the exported interface as a failure rather than an import error.
+    assert hasattr(tracker, "gap_candidates")
+    assert tracker.gap_candidates(boundaries, 1000, 600) == expected
+
+
 @pytest.fixture
 def local_services(monkeypatch):
     monkeypatch.setattr(cosmos, "_use_memory", True)
@@ -25,6 +49,8 @@ def local_services(monkeypatch):
     monkeypatch.setattr(signalr, "_event_seq", 0)
     monkeypatch.setattr(signalr, "_client", None)
     monkeypatch.setattr(settings, "min_gap_fraction", 0.15)
+    # These existing regressions isolate interior gaps and dropout behavior.
+    monkeypatch.setattr(settings, "max_edge_gap_fraction", 0.15)
     monkeypatch.setattr(settings, "track_confirm_hits", 2)
     monkeypatch.setattr(settings, "sign_track_confirm_hits", 3)
     monkeypatch.setattr(settings, "track_max_age", 5)
@@ -40,12 +66,12 @@ def make_vehicles():
     ]
 
 
-async def submit(pipeline, vehicles=None, signs=None, width=1000, height=600):
+async def submit(pipeline, vehicles=None, signs=None, width=1000, height=600, session_id="drive"):
     return await pipeline.process_detections(
         vehicles=vehicles if vehicles is not None else [],
         signs=signs if signs is not None else [],
         frame_width=width, frame_height=height,
-        lat=37.8, lng=-122.44, session_id="drive", heading=90.0,
+        lat=37.8, lng=-122.44, session_id=session_id, heading=90.0,
     )
 
 
@@ -111,7 +137,7 @@ async def test_submitted_dimensions_control_pixel_gaps(local_services, width, he
 
 
 @pytest.mark.asyncio
-async def test_gap_threshold_includes_exact_boundary_and_ignores_frame_edges(local_services):
+async def test_gap_threshold_includes_exact_boundary_and_rejects_oversized_edges(local_services):
     from app.cv.pipeline import Pipeline
 
     vehicles = [
@@ -121,6 +147,322 @@ async def test_gap_threshold_includes_exact_boundary_and_ignores_frame_edges(loc
     ]
     result = await submit(Pipeline(), vehicles)
     assert result["frame_result"].gap_bboxes == [[200, 0, 350, 600]]
+
+
+@pytest.fixture
+def edge_services(local_services, monkeypatch):
+    monkeypatch.setattr(settings, "max_edge_gap_fraction", 0.5)
+    from app.cv import tracker
+
+    clock = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: clock[0])
+    return clock
+
+
+def boxed_vehicles(*extents):
+    return [VehicleDetection(bbox=[left, 20, right, 300], cls="car", confidence=0.9)
+            for left, right in extents]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extent,expected", [
+    ((200, 900), [[0, 0, 200, 600]]),
+    ((100, 800), [[800, 0, 1000, 600]]),
+    ((300, 700), [[0, 0, 300, 600], [700, 0, 1000, 600]]),
+])
+async def test_single_vehicle_edges_retain_hit_and_stability_gates(edge_services, extent, expected):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0, 102.0, 102.9, 103.0]:
+        edge_services[0] = stamp
+        result = await submit(pipeline, boxed_vehicles(extent))
+        frame = result["frame_result"]
+        assert frame.gap_bboxes == expected
+        if stamp == 100:
+            assert frame.tracked_gaps == []
+        else:
+            assert [g.bbox for g in frame.tracked_gaps] == expected
+        assert (result["confirmed_block"] is not None) == (stamp == 103)
+    assert result["confirmed_block"].gap_count == len(expected)
+    assert len(pipeline._sessions["drive"].vehicle_tracker.tracks) == 1
+    await flush_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_empty_and_sign_only_inputs_never_create_or_advance_edges(edge_services):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    sign = SignDetection(bbox=[800, 40, 840, 120], confidence=0.7, crop_bytes=b"crop")
+    for stamp, signs in [(100.0, []), (101.0, [sign])]:
+        edge_services[0] = stamp
+        result = await submit(pipeline, signs=signs)
+        assert result["frame_result"].gap_bboxes == []
+        assert result["frame_result"].tracked_gaps == []
+        assert result["confirmed_block"] is None
+    for stamp in [102.0, 103.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles((300, 700)))
+    gaps = list(pipeline._sessions["drive"].gap_tracker._gaps.values())
+    assert len(gaps) == 2
+    for stamp, signs in [(103.5, []), (104.0, [sign]), (104.6, [])]:
+        edge_services[0] = stamp
+        result = await submit(pipeline, signs=signs)
+        assert result["confirmed_block"] is None
+        assert all(g.last_seen == 103 and g.duration == 0 for g in gaps)
+    assert pipeline._sessions["drive"].gap_tracker._gaps == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("anchors,blocker,blocked_bbox", [
+    ([(300, 700)], (0, 100), [0, 0, 300, 600]),
+    ([(300, 700)], (900, 1000), [700, 0, 1000, 600]),
+    ([(0, 200), (800, 1000)], (400, 600), [200, 0, 800, 600]),
+])
+async def test_unconfirmed_current_vehicle_blocks_without_anchoring(
+    edge_services, anchors, blocker, blocked_bbox,
+):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles(*anchors))
+    session = pipeline._sessions["drive"]
+    assert blocked_bbox in [g.bbox for g in session.gap_tracker._gaps.values()]
+    edge_services[0] = 102.0
+    result = await submit(pipeline, boxed_vehicles(*anchors, blocker))
+    new_track = next(t for t in session.vehicle_tracker.tracks if t.hits == 1)
+    assert blocked_bbox not in result["frame_result"].gap_bboxes
+    assert blocked_bbox not in [g.bbox for g in session.gap_tracker._gaps.values()]
+    assert all(new_track.id not in g.gap_key for g in session.gap_tracker._gaps.values())
+    edge_services[0] = 103.0
+    result = await submit(pipeline, boxed_vehicles(*anchors, blocker))
+    assert any(new_track.id in g.gap_key for g in session.gap_tracker._gaps.values())
+    assert all(not g.confirmed for g in result["frame_result"].tracked_gaps
+               if new_track.id in (g.left_track_id, g.right_track_id))
+    await flush_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_visible_anchor_shrinks_edge_immediately(edge_services):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0, 102.0, 103.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles((300, 700)))
+    session = pipeline._sessions["drive"]
+    vehicle_id = session.vehicle_tracker.tracks[0].id
+    assert (-1, vehicle_id) in session.gap_tracker._confirmed
+    edge_services[0] = 103.1
+    await submit(pipeline, boxed_vehicles((100, 700)))
+    assert (-1, vehicle_id) not in session.gap_tracker._gaps
+    assert (vehicle_id, -2) in session.gap_tracker._confirmed
+    await flush_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_edge_anchor_dropout_recovers_then_expires(edge_services):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0, 102.0, 103.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles((300, 700)))
+    session = pipeline._sessions["drive"]
+    original_gaps = dict(session.gap_tracker._gaps)
+    assert len(original_gaps) == 2
+    edge_services[0] = 103.2
+    await submit(pipeline)
+    assert all(g.last_seen == 103 for g in original_gaps.values())
+    edge_services[0] = 104.0
+    recovered = await submit(pipeline, boxed_vehicles((300, 700)))
+    assert recovered["confirmed_block"] is None
+    assert all(session.gap_tracker._gaps[key] is gap for key, gap in original_gaps.items())
+    for stamp in [104.1, 105.6]:
+        edge_services[0] = stamp
+        await submit(pipeline)
+    assert session.gap_tracker._gaps == {}
+    await flush_background_tasks()
+
+
+@pytest.mark.asyncio
+async def test_segment_stays_open_until_final_confirmed_gap_expires(edge_services):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0, 102.0, 103.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles((300, 700)))
+    await flush_background_tasks()
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    session = pipeline._sessions["drive"]
+    assert len(session.confirmed_gap_segments) == 2
+    edge_services[0] = 103.1
+    await submit(pipeline, boxed_vehicles((100, 700)))
+    await flush_background_tasks()
+    assert len(session.confirmed_gap_segments) == 1
+    assert pipeline._spot_mgr.find_by_segment(spot.segment_id) is spot
+    assert cosmos._mem_spots[spot.id]["status"] == "open"
+    assert "space.occupied" not in [e["type"] for e in signalr.get_recent_events()]
+    edge_services[0] = 103.2
+    await submit(pipeline, boxed_vehicles((100, 900)))
+    await flush_background_tasks()
+    assert session.confirmed_gap_segments == {}
+    assert pipeline.spots_in_memory == 0
+    assert cosmos._mem_spots[spot.id]["status"] == "occupied"
+    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+
+
+@pytest.mark.asyncio
+async def test_same_frame_new_confirmation_prevents_transient_occupation(edge_services):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0, 102.0, 103.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles((300, 1000)))
+    await flush_background_tasks()
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    edge_services[0] = 104.0
+    await submit(pipeline, boxed_vehicles((300, 850)))
+    edge_services[0] = 105.0
+    await submit(pipeline, boxed_vehicles((300, 850)))
+    edge_services[0] = 106.0
+    result = await submit(pipeline, boxed_vehicles((100, 850)))
+    await flush_background_tasks()
+    assert result["confirmed_block"].gap_count == 1
+    assert pipeline._spot_mgr.find_by_segment(spot.segment_id) is spot
+    assert cosmos._mem_spots[spot.id]["status"] == "open"
+    assert spot.version == 2
+    assert [e["type"] for e in signalr.get_recent_events()] == [
+        "space.opened", "sign_rule.updated", "space.refreshed",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loss_time,still_supported", [
+    (104.5, True), (104.6, False),
+], ids=["fresh-other-session", "expired-dormant-session"])
+async def test_cross_session_support_requires_unexpired_gap(
+    edge_services, loss_time, still_supported,
+):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0, 102.0, 103.0]:
+        edge_services[0] = stamp
+        for session_id in ["A", "B"]:
+            await submit(pipeline, boxed_vehicles((300, 700)), session_id=session_id)
+    await flush_background_tasks()
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    dormant = pipeline._sessions["A"]
+    active = pipeline._sessions["B"]
+    assert len(dormant.confirmed_gap_segments) == len(active.confirmed_gap_segments) == 2
+
+    # B loses its two gaps with the same real vehicle still visible. A sends
+    # nothing else: another session's update must enforce A's expiry timeout.
+    edge_services[0] = loss_time
+    await submit(pipeline, boxed_vehicles((100, 900)), session_id="B")
+    await flush_background_tasks()
+    assert active.confirmed_gap_segments == {}
+    if still_supported:
+        assert len(dormant.confirmed_gap_segments) == 2
+        assert pipeline._spot_mgr.find_by_segment(spot.segment_id) is spot
+        assert cosmos._mem_spots[spot.id]["status"] == "open"
+        assert "space.occupied" not in [e["type"] for e in signalr.get_recent_events()]
+    else:
+        assert dormant.gap_tracker._gaps == {}
+        assert dormant.gap_tracker._confirmed == set()
+        assert dormant.confirmed_gap_segments == {}
+        assert pipeline._spot_mgr.find_by_segment(spot.segment_id) is None
+        assert cosmos._mem_spots[spot.id]["status"] == "occupied"
+        # Repeated submissions must not produce another occupied transition.
+        edge_services[0] = 105.0
+        await submit(pipeline, session_id="B")
+        await flush_background_tasks()
+        assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extents", [
+    [(200, 900)], [(0, 200), (500, 1000)],
+], ids=["edge", "interior"])
+async def test_submission_hiatus_restarts_pending_gap_stability(edge_services, extents):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [99.0, 100.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles(*extents))
+    session = pipeline._sessions["drive"]
+    original = next(iter(session.gap_tracker._gaps.values()))
+    assert original.duration == 0
+    assert session.gap_tracker._confirmed == set()
+    edge_services[0] = 111.0
+    result = await submit(pipeline, boxed_vehicles(*extents))
+    replacement = next(iter(session.gap_tracker._gaps.values()))
+    assert result["confirmed_block"] is None
+    assert replacement.gap_key == original.gap_key
+    assert replacement is not original
+    assert replacement.duration == 0
+    assert session.gap_tracker._confirmed == set()
+    assert pipeline.spots_in_memory == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_gap_recovers_at_exact_expiry_boundary(edge_services):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [99.0, 100.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles((200, 900)))
+    session = pipeline._sessions["drive"]
+    original = next(iter(session.gap_tracker._gaps.values()))
+    edge_services[0] = 101.5
+    result = await submit(pipeline, boxed_vehicles((200, 900)))
+    assert result["confirmed_block"] is None
+    assert session.gap_tracker._gaps[original.gap_key] is original
+    assert original.duration == 1.5
+    edge_services[0] = 102.0
+    result = await submit(pipeline, boxed_vehicles((200, 900)))
+    assert result["confirmed_block"].gap_count == 1
+    assert session.gap_tracker._gaps[original.gap_key] is original
+    await flush_background_tasks()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extents", [
+    [(200, 900)], [(0, 200), (500, 1000)],
+], ids=["edge", "interior"])
+async def test_submission_hiatus_expires_confirmed_support_before_recreating_gap(edge_services, extents):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    for stamp in [98.0, 99.0, 100.0, 101.0]:
+        edge_services[0] = stamp
+        await submit(pipeline, boxed_vehicles(*extents))
+    await flush_background_tasks()
+    session = pipeline._sessions["drive"]
+    original = next(iter(session.gap_tracker._gaps.values()))
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    assert session.confirmed_gap_segments == {original.gap_key: spot.segment_id}
+    edge_services[0] = 111.0
+    result = await submit(pipeline, boxed_vehicles(*extents))
+    await flush_background_tasks()
+    replacement = next(iter(session.gap_tracker._gaps.values()))
+    assert result["confirmed_block"] is None
+    assert replacement.gap_key == original.gap_key
+    assert replacement is not original
+    assert replacement.duration == 0
+    assert session.gap_tracker._confirmed == set()
+    assert session.confirmed_gap_segments == {}
+    assert pipeline.spots_in_memory == 0
+    assert cosmos._mem_spots[spot.id]["status"] == "occupied"
+    assert [e["type"] for e in signalr.get_recent_events()].count("space.occupied") == 1
 
 
 @pytest.mark.asyncio
@@ -171,6 +513,8 @@ async def test_empty_submissions_expire_all_trackers_and_occupy_confirmed_spot(l
     await submit(pipeline, make_vehicles(), [sign])
     now[0] = 101.0
     await submit(pipeline, make_vehicles())
+    now[0] = 102.5
+    await submit(pipeline, make_vehicles())
     now[0] = 104.0
     confirmed = await submit(pipeline, make_vehicles())
     await flush_background_tasks()
@@ -189,7 +533,7 @@ async def test_empty_submissions_expire_all_trackers_and_occupy_confirmed_spot(l
         result = await submit(pipeline)
         if i == 0:
             assert all(t.time_since_update == 1 for t in vehicle_tracks)
-            assert sign_track.time_since_update == 3
+            assert sign_track.time_since_update == 4
         elif i == 1:
             # Expiry follows the gap timeout, even while missed vehicles live.
             await flush_background_tasks()
@@ -225,7 +569,7 @@ async def test_boundary_dropout_preserves_gap_until_timeout_and_recovers(
     now = [100.0]
     monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
     pipeline = module.Pipeline()
-    for stamp in [100.0, 101.0, 104.0]:
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
         now[0] = stamp
         await submit(pipeline, make_vehicles())
     await flush_background_tasks()
@@ -280,7 +624,7 @@ async def test_existing_spot_is_refreshed_on_resighting_and_new_gap_confirmation
     now = [100.0]
     monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
     pipeline = module.Pipeline()
-    for stamp in [100.0, 101.0, 104.0]:
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
         now[0] = stamp
         await submit(pipeline, make_vehicles())
     await flush_background_tasks()
@@ -293,7 +637,7 @@ async def test_existing_spot_is_refreshed_on_resighting_and_new_gap_confirmation
 
     # A separate session on the same segment must refresh the existing spot.
     pipeline.cleanup_session("drive")
-    for stamp in [110.0, 111.0, 114.0]:
+    for stamp in [110.0, 111.0, 112.5, 114.0]:
         now[0] = stamp
         await submit(pipeline, make_vehicles())
     await flush_background_tasks()

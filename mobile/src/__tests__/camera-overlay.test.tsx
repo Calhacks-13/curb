@@ -154,6 +154,58 @@ it("runs iOS native inference with the required output options, schedules JSON, 
   expect(onSpotConfirmed).toHaveBeenCalledWith(accepted);
 });
 
+it.each([false, true])("distinguishes waiting from an empty inference received by the server (expanded=%s)", async (expanded) => {
+  mockDetect.mockReturnValue({ vehicles: [], signs: [], frameWidth: 1280, frameHeight: 720 });
+  mockFetch.mockResolvedValue({ ok: true, json: async () => ({ frame_id: "empty", accepted: true, vehicle_count: 0, gap_count: 0, pipeline_state: "no scene", scene_valid: false }) });
+  await render(<CameraOverlay {...defaults} />);
+  if (expanded) await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  expect(screen.getByText("Waiting for first inference")).toBeTruthy();
+  expect(screen.queryByText("Live")).toBeNull();
+  await emitFrame();
+  await flushRN();
+  expect(screen.getByText("Server received · 0 vehicles · 0 gaps")).toBeTruthy();
+  expect(screen.getByLabelText(/Server received.*0 vehicles.*0 gaps.*no scene.*No valid scene/)).toBeTruthy();
+  expect(screen.getByText("Connected")).toBeTruthy();
+  expect(JSON.parse((mockFetch.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual(expect.objectContaining({ vehicles: [], signs: [] }));
+});
+
+it.each([false, true])("keeps inference boxes during HTTP 502 and clears delivery failure on receipt (expanded=%s)", async (expanded) => {
+  mockFetch.mockImplementationOnce(async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError("HTML tunnel response"); } }));
+  await render(<CameraOverlay {...defaults} />);
+  if (expanded) await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  await emitFrame();
+  await flushRN();
+  await act(async () => screen.getByTestId("detection-overlay").props.onLayout({ nativeEvent: { layout: { width: 128, height: 72 } } }));
+  expect(screen.getByText("Upload unavailable")).toBeTruthy();
+  expect(screen.getByLabelText(/Upload unavailable.*HTTP 502.*Retrying/)).toBeTruthy();
+  expect(screen.getByLabelText("car, 90% confidence")).toBeTruthy();
+  expect(screen.queryByText("Scanner stopped")).toBeNull();
+  expect(screen.getByTestId("native-camera").props.outputs).toEqual([mockFrameOutput]);
+  mockFetch.mockResolvedValue({ ok: true, json: async () => ({ ...accepted, vehicle_count: 1, gap_count: 2 }) });
+  await emitFrame();
+  await flushRN();
+  expect(screen.queryByText("Upload unavailable")).toBeNull();
+  expect(screen.getByText("Server received · 1 vehicle · 2 gaps")).toBeTruthy();
+  expect(screen.getByText("Connected")).toBeTruthy();
+});
+
+it.each([false, true])("ignores stale receipt or failure after stop/restart (failure=%s)", async (failure) => {
+  let resolve!: (response: { ok: boolean; status: number; json: () => Promise<FrameAccepted> }) => void;
+  mockFetch.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  const view = await render(<CameraOverlay {...defaults} />);
+  await emitFrame();
+  await flushRN();
+  await view.rerender(<CameraOverlay {...defaults} sampling={false} />);
+  await view.rerender(<CameraOverlay {...defaults} />);
+  await act(async () => resolve({ ok: !failure, status: failure ? 502 : 200, json: async () => accepted }));
+  expect(screen.getByText("Waiting for first inference")).toBeTruthy();
+  expect(screen.queryByText("Upload unavailable")).toBeNull();
+  expect(screen.queryByText("Connected")).toBeNull();
+  await emitFrame();
+  await flushRN();
+  expect(screen.getByText("Server received")).toBeTruthy();
+});
+
 it("shows processed detections and moves the single live camera into a full-screen view", async () => {
   await render(<CameraOverlay {...defaults} />);
   await emitFrame();

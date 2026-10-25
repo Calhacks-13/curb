@@ -135,6 +135,18 @@ describe("Find map from the live typed client", () => {
     expect(latest("setStalls").stalls.find((p) => p.id === "driveway")?.ring).not.toEqual(oldRing);
   });
 
+  it("shows paired camera feedback when the fresh space and legal zone share an ID and version", async () => {
+    await mount();
+    await act(async () => { mockCameraProps.onSpotConfirmed?.({
+      frame_id: "confirmed-frame", accepted: true,
+      space: { ...nearby.spaces[0], id: "scan-segment", zone_id: "scan-segment", last_observed_at: new Date(NOW).toISOString() },
+      zone: { ...nearby.zones[0], id: "scan-segment" },
+    }); });
+    expect(latest("setZones").zones).toContainEqual({ id: "scan-segment", coordinates: nearby.zones[0].geometry.coordinates });
+    expect(latest("setStalls").stalls).toContainEqual(expect.objectContaining({ id: "scan-segment", kind: "fresh", ring }));
+    expect(latest("setPills").pills).toContainEqual(expect.objectContaining({ id: "scan-segment", kind: "fresh", label: "Likely open" }));
+  });
+
   it.each(["pending", "denied"])("does not query or show demo supply while live location is %s", async (status) => {
     mockPosition = null;
     mockLocationStatus = status;

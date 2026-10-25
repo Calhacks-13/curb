@@ -4,7 +4,7 @@ Centralized configuration via pydantic-settings.
 All env vars use CURB_ prefix. Loads from .env file.
 """
 
-from pydantic import field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -12,7 +12,14 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "CURB_", "env_file": ".env", "extra": "ignore"}
 
     # Pixel gap threshold for detections submitted by the device
-    min_gap_fraction: float = 0.15
+    min_gap_fraction: float = Field(default=0.15, gt=0, le=1, allow_inf_nan=False)
+    max_edge_gap_fraction: float = Field(default=0.5, gt=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_gap_thresholds(self):
+        if self.min_gap_fraction > self.max_edge_gap_fraction:
+            raise ValueError("min_gap_fraction must not exceed max_edge_gap_fraction")
+        return self
 
     # Bearing estimation for sign triangulation
     default_camera_hfov_deg: float = 70.0  # horizontal FOV for phone camera

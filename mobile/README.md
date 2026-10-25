@@ -96,6 +96,15 @@ routes in the plan's "Locked External Contracts" table, and realtime comes from
 **Demo replay** adapter and shows the Demo replay badge; never present that data
 as live.
 
+`EXPO_PUBLIC_API_URL` is inlined into the JS bundle and `getApi()` caches the
+client for the running app. After changing `.env`, perform a full app reload;
+Fast Refresh does not replace that client. An embedded bundle requires a new JS
+build/update. Verify both `curl --fail http://127.0.0.1:8000/health` on the server
+machine and `curl --fail https://YOUR_CONFIGURED_API_HOST/health`, and inspect
+`pgrep -fl 'ngrok|cloudflared|uvicorn'` before testing the phone. Local health alone
+does not prove that its public tunnel works. Missing tunnel account credentials
+must be restored outside the repository. See [operational checks](../ON_DEVICE_CV.md#troubleshooting-and-profiling).
+
 Field names in `src/api/types.ts` follow the spec exactly. When
 `packages/contracts` lands, replace that file with re-exports from
 `@curb/contracts`.
@@ -118,6 +127,15 @@ intermediate results are dropped. Stop, blur, backgrounding, permission loss, an
 native errors disable inference/submission. Demo replay and Android are preview
 only; web shows an unavailable camera card. Android/web never load the iOS module.
 Device FPS and Neural Engine placement require profiling.
+
+The camera shows whether it is waiting for inference, waiting for server receipt,
+or has a successful receipt with server vehicle/gap counts. Empty results still
+upload and can display `0 vehicles · 0 gaps`. Delivery failure shows **Upload
+unavailable** and retries fresh results while local boxes remain visible. The
+next successful receipt clears that failure. Detection uploads abort after ten
+seconds (`request_timeout`); failures/timeouts release the single-flight guard.
+Other API requests retain their existing behavior. Native inference errors still
+stop scanning, and stopped/unmounted sessions ignore stale delivery callbacks.
 
 Every screen has designed loading, empty, error and permission states; the map
 has its own error card with Try again, and a "Reconnecting" pill shows while

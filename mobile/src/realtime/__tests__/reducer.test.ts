@@ -1,4 +1,4 @@
-import type { ParkingSpace, RealtimeEvent } from "@/api/types";
+import type { CurbZone, ParkingSpace, RealtimeEvent } from "@/api/types";
 import { visibleDriveways } from "@/features/find/options";
 import { applyRealtimeEvent, emptyParkingState, fromNearby } from "@/realtime/reducer";
 
@@ -27,7 +27,7 @@ describe("applyRealtimeEvent", () => {
   it("applies a newer occupied event and hides the opening", () => {
     const next = applyRealtimeEvent(seeded, event("space.occupied", 4));
     expect(next.spaces[space.id].internal_state).toBe("OCCUPIED");
-    expect(next.versions[space.id]).toBe(4);
+    expect(next.versions[`space:${space.id}`]).toBe(4);
   });
 
   it("ignores duplicate and older versions", () => {
@@ -49,6 +49,56 @@ describe("applyRealtimeEvent", () => {
     const occupied = applyRealtimeEvent(seeded, event("space.occupied", 6));
     const refetched = fromNearby(occupied, { generated_at: "", zones: [], spaces: [space], driveways: [] });
     expect(refetched.spaces[space.id].internal_state).toBe("OCCUPIED");
+  });
+});
+
+describe("entity-scoped versions", () => {
+  const sharedSpace = { ...space, id: "shared", zone_id: "shared", version: 1 };
+  const zone: CurbZone = {
+    id: "shared",
+    geometry: { type: "LineString", coordinates: [[-122.4378, 37.8003], [-122.4377, 37.8003]] },
+    sign_rule_id: "rule",
+    legal_status_now: "LEGAL",
+    next_change_at: null,
+    version: 1,
+  };
+  const update = (type: RealtimeEvent["type"], version: number, payload: object = {}): RealtimeEvent => ({
+    type, entity_id: "shared", entity_version: version, occurred_at: "2026-10-24T18:00:05Z",
+    payload: payload as Record<string, unknown>,
+  });
+
+  it.each([false, true])("keeps a same-ID space and zone with zone-first=%s", (zoneFirst) => {
+    const opened = update("space.opened", 1, sharedSpace);
+    const rule = update("sign_rule.updated", 1, zone);
+    const events = zoneFirst ? [rule, opened] : [opened, rule];
+    const next = events.reduce(applyRealtimeEvent, emptyParkingState);
+    expect(next.spaces.shared).toEqual(sharedSpace);
+    expect(next.zones.shared).toEqual(zone);
+  });
+
+  it("advances zone and space independently after nearby seeds their shared ID", () => {
+    const base = fromNearby(emptyParkingState, { generated_at: "", zones: [zone], spaces: [sharedSpace], driveways: [] });
+    const refreshed = applyRealtimeEvent(base, update("space.refreshed", 5, { last_observed_at: "2026-10-24T18:00:05Z" }));
+    const illegal = applyRealtimeEvent(refreshed, update("sign_rule.updated", 2, { ...zone, legal_status_now: "ILLEGAL" }));
+    expect(illegal.zones.shared).toMatchObject({ version: 2, legal_status_now: "ILLEGAL" });
+    expect(illegal.spaces.shared).toMatchObject({ version: 5, last_observed_at: "2026-10-24T18:00:05Z" });
+    expect(applyRealtimeEvent(illegal, update("sign_rule.updated", 1, zone))).toBe(illegal);
+    expect(applyRealtimeEvent(illegal, update("space.occupied", 4))).toBe(illegal);
+    const occupied = applyRealtimeEvent(illegal, update("space.occupied", 6));
+    expect(occupied.spaces.shared.internal_state).toBe("OCCUPIED");
+    expect(applyRealtimeEvent(occupied, update("space.opened", 6, sharedSpace))).toBe(occupied);
+    expect(applyRealtimeEvent(occupied, update("space.refreshed", 5, sharedSpace))).toBe(occupied);
+    expect(applyRealtimeEvent(occupied, update("sign_rule.updated", 3, zone)).zones.shared.version).toBe(3);
+  });
+
+  it("retains each collection's newer state when nearby returns older shared-ID data", () => {
+    const base = fromNearby(emptyParkingState, { generated_at: "", zones: [{ ...zone, version: 4 }], spaces: [sharedSpace], driveways: [] });
+    const occupied = applyRealtimeEvent(base, update("space.occupied", 2));
+    expect(occupied.spaces.shared).toMatchObject({ version: 2, internal_state: "OCCUPIED" });
+    const refetched = fromNearby(occupied, { generated_at: "", zones: [zone], spaces: [sharedSpace], driveways: [] });
+    expect(refetched.zones.shared.version).toBe(4);
+    expect(refetched.spaces.shared).toMatchObject({ version: 2, internal_state: "OCCUPIED" });
+    expect(applyRealtimeEvent(refetched, update("space.refreshed", 3)).spaces.shared.version).toBe(3);
   });
 });
 
@@ -100,6 +150,26 @@ describe("contract-shaped driveway events", () => {
     });
     expect(confirmed.bookings.booking_1).toMatchObject({ state: "CONFIRMED", transaction_hash: "0xabc" });
     expect(confirmed.driveways[driveway.id]).toMatchObject({ state: "BOOKED", version: 3, availability_end: "23:59" });
+  });
+
+  it("applies a shared-ID booking and its driveway snapshot on independent version sequences", () => {
+    const sharedBase = fromNearby(emptyParkingState, { generated_at: "", zones: [], spaces: [], driveways: [{ ...driveway, version: 5 }] });
+    const confirmed = applyRealtimeEvent(sharedBase, {
+      type: "booking.confirmed", entity_id: driveway.id, entity_version: 2, occurred_at: "",
+      payload: { booking: { id: driveway.id, state: "CONFIRMED" }, driveway: view("BOOKED", 6) },
+    });
+    expect(confirmed.bookings[driveway.id]).toMatchObject({ state: "CONFIRMED", version: 2 });
+    expect(confirmed.driveways[driveway.id]).toMatchObject({ state: "BOOKED", version: 6 });
+    expect(applyRealtimeEvent(confirmed, {
+      type: "driveway.released", entity_id: driveway.id, entity_version: 5, occurred_at: "",
+      payload: { driveway: view("AVAILABLE", 5) },
+    })).toBe(confirmed);
+    const failed = applyRealtimeEvent(confirmed, {
+      type: "payment.failed", entity_id: driveway.id, entity_version: 3, occurred_at: "",
+      payload: { booking: { id: driveway.id, state: "CANCELLED" }, driveway: view("AVAILABLE", 5) },
+    });
+    expect(failed.bookings[driveway.id]).toMatchObject({ state: "CANCELLED", version: 3 });
+    expect(failed.driveways[driveway.id]).toMatchObject({ state: "BOOKED", version: 6 });
   });
 
   it("replaces the dated availability window when a realtime owner edit changes it", () => {

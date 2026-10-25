@@ -138,8 +138,24 @@ shows an unavailable camera card. Android/web never instantiate CurbVision.
 
 `DetectionUploadController` allows one request in flight and drops intermediate
 results. Errors release the guard; stopping invalidates callbacks and prevents
-later submissions/confirmations. There is no offline queue. JSON goes to
-`POST /v1/vision/detections`:
+later submissions/confirmations. There is no offline queue.
+
+Detection uploads have a 10-second deadline and abort their HTTP request on
+timeout (`ApiError` code `request_timeout`, status `0`). A fresh inference result
+can try again after rejection or timeout. Other API requests retain their existing
+timeouts. Delivery callbacks carry frozen events and stats snapshots only for the
+current scanning generation; stopping/restarting or unmounting suppresses old
+delivery callbacks.
+
+The camera distinguishes **Waiting for first inference**, **Waiting for server
+receipt**, **Server received** (including server vehicle/gap counts when supplied),
+and **Upload unavailable** with safe HTTP/timeout information. A successful empty
+result still uploads and can show `0 vehicles · 0 gaps`; it is different from a
+delivery failure. The next successful response clears the current delivery error.
+Upload failure keeps local inference and detection boxes active while fresh
+results retry. Native inference errors still stop the scanner.
+
+JSON goes to `POST /v1/vision/detections`:
 
 ```json
 {
@@ -195,6 +211,27 @@ models and accepts no binary camera inference stream.
 
 ## Troubleshooting and profiling
 
+- **Upload unavailable/tunnel errors:** `EXPO_PUBLIC_API_URL` is inlined into the
+  JavaScript bundle, and `getApi()` caches the client for that app runtime. After
+  changing `mobile/.env`, perform a full app reload; Fast Refresh is insufficient.
+  An installed embedded bundle needs a new JS build/update to change its URL.
+  From the repository root, check the origin before checking the public tunnel:
+
+  ```sh
+  curl --fail --show-error http://127.0.0.1:8000/health
+  curl --fail --show-error https://YOUR_CONFIGURED_API_HOST/health
+  pgrep -fl 'ngrok|cloudflared|uvicorn'
+  ```
+
+  Local health must return 200 first. If public health fails while local health
+  works, inspect the tunnel process, its upstream port, configured hostname, and
+  account credentials. If needed, start the local API from `server/` with
+  `../.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000`. Keep both API
+  and tunnel processes running. This repository cannot restore missing tunnel
+  credentials or an unavailable reserved endpoint. Confirm public health returns
+  200 before reloading the phone; do not treat local health alone as proof of
+  device connectivity. [Expo environment-variable guidance](https://docs.expo.dev/guides/environment-variables/)
+  explains full reloads and bundled public values.
 - **Missing models/native inference error:** export both exact names, clean
   prebuild, and rebuild. Inspect `CurbVisionModels.bundle` in the app product for
   both `.mlmodelc` directories. A stale binary cannot see newly exported models.

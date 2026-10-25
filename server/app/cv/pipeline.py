@@ -12,7 +12,7 @@ import asyncio
 import logging
 import uuid
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.config import settings
 from app.models import (
@@ -33,6 +33,7 @@ from app.cv.tracker import (
     SignTrack,
     TrackedGap,
     group_signs_into_poles,
+    gap_candidates,
     _iou,
 )
 from app.cv.sign_reader import read_sign_pole
@@ -253,7 +254,7 @@ def _zone_payload(segment_id: str, lat: float, lng: float, sign_rules: SignPoleR
 class SessionState:
     """Per-session tracking state."""
     __slots__ = ("vehicle_tracker", "gap_tracker", "sign_tracker",
-                 "confirmed_gap_segments", "last_sign_reading")
+                 "confirmed_gap_segments", "last_sign_reading", "last_submission")
 
     def __init__(self):
         self.vehicle_tracker = VehicleTracker()
@@ -262,6 +263,7 @@ class SessionState:
         # Map gap_key -> segment_id for tracking which gaps map to which spots
         self.confirmed_gap_segments: dict[tuple[int, int], str] = {}
         self.last_sign_reading: SignPoleReading | None = None
+        self.last_submission: dict | None = None
 
 
 class Pipeline:
@@ -300,14 +302,12 @@ class Pipeline:
         optional confirmed_block.
         """
         session = self._get_session(session_id)
-        # Only gaps between adjacent vehicles count; frame edges are unreliable.
+        received_at = datetime.now(UTC).isoformat()
         sorted_vehicles = sorted(vehicles, key=lambda vehicle: vehicle.bbox[0])
-        min_gap_px = frame_width * settings.min_gap_fraction
-        gap_bboxes = [
-            [left.bbox[2], 0, right.bbox[0], frame_height]
-            for left, right in zip(sorted_vehicles, sorted_vehicles[1:])
-            if right.bbox[0] - left.bbox[2] >= min_gap_px
-        ]
+        gap_bboxes = list(gap_candidates(
+            [(index, vehicle.bbox) for index, vehicle in enumerate(sorted_vehicles, start=1)],
+            frame_width, frame_height,
+        ).values())
         gap_measurements = [
             GapMeasurement(
                 bbox=bbox,
@@ -375,9 +375,11 @@ class Pipeline:
         # Missed vehicle tracks remain available for matching, but must not
         # count as fresh sightings that keep gaps alive on empty frames.
         visible_tracks = [t for t in confirmed_tracks if t.time_since_update == 0]
+        current_tracks = [t for t in session.vehicle_tracker.tracks if t.time_since_update == 0]
         all_gaps, newly_confirmed, expired_confirmed = session.gap_tracker.update(
             visible_tracks, frame_width, frame_height,
             gap_measurements=gap_measurements,
+            current_tracks=current_tracks,
         )
 
         confirmed_keys = session.gap_tracker._confirmed
@@ -392,11 +394,13 @@ class Pipeline:
                 median_width_meters=round(median_w, 2) if median_w is not None else None,
             ))
 
-        # --- Handle expired confirmed gaps → space.occupied ---
+        # Remove expired support now, but decide occupancy only after registering
+        # this submission's new confirmations for the same segment.
+        expired_segments = set()
         for gap in expired_confirmed:
             seg_id = session.confirmed_gap_segments.pop(gap.gap_key, None)
             if seg_id:
-                asyncio.create_task(_safe(self._spot_mgr.occupy_spot(seg_id)))
+                expired_segments.add(seg_id)
 
         # --- Confirmation: new gaps → open or refresh ---
         if newly_confirmed:
@@ -450,6 +454,34 @@ class Pipeline:
             if not pipeline_state or pipeline_state == "no gaps":
                 n_tracks = len(visible_tracks)
                 pipeline_state = f"tracking {n_tracks} vehicle{'s' if n_tracks != 1 else ''}"
+
+        # A stopped camera may never submit again. Enforce every session's gap
+        # timeout before its mapping can count as support for a shared spot.
+        for state in self._sessions.values():
+            for gap in state.gap_tracker.expire():
+                segment_id = state.confirmed_gap_segments.pop(gap.gap_key, None)
+                if segment_id:
+                    expired_segments.add(segment_id)
+
+        supported_segments = {
+            segment for state in self._sessions.values()
+            for segment in state.confirmed_gap_segments.values()
+        }
+        for segment_id in expired_segments - supported_segments:
+            await self._spot_mgr.occupy_spot(segment_id)
+
+        previous_empty = (session.last_submission or {}).get("consecutive_empty_submissions", 0)
+        session.last_submission = {
+            "received_at": received_at,
+            "frame_width": frame_width,
+            "frame_height": frame_height,
+            "vehicle_count": len(vehicles),
+            "sign_count": len(signs),
+            "visible_confirmed_tracks": len(visible_tracks),
+            "candidate_count": len(gap_bboxes),
+            "consecutive_empty_submissions": previous_empty + 1 if not scene_valid else 0,
+            "pipeline_state": pipeline_state,
+        }
 
         frame_result = FrameResult(
             vehicles=vehicles,
