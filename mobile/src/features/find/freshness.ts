@@ -2,6 +2,7 @@
 // the map can age markers locally without waiting for a server event.
 
 import type { CurbZone, ParkingSpace } from "@/api/types";
+import { currentOpenConfidence } from "./confidence";
 
 export type Freshness = "fresh" | "aging" | "stale" | "expired";
 
@@ -44,6 +45,7 @@ export function visibleSpaces(spaces: ParkingSpace[], zones: Record<string, Curb
     if (space.internal_state !== "OPEN") continue;
     const zone = zones[space.zone_id];
     if (!zone || zone.legal_status_now !== "LEGAL" || !zone.sign_rule_id) continue;
+    if (currentOpenConfidence(space, now) === null) continue;
     const freshness = freshnessOf(space.last_observed_at, now);
     if (freshness === "expired") continue;
     out.push({ space, zone, freshness, ageSeconds: ageSeconds(space.last_observed_at, now) });

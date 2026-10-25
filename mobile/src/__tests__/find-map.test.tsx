@@ -94,9 +94,9 @@ describe("Find map from the live typed client", () => {
     ]);
     expect(latest("setStalls").stalls[0].ring).toEqual(ring);
     expect(latest("setPills").pills).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "fresh", label: "Likely open" }),
-      expect.objectContaining({ id: "aging", label: expect.stringMatching(/May.*open/) }),
-      expect.objectContaining({ id: "stale", label: expect.stringMatching(/Stale/) }),
+      expect.objectContaining({ id: "fresh", label: "65% open" }),
+      expect.objectContaining({ id: "aging", label: "56% open" }),
+      expect.objectContaining({ id: "stale", label: "25% open" }),
       expect.objectContaining({ id: "driveway", label: expect.stringContaining("Reserve") }),
     ]));
     expect(latest("setPills").pills.some((p) => p.id === "occupied")).toBe(false);
@@ -144,7 +144,7 @@ describe("Find map from the live typed client", () => {
     }); });
     expect(latest("setZones").zones).toContainEqual({ id: "scan-segment", coordinates: nearby.zones[0].geometry.coordinates });
     expect(latest("setStalls").stalls).toContainEqual(expect.objectContaining({ id: "scan-segment", kind: "fresh", ring }));
-    expect(latest("setPills").pills).toContainEqual(expect.objectContaining({ id: "scan-segment", kind: "fresh", label: "Likely open" }));
+    expect(latest("setPills").pills).toContainEqual(expect.objectContaining({ id: "scan-segment", kind: "fresh", label: "93% open" }));
   });
 
   it.each(["pending", "denied"])("does not query or show demo supply while live location is %s", async (status) => {

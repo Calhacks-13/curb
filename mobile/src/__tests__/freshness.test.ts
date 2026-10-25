@@ -59,4 +59,14 @@ describe("visibleSpaces", () => {
     expect(shown.map((s) => s.space.id)).toEqual(["ok"]);
     expect(shown[0].freshness).toBe("fresh");
   });
+
+  it("keeps the inclusive five-minute boundary but excludes unusable timestamps", () => {
+    const exactBoundary = space("boundary", "legal", "OPEN", 300);
+    const missing = { ...space("missing", "legal", "OPEN", 10), last_observed_at: null };
+    const invalid = { ...space("invalid", "legal", "OPEN", 10), last_observed_at: "invalid" };
+
+    const shown = visibleSpaces([exactBoundary, missing, invalid], zones, NOW);
+
+    expect(shown.map(({ space: visible }) => visible.id)).toEqual(["boundary"]);
+  });
 });

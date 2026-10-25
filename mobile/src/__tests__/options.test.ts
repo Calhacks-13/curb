@@ -21,6 +21,43 @@ describe("findOptions", () => {
     expect(kinds).toEqual(expect.arrayContaining(["fresh", "aging", "stale", "driveway"]));
   });
 
+  it("uses one current percentage for curb rows and map pills", () => {
+    const curb = findOptions(stateAt(NOW), NOW, from).filter((option) => option.kind !== "driveway");
+
+    for (const option of curb) {
+      expect(option.confidencePercent).toEqual(expect.any(Number));
+      expect(option.title).toBe(`${option.confidencePercent}% open`);
+      expect(option.detail).toMatch(/^Seen .+ ago • \d+ min walk$/);
+      expect(mapPills([option])[0].label).toBe(option.title);
+    }
+  });
+
+  it("ranks equal-freshness curb spaces by current confidence before distance", () => {
+    const state = stateAt(NOW);
+    const [low, high] = Object.values(state.spaces).filter((space) => space.internal_state === "OPEN").slice(0, 2);
+    const spaces = {
+      low: {
+        ...low,
+        id: "low",
+        location: { type: "Point" as const, coordinates: from },
+        last_observed_at: new Date(NOW).toISOString(),
+        base_confidence: 0.8,
+      },
+      high: {
+        ...high,
+        id: "high",
+        location: { type: "Point" as const, coordinates: [-122.4365, 37.7997] as [number, number] },
+        last_observed_at: new Date(NOW).toISOString(),
+        base_confidence: 0.9,
+      },
+    };
+
+    const ranked = findOptions({ ...state, spaces, driveways: {} }, NOW, from);
+
+    expect(ranked.map((option) => option.id)).toEqual(["high", "low"]);
+    expect(ranked.map((option) => option.confidencePercent)).toEqual([90, 80]);
+  });
+
   it("shows the driveway late at night inside its overnight window", () => {
     const midnight = Date.parse("2026-10-25T07:30:00Z"); // 12:30 AM PDT
     expect(findOptions(stateAt(midnight), midnight, from).map((o) => o.kind)).toContain("driveway");
