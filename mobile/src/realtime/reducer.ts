@@ -3,7 +3,7 @@
 // duplicate or out-of-order delivery can never roll an entity back.
 
 import type { Booking, CurbZone, Driveway, Garage, NearbyParkingResponse, ParkingSpace, RealtimeEvent } from "@/api/types";
-import { normalizeDriveway } from "@/api/normalize";
+import { normalizeDriveway, normalizeParkingSpace } from "@/api/normalize";
 
 export type ParkingState = {
   zones: Record<string, CurbZone>;
@@ -100,7 +100,11 @@ export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): P
         event.type === "space.occupied" ? "OCCUPIED" : event.type === "space.expired" ? "UNKNOWN" : "OPEN";
       // A space we've never seen needs its full payload; ignore partial unknowns.
       if (!prev && !("stall_geometry" in event.payload)) return { ...state, versions };
-      const space = { ...(prev ?? {}), ...patch, internal_state } as ParkingSpace;
+      const space = normalizeParkingSpace({
+        ...(prev ?? {}),
+        ...patch,
+        internal_state,
+      } as ParkingSpace);
       return { ...state, versions, spaces: { ...state.spaces, [event.entity_id]: space } };
     }
     case "driveway.updated":

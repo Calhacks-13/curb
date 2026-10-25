@@ -185,7 +185,7 @@ class TrackedGap:
     """A gap between real vehicle IDs or one virtual frame boundary."""
     __slots__ = (
         "left_track_id", "right_track_id", "bbox", "first_seen", "last_seen",
-        "_width_samples",
+        "observation_count", "_width_samples",
     )
 
     _MAX_WIDTH_SAMPLES = 10
@@ -196,6 +196,7 @@ class TrackedGap:
         self.bbox = bbox
         self.first_seen = time.monotonic()
         self.last_seen = time.monotonic()
+        self.observation_count = 1
         self._width_samples: list[float] = []
 
     def add_width_sample(self, width_m: float):
@@ -277,6 +278,7 @@ class GapTracker:
                 # Update existing gap
                 self._gaps[key].bbox = bbox
                 self._gaps[key].last_seen = now
+                self._gaps[key].observation_count += 1
             else:
                 # New gap
                 self._gaps[key] = TrackedGap(key[0], key[1], bbox)

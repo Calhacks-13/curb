@@ -75,7 +75,7 @@ function createState(emit: (e: RealtimeEvent) => void) {
     bookings,
     rules,
     openSpace: (z: string, i: number) =>
-      updateSpace(z, i, { internal_state: "OPEN", last_observed_at: new Date().toISOString(), base_confidence: 0.86 }, "space.opened"),
+      updateSpace(z, i, { internal_state: "OPEN", last_observed_at: new Date().toISOString(), base_confidence: 0.86, detection_confidence: 0.84 }, "space.opened"),
     refreshSpace: (z: string, i: number) =>
       updateSpace(z, i, { internal_state: "OPEN", last_observed_at: new Date().toISOString() }, "space.refreshed"),
     occupySpace: (z: string, i: number) =>

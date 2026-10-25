@@ -149,6 +149,7 @@ def test_detection_endpoint_decodes_sign_crops_and_calls_pipeline(monkeypatch):
         segment_id="scan_segment_1",
         gap_count=1,
         confidence=0.91,
+        detection_confidence=0.87,
         lat=37.8,
         lng=-122.44,
         location={"type": "Point", "coordinates": [-122.44, 37.8]},
@@ -183,9 +184,11 @@ def test_detection_endpoint_decodes_sign_crops_and_calls_pipeline(monkeypatch):
     assert response.json()["space"]["internal_state"] == "OPEN"
     assert response.json()["space"]["last_observed_at"] == "2026-10-24T23:30:00Z"
     assert response.json()["space"]["base_confidence"] == 0.91
+    assert response.json()["space"]["detection_confidence"] == 0.87
     assert response.json()["zone"]["id"] == "scan_segment_1"
     assert response.json()["zone"]["legal_status_now"] == "LEGAL"
     assert [name for name, _ in repository.upserts] == ["rules", "zones", "spaces"]
+    assert repository.upserts[-1][1].detection_confidence == 0.87
     assert len(pipeline.calls) == 1
     call = pipeline.calls[0]
     assert set(call) == {"session_id", "lat", "lng", "heading", "frame_width", "frame_height", "vehicles", "signs"}

@@ -58,7 +58,7 @@ type Sheet =
   | { mode: "list" }
   | { mode: "detail"; id: string }
   | { mode: "driveway"; id: string }
-  | { mode: "route"; id: string; title: string; position: LngLat; route: Route };
+  | { mode: "route"; id: string; position: LngLat; route: Route; initialConfidencePercent: number | null };
 
 export default function FindScreen() {
   const insets = useSafeAreaInsets();
@@ -258,7 +258,7 @@ export default function FindScreen() {
       try {
         const route = await requestRoute(driver.position, o.position);
         setSelectedId(o.id);
-        setSheet({ mode: "route", id: o.id, title: o.title, position: o.position, route });
+        setSheet({ mode: "route", id: o.id, position: o.position, route, initialConfidencePercent: o.confidencePercent ?? null });
         send({ type: "setRoute", route: route.line, targetId: o.id, fit: true });
         haptics.tap();
       } catch {
@@ -395,6 +395,8 @@ export default function FindScreen() {
             <SpaceDetailSheet
               option={detailOption}
               ageSeconds={spaceAge(detailOption.id)}
+              confidencePercent={detailOption.confidencePercent ?? 0}
+              detectionConfidence={state.spaces[detailOption.id]?.detection_confidence ?? 0}
               load={detail.load}
               routing={routing}
               onRoute={() => routeTo(detailOption)}
@@ -445,10 +447,11 @@ export default function FindScreen() {
         )}
         {sheet.mode === "route" && (
           <RouteCard
+            key={sheet.id}
             route={sheet.route}
             target={optionById(sheet.id)}
-            targetTitle={sheet.title}
-            ageSeconds={state.spaces[sheet.id] ? spaceAge(sheet.id) : null}
+            initialConfidencePercent={sheet.initialConfidencePercent}
+            observedAt={state.spaces[sheet.id]?.last_observed_at ?? null}
             onEnd={closeSheet}
           />
         )}

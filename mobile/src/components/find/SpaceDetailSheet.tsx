@@ -2,17 +2,19 @@ import { SymbolView } from "expo-symbols";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { SpaceDetail } from "@/api/types";
-import { font, ink, radius, SEP } from "@/config/tokens";
-import { formatAgeShort } from "@/features/find/freshness";
-import { formatDistance, walkMinutes, type FindOption } from "@/features/find/options";
+import { font, ink, radius, SEP, status } from "@/config/tokens";
+import { formatAge } from "@/features/find/freshness";
+import type { FindOption } from "@/features/find/options";
 import type { DetailLoad } from "@/features/find/useSpaceDetail";
 import { formatLaClockShort } from "@/lib/laTime";
-
-import { OptionChip } from "../OptionIcon";
 
 type Props = {
   option: FindOption;
   ageSeconds: number;
+  /** The same age-adjusted whole percentage the map pill and nearby row show. */
+  confidencePercent: number;
+  /** Vehicle-detection confidence (0 through 1) from the live space record. */
+  detectionConfidence: number;
   load: DetailLoad;
   routing: boolean;
   onRoute: () => void;
@@ -20,20 +22,40 @@ type Props = {
   onRetry: () => void;
 };
 
+/** Formats a rule's maximum stay, e.g. "2 hr" or "1 hr 30 min". */
 function formatMinutes(min: number): string {
   if (min % 60 === 0) return `${min / 60} hr`;
   return min > 60 ? `${Math.floor(min / 60)} hr ${min % 60} min` : `${min} min`;
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+/** Spoken observation age for screen readers, e.g. "18 seconds ago". */
+function spokenAge(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "not observed";
+  if (seconds < 60) {
+    const s = Math.max(1, Math.round(seconds));
+    return `${s} ${s === 1 ? "second" : "seconds"} ago`;
+  }
+  const m = Math.floor(seconds / 60);
+  return `${m} ${m === 1 ? "minute" : "minutes"} ago`;
+}
+
+/** Formats a 0-to-1 fraction as a whole percentage, or an em dash when unknown. */
+function percentText(fraction: number | null | undefined): string {
+  return fraction == null || !Number.isFinite(fraction) ? "—" : `${Math.round(fraction * 100)}%`;
+}
+
+/** Parking-rule confidence, only once a non-blank rule has loaded. */
+function ruleConfidence(load: DetailLoad): number | null {
+  if (load.status !== "ready" || isBlankRule(load.detail.rule)) return null;
+  return load.detail.rule?.interpretation_confidence ?? null;
+}
+
+/** One supporting fact row with a complete accessibility label. */
+function FactRow({ label, value, spoken }: { label: string; value: string; spoken?: string }) {
   return (
-    <View style={styles.stat} accessible accessibilityLabel={`${label}: ${value}`}>
-      <Text style={styles.statValue} numberOfLines={1}>
-        {value}
-      </Text>
-      <Text style={styles.statLabel} numberOfLines={1}>
-        {label}
-      </Text>
+    <View style={styles.factRow} accessible accessibilityLabel={`${label}: ${spoken ?? value}`}>
+      <Text style={styles.factLabel}>{label}</Text>
+      <Text style={styles.factValue}>{value}</Text>
     </View>
   );
 }
@@ -75,27 +97,38 @@ function RuleCard({ detail }: { detail: SpaceDetail }) {
   );
 }
 
-/** Opens before any route is drawn: what this spot is, the rules, and how sure we are. */
-export function SpaceDetailSheet({ option, ageSeconds, load, routing, onRoute, onClose, onRetry }: Props) {
-  const confidence = load.status === "ready" && load.detail.space ? `${Math.round(load.detail.space.base_confidence * 100)}%` : "—";
+/** Opens before any route is drawn: how sure we are the spot is open, the evidence, and the rules. */
+export function SpaceDetailSheet({ option, ageSeconds, confidencePercent, detectionConfidence, load, routing, onRoute, onClose, onRetry }: Props) {
+  const percent = Math.max(0, Math.min(100, confidencePercent));
+  const meterColor = option.kind === "driveway" ? ink.black : status[option.kind];
   return (
     <View>
       <View style={styles.header}>
-        <OptionChip kind={option.kind} size={24} />
-        <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
-          {option.title}
-        </Text>
+        <View
+          style={styles.scoreBlock}
+          accessible
+          accessibilityRole="header"
+          accessibilityLabel={`Chance the spot is open: ${percent} percent`}
+        >
+          <Text style={styles.eyebrow}>Chance the spot is open</Text>
+          <Text style={styles.score}>
+            {percent}
+            <Text style={styles.scoreUnit}>%</Text>
+          </Text>
+        </View>
         <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close details" hitSlop={10} style={styles.close}>
           <SymbolView name="xmark" size={12} weight="bold" tintColor={ink.black} fallback={<Text style={styles.closeText}>x</Text>} />
         </Pressable>
       </View>
 
-      <View style={styles.stats} accessibilityLiveRegion="polite">
-        <Stat value={formatAgeShort(ageSeconds)} label="Last seen" />
-        <View style={styles.statDivider} />
-        <Stat value={confidence} label="Confidence" />
-        <View style={styles.statDivider} />
-        <Stat value={`${walkMinutes(option.distanceM)} min`} label={`${formatDistance(option.distanceM)} walk`} />
+      <View style={styles.meter} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+        <View style={[styles.meterFill, { width: `${percent}%`, backgroundColor: meterColor }]} />
+      </View>
+
+      <View style={styles.facts}>
+        <FactRow label="Last observed" value={formatAge(ageSeconds)} spoken={spokenAge(ageSeconds)} />
+        <FactRow label="Detection confidence" value={percentText(detectionConfidence)} />
+        <FactRow label="Parking rule confidence" value={percentText(ruleConfidence(load))} />
       </View>
 
       {load.status === "loading" && (
@@ -130,16 +163,29 @@ export function SpaceDetailSheet({ option, ageSeconds, load, routing, onRoute, o
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 4, minHeight: 36 },
-  title: { flex: 1, fontFamily: font.bold, fontSize: 20, lineHeight: 26, color: ink.black, paddingTop: 3 },
+  header: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 4 },
+  scoreBlock: { flex: 1 },
+  eyebrow: { fontFamily: font.bold, fontSize: 12, lineHeight: 16, letterSpacing: 0.6, textTransform: "uppercase", color: ink.grey500, paddingTop: 2 },
+  score: { fontFamily: font.extrabold, fontSize: 48, lineHeight: 54, color: ink.black, paddingTop: 6 },
+  scoreUnit: { fontFamily: font.bold, fontSize: 20 },
   close: { width: 30, height: 30, borderRadius: 15, backgroundColor: ink.grey100, alignItems: "center", justifyContent: "center" },
   closeText: { fontFamily: font.bold, fontSize: 13, color: ink.black },
 
-  stats: { flexDirection: "row", alignItems: "center", marginTop: 12, paddingVertical: 10, paddingHorizontal: 4 },
-  stat: { flex: 1, alignItems: "center", gap: 2 },
-  statValue: { fontFamily: font.bold, fontSize: 17, lineHeight: 22, color: ink.black, paddingTop: 2 },
-  statLabel: { fontFamily: font.regular, fontSize: 12, lineHeight: 16, color: ink.grey500 },
-  statDivider: { width: StyleSheet.hairlineWidth, height: 28, backgroundColor: ink.grey300 },
+  meter: { height: 7, borderRadius: 4, backgroundColor: ink.grey100, overflow: "hidden", marginTop: 6, marginHorizontal: 4 },
+  meterFill: { height: "100%", borderRadius: 4 },
+
+  facts: { marginTop: 10, marginBottom: 4, paddingHorizontal: 4 },
+  factRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 16,
+    paddingVertical: 9,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ink.grey300,
+  },
+  factLabel: { fontFamily: font.regular, fontSize: 14, lineHeight: 19, color: ink.grey500, paddingTop: 1 },
+  factValue: { fontFamily: font.bold, fontSize: 14, lineHeight: 19, color: ink.black, paddingTop: 1 },
 
   ruleCard: { marginTop: 8, paddingHorizontal: 14, paddingVertical: 12, borderRadius: radius.button, backgroundColor: ink.grey100 },
   inline: { flexDirection: "row", alignItems: "center", gap: 10 },

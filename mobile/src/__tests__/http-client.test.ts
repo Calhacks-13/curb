@@ -1,6 +1,7 @@
 import type { NearbyParkingResponse as WireNearby, SpaceDetail as WireDetail } from "@curb/contracts/domain";
 
 import { getApi } from "@/api/client";
+import { normalizeNearby } from "@/api/normalize";
 import { findOptions, mapPills } from "@/features/find/options";
 import { emptyParkingState, fromNearby } from "@/realtime/reducer";
 
@@ -9,7 +10,7 @@ const point = { type: "Point" as const, coordinates: [-122.43597, 37.79932] as [
 const wireNearby: WireNearby = {
   generated_at: "2026-10-24T21:00:00Z",
   zones: [{ id: "zone-1", geometry: { type: "LineString", coordinates: [point.coordinates, [-122.43597, 37.7998]] }, sign_rule_id: "rule-1", legal_status_now: "LEGAL", current_rules: "Metered parking allowed for two hours.", next_change_at: "2026-10-25T01:00:00Z", version: 4 }],
-  spaces: [{ id: "space-1", zone_id: "zone-1", location: point, stall_geometry: { type: "Polygon", coordinates: [[point.coordinates, [-122.43594, 37.79932], [-122.43594, 37.79935], point.coordinates]] }, internal_state: "OPEN", last_observed_at: "2026-10-24T20:59:40Z", base_confidence: 0.94, freshness: "FRESH", status_label: "Likely open", distance_m: 0, version: 7 }],
+  spaces: [{ id: "space-1", zone_id: "zone-1", location: point, stall_geometry: { type: "Polygon", coordinates: [[point.coordinates, [-122.43594, 37.79932], [-122.43594, 37.79935], point.coordinates]] }, internal_state: "OPEN", last_observed_at: "2026-10-24T20:59:40Z", base_confidence: 0.94, detection_confidence: 0.87, freshness: "FRESH", status_label: "Likely open", distance_m: 0, version: 7 }],
   driveways: [{ id: "driveway-1", owner_id: "owner", location: point, photo_url: "https://curb.test/driveway.jpg", price_usdc: "8.50", availability_start: "2026-10-24T15:00:00Z", availability_end: "2026-10-25T05:00:00Z", availability_timezone: "America/Los_Angeles", state: "AVAILABLE", held_by_user_id: null, active_booking: null, available_now: true, distance_m: 0, version: 3 }],
 };
 const wireDetail: WireDetail = {
@@ -43,11 +44,18 @@ it("normalizes canonical nearby supply into curb and driveway map pins with LA d
   const nearby = await getApi().nearby(37.79932, -122.43597);
   const options = findOptions(fromNearby(emptyParkingState, nearby), NOW, point.coordinates);
   expect(mapPills(options)).toEqual([
-    expect.objectContaining({ id: "space-1", kind: "fresh", label: "Likely open" }),
+    expect.objectContaining({ id: "space-1", kind: "fresh", label: "88% open" }),
     expect.objectContaining({ id: "driveway-1", kind: "driveway", label: "$8.50 • Reserve" }),
   ]);
   expect(options[1].detail).toBe("8 AM to 10 PM • 50 ft");
-  expect(nearby.spaces[0]).toMatchObject({ id: "space-1", version: 7, base_confidence: 0.94, last_observed_at: "2026-10-24T20:59:40Z" });
+  expect(nearby.spaces[0]).toMatchObject({ id: "space-1", version: 7, base_confidence: 0.94, detection_confidence: 0.87, last_observed_at: "2026-10-24T20:59:40Z" });
+});
+
+it("defaults legacy HTTP spaces to zero detection confidence", () => {
+  const legacy = structuredClone(wireNearby) as unknown as Record<string, unknown>;
+  delete ((legacy.spaces as Record<string, unknown>[])[0]).detection_confidence;
+
+  expect(normalizeNearby(legacy as unknown as WireNearby).spaces[0].detection_confidence).toBe(0);
 });
 
 it("retains the canonical driveway's dated UTC window instead of reopening it every day", async () => {
@@ -62,7 +70,7 @@ it("retains the canonical driveway's dated UTC window instead of reopening it ev
 
 it("normalizes a canonical flat detail into the sheet's current rule and observation data", async () => {
   const detail = await getApi().space("space-1");
-  expect(detail.space).toMatchObject({ id: "space-1", base_confidence: 0.94, version: 7 });
+  expect(detail.space).toMatchObject({ id: "space-1", base_confidence: 0.94, detection_confidence: 0.87, version: 7 });
   expect(detail.rule).toEqual({ id: "rule-1", summary: "Metered parking allowed for two hours.", max_minutes: 120, next_change_at: "2026-10-25T01:00:00Z", next_change_summary: null, payment_text: "$3.50/hr", permit_text: "Permit required: Area C", interpretation_confidence: 0.96, last_validated_at: "2026-10-24T18:00:00Z" });
 });
 

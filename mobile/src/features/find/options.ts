@@ -9,7 +9,8 @@ import type { StallKind } from "@/map/curbLayers";
 import type { MapPill, MapStall, MapZone } from "@/map/messages";
 import type { ParkingState } from "@/realtime/reducer";
 
-import { FRESHNESS_LABEL, formatAge, visibleSpaces } from "./freshness";
+import { displayOpenPercent } from "./confidence";
+import { formatAge, visibleSpaces } from "./freshness";
 
 export type FindOption = {
   id: string;
@@ -22,6 +23,8 @@ export type FindOption = {
   position: LngLat;
   ring: LngLat[];
   distanceM: number;
+  /** Age-adjusted whole-number score shown consistently across curb surfaces. */
+  confidencePercent?: number;
   /** A driveway this driver holds or has booked. */
   mine?: boolean;
   /** Held or booked by someone else: shown muted on the map, not offered. */
@@ -96,15 +99,17 @@ export function findOptions(
     ({ space, freshness, ageSeconds }): FindOption => {
       const coords = space.location.coordinates as LngLat;
       const d = distanceM(from, coords);
+      const confidencePercent = displayOpenPercent(space, now)!;
       return {
         id: space.id,
         kind: freshness,
-        title: FRESHNESS_LABEL[freshness],
+        title: `${confidencePercent}% open`,
         detail: `Seen ${formatAge(ageSeconds)}${SEP}${walkMinutes(d)} min walk`,
         trailing: formatDistance(d),
         position: coords,
         ring: space.stall_geometry?.coordinates?.[0] ?? [coords],
         distanceM: d,
+        confidencePercent,
       };
     },
   );
@@ -140,7 +145,12 @@ export function findOptions(
   });
   // Booked driveways sort last: they're context on the map, not options.
   return [...curb, ...driveways].sort(
-    (a, b) => Number(!!a.booked) - Number(!!b.booked) || RANK[a.kind] - RANK[b.kind] || a.distanceM - b.distanceM,
+    (a, b) => Number(!!a.booked) - Number(!!b.booked)
+      || RANK[a.kind] - RANK[b.kind]
+      || (a.kind !== "driveway" && b.kind !== "driveway"
+        ? (b.confidencePercent ?? 0) - (a.confidencePercent ?? 0)
+        : 0)
+      || a.distanceM - b.distanceM,
   );
 }
 
@@ -167,20 +177,13 @@ export function mapStalls(options: FindOption[]): MapStall[] {
   return options.map((o) => ({ id: o.id, kind: o.kind, ring: o.ring }));
 }
 
-const PILL_LABEL: Record<StallKind, string> = {
-  fresh: "Likely open",
-  aging: "May be open",
-  stale: "Stale",
-  driveway: "",
-};
-
 export function mapPills(options: FindOption[]): MapPill[] {
   return options.map((o) => ({
     id: o.id,
     kind: o.kind,
     label:
       o.kind !== "driveway"
-        ? PILL_LABEL[o.kind]
+        ? o.title
         : o.mine
           ? "Your driveway"
           : o.booked
