@@ -20,8 +20,12 @@ jest.mock("react-native-webview", () => {
   }) };
 });
 let mockCameraProps: React.ComponentProps<typeof CameraOverlay>;
+let mockPipExpanded = false;
 jest.mock("@/components/CameraOverlay", () => ({ CameraOverlay: (props: React.ComponentProps<typeof CameraOverlay>) => { mockCameraProps = props; return null; } }));
-jest.mock("@/components/DraggablePip", () => ({ DraggablePip: ({ children }: { children: React.ReactNode }) => children }));
+jest.mock("@/components/DraggablePip", () => ({ DraggablePip: ({ children, expanded }: { children: React.ReactNode; expanded: boolean }) => {
+  mockPipExpanded = expanded;
+  return children;
+} }));
 jest.mock("@/components/sheet/SheetFrame", () => ({ SHEET_PEEK: 78, SheetFrame: ({ children }: { children: React.ReactNode }) => children }));
 jest.mock("@/features/capture/detectionUpload", () => ({ getDeviceId: async () => "phone", newCaptureSessionId: () => "capture" }));
 jest.mock("@/hooks/useScreenFocused", () => ({ useScreenFocused: () => true }));
@@ -77,6 +81,7 @@ describe("Find map from the live typed client", () => {
     mockMessages.length = 0;
     mockPosition = CENTER;
     mockLocationStatus = "granted";
+    mockPipExpanded = false;
   });
   afterEach(() => { jest.useRealTimers(); });
 
@@ -154,5 +159,14 @@ describe("Find map from the live typed client", () => {
     await view.rerender(<FindScreen />);
     expect(mockCameraProps.sampling).toBe(false);
     expect(mockCameraProps.frameContext()).toBeNull();
+  });
+
+  it("expands the camera through its existing draggable host", async () => {
+    await mount();
+    expect(mockPipExpanded).toBe(false);
+
+    await act(async () => { mockCameraProps.onExpandedChange?.(true); });
+
+    expect(mockPipExpanded).toBe(true);
   });
 });

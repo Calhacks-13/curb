@@ -1,7 +1,7 @@
 import type { CurbVision } from "curb-vision";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import type { Frame } from "react-native-vision-camera";
 import { scheduleOnRN } from "react-native-worklets";
 
@@ -26,6 +26,8 @@ type Props = {
   onStartScan?: () => void;
   /** Called when the user taps "Stop" to end inference. */
   onStopScan?: () => void;
+  /** Expands the existing draggable host without replacing the native camera. */
+  onExpandedChange?: (expanded: boolean) => void;
 };
 
 const FRAME_RESOLUTION = { width: 1280, height: 720 };
@@ -65,7 +67,7 @@ export function CameraOverlay(props: Props) {
   return Platform.OS === "web" ? <CameraUnavailable /> : <NativeCameraOverlay {...props} />;
 }
 
-function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onSpotConfirmed, onStartScan, onStopScan }: Props) {
+function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onSpotConfirmed, onStartScan, onStopScan, onExpandedChange }: Props) {
   // VisionCamera 5 has no web implementation and initializes Nitro on import.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Camera, useCameraPermission, useCameraDevice, useFrameOutput } = require("react-native-vision-camera") as typeof import("react-native-vision-camera");
@@ -75,6 +77,10 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [latestInference, setLatestInference] = useState<{ session: object; result: OnDeviceInference } | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const changeExpanded = useCallback((next: boolean) => {
+    setExpanded(next);
+    onExpandedChange?.(next);
+  }, [onExpandedChange]);
   const latest = useRef({ frameContext, onSpotConfirmed });
   useEffect(() => { latest.current = { frameContext, onSpotConfirmed }; }, [frameContext, onSpotConfirmed]);
   const controller = useRef<DetectionUploadController | null>(null);
@@ -186,8 +192,8 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
 
   const visibleInference = enabled && latestInference?.session === session ? latestInference.result : null;
 
-  const cameraSurface = (fullScreen: boolean) => (
-    <View style={fullScreen ? styles.fullScreenPreview : styles.preview}>
+  const cameraSurface = (
+    <View style={expanded ? styles.fullScreenPreview : styles.preview}>
       <Camera
         style={StyleSheet.absoluteFill}
         isActive={active && hasPermission}
@@ -201,11 +207,11 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
         <LiveDot on={enabled} reduceMotion={reduceMotion} />
         <Text style={styles.liveText}>{enabled ? "Live" : "Preview"}</Text>
       </View>
-      {!fullScreen && (
+      {!expanded && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Expand live camera preview"
-          onPress={() => setExpanded(true)}
+          onPress={() => changeExpanded(true)}
           style={({ pressed }) => [styles.expandHitTarget, pressed && styles.previewPressed]}
         />
       )}
@@ -213,12 +219,43 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   );
 
   return (
-    <>
-      <View
-        style={styles.card}
-        accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
-      >
-        {!expanded && cameraSurface(false)}
+    <View
+      style={expanded ? styles.fullScreen : styles.card}
+      accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
+    >
+      {cameraSurface}
+      {expanded ? (
+        <>
+          <View style={styles.fullScreenHeader}>
+            <View>
+              <Text style={styles.fullScreenTitle}>On-device vision</Text>
+              <Text style={styles.fullScreenSubtitle}>Frames stay on this iPhone</Text>
+            </View>
+          </View>
+          {scannerError && (
+            <View style={styles.fullScreenError}>
+              <Text style={styles.errorTitle}>Scanner stopped</Text>
+              <Text accessibilityRole="alert" style={styles.errorMessage}>{scannerError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => { changeExpanded(false); onStopScan?.(); }}
+                style={({ pressed }) => [styles.errorButton, pressed && { opacity: 0.8 }]}
+              >
+                <Text style={styles.errorButtonText}>Close and stop scanning</Text>
+              </Pressable>
+            </View>
+          )}
+          <Pressable
+            onPress={() => changeExpanded(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close full-screen camera"
+            style={({ pressed }) => [styles.closeButton, pressed && { opacity: 0.72 }]}
+          >
+            <Text style={styles.closeText}>×</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
         {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
         {sampling ? (
           <>
@@ -240,49 +277,9 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
             <Text style={styles.startText}>Start Scanning</Text>
           </Pressable>
         )}
-      </View>
-
-      {expanded && (
-        <Modal
-          visible
-          animationType={reduceMotion ? "none" : "fade"}
-          presentationStyle="fullScreen"
-          statusBarTranslucent
-          onRequestClose={() => setExpanded(false)}
-        >
-          <View style={styles.fullScreen}>
-            {cameraSurface(true)}
-            <View style={styles.fullScreenHeader}>
-              <View>
-                <Text style={styles.fullScreenTitle}>On-device vision</Text>
-                <Text style={styles.fullScreenSubtitle}>Frames stay on this iPhone</Text>
-              </View>
-            </View>
-            {scannerError && (
-              <View style={styles.fullScreenError}>
-                <Text style={styles.errorTitle}>Scanner stopped</Text>
-                <Text accessibilityRole="alert" style={styles.errorMessage}>{scannerError}</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => { setExpanded(false); onStopScan?.(); }}
-                  style={({ pressed }) => [styles.errorButton, pressed && { opacity: 0.8 }]}
-                >
-                  <Text style={styles.errorButtonText}>Close and stop scanning</Text>
-                </Pressable>
-              </View>
-            )}
-            <Pressable
-              onPress={() => setExpanded(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Close full-screen camera"
-              style={({ pressed }) => [styles.closeButton, pressed && { opacity: 0.72 }]}
-            >
-              <Text style={styles.closeText}>×</Text>
-            </Pressable>
-          </View>
-        </Modal>
+        </>
       )}
-    </>
+    </View>
   );
 }
 

@@ -9,14 +9,23 @@ import type { FrameContext } from "@/features/capture/detectionUpload";
 
 // Keep the component, controller, payload builder, and HTTP client real.
 const mockRequestPermission = jest.fn(async () => true);
+const mockCameraMount = jest.fn();
+const mockCameraUnmount = jest.fn();
 let mockPermission = { hasPermission: true, canRequestPermission: false, status: "authorized", requestPermission: mockRequestPermission };
 let mockDevice: object | undefined = { id: "back-camera" };
 let mockFrameOptions: UseFrameOutputProps;
 const mockFrameOutput = { kind: "frame-output" };
 jest.mock("react-native-vision-camera", () => {
+  const React = jest.requireActual<typeof import("react")>("react");
   const { View } = jest.requireActual<typeof import("react-native")>("react-native");
   return {
-    Camera: (props: object) => <View {...props} testID="native-camera" />,
+    Camera: (props: object) => {
+      React.useEffect(() => {
+        mockCameraMount();
+        return () => mockCameraUnmount();
+      }, []);
+      return <View {...props} testID="native-camera" />;
+    },
     useCameraPermission: () => mockPermission,
     useCameraDevice: () => mockDevice,
     useFrameOutput: (options: UseFrameOutputProps) => { mockFrameOptions = options; return mockFrameOutput; },
@@ -158,15 +167,21 @@ it("shows processed detections and moves the single live camera into a full-scre
   const detection = screen.getByLabelText("car, 90% confidence");
   expect(detection).toBeTruthy();
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+  expect(mockCameraMount).toHaveBeenCalledTimes(1);
+  expect(mockCameraUnmount).not.toHaveBeenCalled();
   expect(within(screen.getByLabelText("Expand live camera preview")).queryByLabelText("car, 90% confidence")).toBeNull();
 
   await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
   expect(screen.getByText("On-device vision")).toBeTruthy();
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+  expect(mockCameraMount).toHaveBeenCalledTimes(1);
+  expect(mockCameraUnmount).not.toHaveBeenCalled();
 
   await fireEvent.press(screen.getByLabelText("Close full-screen camera"));
   expect(screen.queryByText("On-device vision")).toBeNull();
   expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+  expect(mockCameraMount).toHaveBeenCalledTimes(1);
+  expect(mockCameraUnmount).not.toHaveBeenCalled();
 });
 
 it("surfaces a full-screen scanner failure and lets the user stop scanning", async () => {

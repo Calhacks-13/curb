@@ -12,6 +12,8 @@ type Props = {
   topInset: number;
   bottomInset: number;
   reduceMotion: boolean;
+  /** Fill the available screen while preserving the mounted child tree. */
+  expanded?: boolean;
 };
 
 const MARGIN = 16;
@@ -22,7 +24,7 @@ const SPRING = { damping: 20, stiffness: 220, mass: 0.8 };
  * settles against the nearest side, like iOS video PiP. Taps on its content
  * still work; the drag only starts after a few points of movement.
  */
-export function DraggablePip({ children, areaWidth, areaHeight, topInset, bottomInset, reduceMotion }: Props) {
+export function DraggablePip({ children, areaWidth, areaHeight, topInset, bottomInset, reduceMotion, expanded = false }: Props) {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const x = useSharedValue(MARGIN);
   const y = useSharedValue(topInset);
@@ -51,6 +53,7 @@ export function DraggablePip({ children, areaWidth, areaHeight, topInset, bottom
   }, [size, areaHeight, minY, maxY, maxX, reduceMotion, x, y, placed]);
 
   const pan = Gesture.Pan()
+    .enabled(!expanded)
     .minDistance(6)
     .onStart(() => {
       startX.set(x.get());
@@ -70,14 +73,16 @@ export function DraggablePip({ children, areaWidth, areaHeight, topInset, bottom
     });
 
   const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: x.get() }, { translateY: y.get() }],
+    transform: [{ translateX: expanded ? 0 : x.get() }, { translateY: expanded ? 0 : y.get() }],
   }));
 
   return (
     <GestureDetector gesture={pan}>
       <Animated.View
-        style={[styles.pip, style, !size && styles.hidden]}
-        onLayout={(e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+        style={[styles.pip, style, expanded && styles.expanded, expanded && { width: areaWidth, height: areaHeight }, !size && styles.hidden]}
+        onLayout={(e: LayoutChangeEvent) => {
+          if (!expanded) setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
+        }}
         accessibilityHint="Drag to move"
       >
         {children}
@@ -88,5 +93,6 @@ export function DraggablePip({ children, areaWidth, areaHeight, topInset, bottom
 
 const styles = StyleSheet.create({
   pip: { position: "absolute", top: 0, left: 0, zIndex: 5 },
+  expanded: { zIndex: 100 },
   hidden: { opacity: 0 },
 });
