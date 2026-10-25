@@ -177,6 +177,59 @@ describe("Find map from the live typed client", () => {
     expect(mockCameraProps.frameContext()).toBeNull();
   });
 
+  async function routeToFresh() {
+    await mount();
+    await fireEvent(screen.getByTestId("map-webview"), "message", { nativeEvent: { data: JSON.stringify({ type: "spotTapped", id: "fresh" }) } });
+    await screen.findByText("Two-hour parking allowed now.");
+    await fireEvent.press(screen.getByText("Route here"));
+    await act(async () => {});
+    expect(latest("setRoute").targetId).toBe("fresh");
+  }
+  const tick = async (ms: number) => { await act(async () => { jest.advanceTimersByTime(ms); }); };
+  const spaceEvent = (type: "space.opened" | "space.refreshed", id: string, version: number, base: number): RealtimeEvent => {
+    const observed = new Date(Date.now()).toISOString();
+    return { type, entity_id: id, entity_version: version, occurred_at: observed, payload: { ...nearby.spaces[0], id, last_observed_at: observed, base_confidence: base, version } };
+  };
+
+  it("keeps route confidence live, reports drops, and replaces below 50% only on confirmation", async () => {
+    await routeToFresh();
+    expect(screen.getByLabelText("Chance the spot is open: 65 percent")).toBeTruthy();
+    expect(screen.getByText("Still showing open.")).toBeTruthy();
+    expect(screen.queryByText(/Confidence fell/)).toBeNull();
+
+    await tick(5_000);
+    expect(screen.getByText("64% open")).toBeTruthy();
+    expect(screen.getByText("Confidence fell 1% while routing")).toBeTruthy();
+
+    await act(async () => mockOnEvent(spaceEvent("space.opened", "alt", 1, 0.9)));
+    await tick(45_000);
+    expect(screen.getByText("50% open")).toBeTruthy();
+    expect(screen.queryByText(/under 50% likely/)).toBeNull();
+
+    await tick(1_000);
+    expect(screen.getByText("49% open")).toBeTruthy();
+    expect(screen.getByText("That spot is now under 50% likely to be open")).toBeTruthy();
+    expect(latest("setRoute").targetId).toBe("fresh");
+
+    await fireEvent.press(screen.getByText("Route to new spot"));
+    await act(async () => {});
+    expect(latest("setRoute").targetId).toBe("alt");
+  });
+
+  it("raises the routed score on a refreshed observation without a false drop", async () => {
+    await routeToFresh();
+    await tick(10_000);
+    expect(screen.getByText("Confidence fell 3% while routing")).toBeTruthy();
+
+    await act(async () => mockOnEvent(spaceEvent("space.refreshed", "fresh", 2, 0.97)));
+
+    expect(screen.getByText("97% open")).toBeTruthy();
+    expect(screen.queryByText(/Confidence fell/)).toBeNull();
+    expect(screen.queryByText(/Confidence is falling/)).toBeNull();
+    expect(screen.getByText("Seen again just now. Confidence updated.")).toBeTruthy();
+    expect(latest("setRoute").targetId).toBe("fresh");
+  });
+
   it("expands the camera through its existing draggable host", async () => {
     await mount();
     expect(mockPipExpanded).toBe(false);

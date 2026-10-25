@@ -28,26 +28,42 @@ export function formatDuration(seconds: number): string {
   return `${min} min`;
 }
 
-export type ReplacementReason = "taken" | "aging";
+/** Displayed percentage below which a routed curb spot prompts for an alternative. */
+export const REPLACEMENT_CONFIDENCE_PERCENT = 50;
+
+export type ReplacementReason = "taken" | "confidence";
 
 export type Replacement = { reason: ReplacementReason; alternative: FindOption | null };
 
+const FRESHNESS_ORDER: Record<FindOption["kind"], number> = { fresh: 0, aging: 1, stale: 2, driveway: 3 };
+
 /**
  * Should we offer a different spot? Yes when the routed opening disappeared
- * (taken or expired) or its confidence collapsed to stale. Driveways don't
- * trigger this; a booked driveway is guaranteed.
+ * (taken or expired) or its displayed confidence fell below 50%. Uses the
+ * already-rounded percentage so "50% open" never counts as below 50. Driveways
+ * don't trigger this; a booked driveway is guaranteed.
  */
 export function replacementFor(targetId: string, targetPosition: LngLat, options: FindOption[]): Replacement | null {
   const current = options.find((o) => o.id === targetId);
-  if (current && current.kind !== "stale") return null;
+  if (current?.kind === "driveway") return null;
+  if (current && (current.confidencePercent ?? 0) >= REPLACEMENT_CONFIDENCE_PERCENT) return null;
   // Rank by distance from where the driver was heading, not from the driver.
-  const candidates = options.filter((o) => o.id !== targetId && (o.kind === "fresh" || o.kind === "aging"));
+  const candidates = options.filter(
+    (o) => o.id !== targetId && o.kind !== "driveway" && (o.confidencePercent ?? 0) >= REPLACEMENT_CONFIDENCE_PERCENT,
+  );
   const alternative =
-    candidates.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === "fresh" ? -1 : 1;
-      return distanceM(targetPosition, a.position) - distanceM(targetPosition, b.position);
-    })[0] ?? null;
-  return { reason: current ? "aging" : "taken", alternative };
+    candidates.sort(
+      (a, b) =>
+        FRESHNESS_ORDER[a.kind] - FRESHNESS_ORDER[b.kind] ||
+        distanceM(targetPosition, a.position) - distanceM(targetPosition, b.position),
+    )[0] ?? null;
+  return { reason: current ? "confidence" : "taken", alternative };
+}
+
+/** Whole points the routed score has fallen since routing began; zero if it held or rose. */
+export function confidenceDrop(initialPercent: number | null, currentPercent: number | null): number {
+  if (initialPercent == null || currentPercent == null) return 0;
+  return Math.max(0, initialPercent - currentPercent);
 }
 
 /** Bounding box of a line, for fitting the camera. */

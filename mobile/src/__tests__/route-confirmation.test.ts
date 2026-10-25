@@ -1,7 +1,7 @@
 import type { FindOption } from "@/features/find/options";
 import { replacementFor, requestRoute } from "@/features/find/route";
 
-const opt = (id: string, kind: FindOption["kind"], lng: number): FindOption => ({
+const opt = (id: string, kind: FindOption["kind"], lng: number, confidencePercent?: number): FindOption => ({
   id,
   kind,
   title: id,
@@ -10,6 +10,7 @@ const opt = (id: string, kind: FindOption["kind"], lng: number): FindOption => (
   position: [lng, 37.8],
   ring: [],
   distanceM: Math.abs(lng) * 10,
+  confidencePercent: kind === "driveway" ? undefined : (confidencePercent ?? 80),
 });
 
 const T: [number, number] = [-122.438, 37.8];
@@ -18,25 +19,38 @@ describe("replacementFor", () => {
   const alt = opt("alt", "fresh", -122.437);
   const far = opt("far", "fresh", -122.43);
 
-  it("stays quiet while the routed spot is still fresh or aging", () => {
+  it("stays quiet while the routed spot displays at least 50%", () => {
     expect(replacementFor("t", T, [opt("t", "fresh", -122.438), alt])).toBeNull();
-    expect(replacementFor("t", T, [opt("t", "aging", -122.438), alt])).toBeNull();
+    expect(replacementFor("t", T, [opt("t", "aging", -122.438, 50), alt])).toBeNull();
+  });
+
+  it("offers a replacement once the displayed percentage is 49", () => {
+    const r = replacementFor("t", T, [opt("t", "aging", -122.438, 49), alt]);
+    expect(r).toEqual({ reason: "confidence", alternative: alt });
   });
 
   it("offers the closest fresh opening when the target is taken", () => {
-    const r = replacementFor("t", T, [far, alt, opt("stale", "stale", -122.4381)]);
+    const r = replacementFor("t", T, [far, alt, opt("stale", "stale", -122.4381, 30)]);
     expect(r?.reason).toBe("taken");
     expect(r?.alternative?.id).toBe("alt");
   });
 
-  it("offers a replacement when confidence collapses to stale", () => {
-    const r = replacementFor("t", T, [opt("t", "stale", -122.438), alt]);
-    expect(r).toEqual({ reason: "aging", alternative: alt });
+  it("rejects alternatives below 50% and keeps freshness then distance ranking", () => {
+    const weakNear = opt("weak", "fresh", -122.4379, 49);
+    const agingNear = opt("agingNear", "aging", -122.4379, 60);
+    const freshFar = opt("freshFar", "fresh", -122.43, 55);
+    const r = replacementFor("t", T, [weakNear, agingNear, freshFar]);
+    expect(r?.alternative?.id).toBe("freshFar");
+    expect(replacementFor("t", T, [weakNear, agingNear])?.alternative?.id).toBe("agingNear");
   });
 
-  it("never suggests a stale spot or a driveway, and says when there's nothing", () => {
-    const r = replacementFor("t", T, [opt("s", "stale", -122.4), opt("d", "driveway", -122.4)]);
+  it("never suggests a driveway, and says when there's nothing", () => {
+    const r = replacementFor("t", T, [opt("s", "stale", -122.4, 20), opt("d", "driveway", -122.4)]);
     expect(r).toEqual({ reason: "taken", alternative: null });
+  });
+
+  it("does not apply the confidence rule to a routed driveway", () => {
+    expect(replacementFor("d", T, [opt("d", "driveway", -122.438), alt])).toBeNull();
   });
 });
 

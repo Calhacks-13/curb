@@ -12,12 +12,12 @@ type Props = {
 };
 
 /**
- * Offered when the routed spot is taken or its sighting goes stale. Nothing
- * changes until the driver taps "Route to new spot".
+ * Offered when the routed spot is taken or its confidence falls below 50%.
+ * Nothing changes until the driver taps "Route to new spot".
  */
 export function RouteReplacementPrompt({ replacement, onAccept, onKeep }: Props) {
   const { reason, alternative } = replacement;
-  const title = reason === "taken" ? "That spot was just taken" : "That sighting is getting old";
+  const title = reason === "taken" ? "That spot was just taken" : "That spot is now under 50% likely to be open";
   return (
     <View style={styles.card} accessibilityViewIsModal accessibilityLiveRegion="assertive">
       <Text style={styles.title} accessibilityRole="header">
