@@ -22,6 +22,10 @@ describe("shared contracts", () => {
     const seed = PublicSeedFixtureSchema.parse(PUBLIC_SEED_FIXTURE);
 
     expect(NearbyParkingResponseSchema.parse(seed.nearby)).toEqual(seed.nearby);
+    expect(seed.av.id).toBe("av_demo");
+    expect(seed.nearby.driveways).toContainEqual(
+      expect.objectContaining({ id: "driveway_av_1", price_usdc: "5.00" }),
+    );
     expect(
       DemoSessionResponseSchema.parse({ user: seed.driver, token: "driver-demo-token" }),
     ).toEqual({ user: seed.driver, token: "driver-demo-token" });
@@ -90,9 +94,11 @@ describe("shared contracts", () => {
       { type: "driveway.released", entity_id: driveway.id, entity_version: 4, occurred_at: occurredAt, payload: { driveway } },
       { type: "booking.confirmed", entity_id: "booking_demo_1", entity_version: 3, occurred_at: occurredAt, payload: { booking: PUBLIC_SEED_FIXTURE.booking, driveway: { ...driveway, state: "BOOKED", active_booking: { id: "booking_demo_1", state: "CONFIRMED", payment_status: "SETTLED" }, version: 3 } } },
       { type: "payment.failed", entity_id: "booking_demo_1", entity_version: 2, occurred_at: occurredAt, payload: { booking_id: "booking_demo_1", code: "SETTLEMENT_FAILED", retryable: true } },
+      { type: "agent.position", entity_id: "av_demo", entity_version: 6, occurred_at: occurredAt, payload: { position: [-122.4178, 37.77555], heading: 67 } },
     ];
 
-    expect(events.map((event) => RealtimeEventSchema.parse(event))).toHaveLength(10);
+    expect(events.map((event) => RealtimeEventSchema.parse(event))).toHaveLength(11);
+    expect(() => RealtimeEventSchema.parse({ ...events[10], payload: { position: [-122.4, 91], heading: 67 } })).toThrow();
   });
 
   it("caps agent search results at three options", () => {

@@ -2,7 +2,7 @@
 
 ## The demo
 
-A blue AV dot appears on the map, drives a short route to a seeded driveway, queries our DB via x402 (real micropayment on Base Sepolia), pays for the driveway (real on-chain USDC transaction), and the driveway pin turns gray "Booked $5.00" on every connected phone. One spot. One route. One transaction. ~10 seconds.
+A blue AV dot appears on the map, drives a short route to a seeded driveway, reads the target from our DB, pays for the driveway through x402 (a real on-chain USDC transaction on Base Sepolia), and the driveway pin turns gray "Booked $5.00" on every connected phone. One spot. One route. One transaction. ~10 seconds.
 
 ---
 
@@ -11,7 +11,7 @@ A blue AV dot appears on the map, drives a short route to a seeded driveway, que
 ```
 Second 0    curl -X POST localhost:8000/v1/agent/run-demo
 Second 1    Blue AV dot appears on map, starts driving toward the driveway
-Second 4    AV queries parking via x402 ($0.005 micropayment, real USDC)
+Second 4    AV reads the seeded driveway from the server
 Second 6    AV reaches the driveway, holds it
             -> "driveway.held" broadcast -> driveway dims on all phones
 Second 8    AV pays for driveway via x402 (real on-chain transaction)
@@ -32,7 +32,7 @@ One driveway. The AV drives to it, pays for it, parks.
 - Realtime reducer (mobile updates on `driveway.held`, `booking.confirmed`)
 - Map renders held/booked driveways
 - x402 receipt server + CDP wallet integration
-- `av-sim.ts` with real on-chain x402 payments
+- Payments service with real on-chain x402 settlement
 
 ---
 
@@ -51,7 +51,7 @@ Replace the current demo loop (which books 3 curb spots) with a single-target fl
 1. Drive toward `driveway_av_1` (broadcast `agent.position` every 0.5s)
 2. When close: call `driveway_service.start_hold()` -> broadcast `driveway.held`
 3. Pause 2s (audience sees "on hold" state)
-4. Call `driveway_service.finalize_booking()` with real or simulated tx hash -> broadcast `booking.confirmed`
+4. Call the payments service, which settles x402 and finalizes the booking with the real transaction hash -> broadcast `booking.confirmed`
 5. AV stops. Log payment to terminal.
 
 **File:** `server/app/routes/agent.py`
@@ -70,6 +70,8 @@ Booked driveway shows as a gray chip with the dollar amount instead of dimmed pu
 
 ```
 CURB_PAYMENT_SERVICE_TOKEN=<shared secret>
+# Optional; defaults to http://127.0.0.1:8787
+CURB_PAYMENT_SERVICE_URL=http://127.0.0.1:8787
 ```
 
 ### Payments (`payments/.env`)
@@ -77,6 +79,7 @@ CURB_PAYMENT_SERVICE_TOKEN=<shared secret>
 ```
 CDP_API_KEY_ID=<from portal.cdp.coinbase.com>
 CDP_API_KEY_SECRET=<from portal.cdp.coinbase.com>
+CDP_WALLET_SECRET=<from portal.cdp.coinbase.com>
 CURB_API_URL=http://127.0.0.1:8000
 CURB_PAYMENT_SERVICE_TOKEN=<same shared secret>
 ```
@@ -95,7 +98,7 @@ cd server && uvicorn app.main:app --reload
 cd payments && npm start
 
 # Terminal 3: fund the AV wallet (one-time)
-cd payments && npm run fund-av
+cd payments && npm run fund
 
 # Terminal 4: mobile
 cd mobile && npx expo start --clear
@@ -118,7 +121,7 @@ curl -X POST http://localhost:8000/v1/agent/run-demo \
 
 ---
 
-## Open questions
+## Demo choices
 
-1. **Reset** — after demo the driveway is BOOKED. Restart server to reset, or add a reset endpoint?
-2. **Label** — "Booked $5.00" or "Booked $5.00 - 2hr"?
+1. **Reset** — restart the server after a run to restore the in-memory driveway to `AVAILABLE`.
+2. **Label** — the final map label is exactly `Booked $5.00`.

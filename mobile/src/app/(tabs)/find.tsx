@@ -4,7 +4,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getApi } from "@/api/client";
-import { FIND_RADIUS_M, type FrameAccepted, type RealtimeEvent } from "@/api/types";
+import { agentPositionPayload, FIND_RADIUS_M, type AgentPosition, type FrameAccepted, type RealtimeEvent } from "@/api/types";
 import { AccountMenu } from "@/components/AccountMenu";
 import { CurbMap } from "@/components/map/CurbMap";
 import { MapErrorCard } from "@/components/map/MapErrorCard";
@@ -87,8 +87,14 @@ export default function FindScreen() {
   // New-opening alerts. Realtime events arrive outside render, so the handler
   // reads the latest screen state through a ref.
   const [spotAlert, setSpotAlert] = useState<SpotAlert | null>(null);
+  const [avPosition, setAvPosition] = useState<AgentPosition | null>(null);
   const latest = useRef<{ state: ParkingState; area: SearchArea | null; driver: LngLat; routeTargetM: number | null } | null>(null);
   const onRealtimeEvent = useCallback((event: RealtimeEvent) => {
+    if (event.type === "agent.position") {
+      const position = agentPositionPayload(event);
+      if (position) setAvPosition(position);
+      return;
+    }
     const L = latest.current;
     if (!L) return;
     const hit = newOpening(event, L.state, L.area, Date.now());
@@ -196,6 +202,11 @@ export default function FindScreen() {
     if (live && !location.position) return;
     send({ type: "setCarPosition", position: driver.position, heading: driver.heading });
   }, [driver, live, location.position, send, mapGen]);
+
+  useEffect(() => {
+    if (!avPosition) return;
+    send({ type: "setAgentPosition", ...avPosition });
+  }, [avPosition, send, mapGen]);
 
   // Live: center on the driver once, at the first location fix.
   const centered = useRef(false);

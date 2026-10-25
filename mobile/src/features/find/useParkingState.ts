@@ -60,7 +60,7 @@ export function useParkingState(center: LngLat | null, onEvent?: (event: Realtim
 
   useEffect(() => {
     const conn = api.connectRealtime((event) => {
-      dispatch({ type: "event", event });
+      if (event.type !== "agent.position") dispatch({ type: "event", event });
       onEventRef.current?.(event);
     }, setRealtime);
     return () => conn.close();
@@ -74,7 +74,7 @@ export function useParkingState(center: LngLat | null, onEvent?: (event: Realtim
   /** Inject a synthetic realtime event (e.g. from a frame upload self-feedback). */
   const dispatchEvent = useCallback(
     (event: RealtimeEvent) => {
-      dispatch({ type: "event", event });
+      if (event.type !== "agent.position") dispatch({ type: "event", event });
       onEventRef.current?.(event);
     },
     [],

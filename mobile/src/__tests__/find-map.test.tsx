@@ -138,6 +138,36 @@ describe("Find map from the live typed client", () => {
     expect(latest("setStalls").stalls.find((p) => p.id === "driveway")?.ring).not.toEqual(oldRing);
   });
 
+  it("forwards valid AV positions independently from the phone car and ignores malformed payloads", async () => {
+    await mount();
+    const car = latest("setCarPosition");
+    const before = mockMessages.length;
+
+    await act(async () => mockOnEvent({
+      type: "agent.position",
+      entity_id: "av_demo",
+      entity_version: 1,
+      occurred_at: new Date(NOW).toISOString(),
+      payload: { position: [-122.41825, 37.77539], heading: 67 },
+    } as RealtimeEvent));
+
+    expect(latest("setAgentPosition")).toEqual({
+      type: "setAgentPosition",
+      position: [-122.41825, 37.77539],
+      heading: 67,
+    });
+    expect(latest("setCarPosition")).toEqual(car);
+
+    await act(async () => mockOnEvent({
+      type: "agent.position",
+      entity_id: "av_demo",
+      entity_version: 2,
+      occurred_at: new Date(NOW).toISOString(),
+      payload: { position: ["bad"], heading: 67 },
+    } as unknown as RealtimeEvent));
+    expect(mockMessages.slice(before).filter((message) => message.type === "setAgentPosition")).toHaveLength(1);
+  });
+
   it("shows paired camera feedback when the fresh space and its zone share an ID and version", async () => {
     await mount();
     await act(async () => { mockCameraProps.onSpotConfirmed?.({

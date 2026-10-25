@@ -20,6 +20,8 @@ export type FindOption = {
   detail: string;
   /** Right-aligned value: price for driveways, distance for curb. */
   trailing: string;
+  /** Canonical decimal amount retained for booked map copy. */
+  priceUsdc?: string;
   position: LngLat;
   ring: LngLat[];
   distanceM: number;
@@ -135,6 +137,7 @@ export function findOptions(
             : "Guaranteed driveway",
       detail: `${formatHhmm(dw.availability_start)} to ${formatHhmm(dw.availability_end)}${SEP}${formatDistance(d)}`,
       trailing: formatUsdc(dw.price_usdc),
+      priceUsdc: dw.price_usdc,
       position: dw.location.coordinates,
       ring: drivewayRing(dw.location.coordinates),
       distanceM: d,
@@ -181,7 +184,7 @@ export function mapPills(options: FindOption[]): MapPill[] {
         : o.mine
           ? "Your driveway"
           : o.booked
-            ? "Booked"
+            ? `Booked $${Number(o.priceUsdc).toFixed(2)}`
             : o.own
               ? "Your listing"
               : `${o.trailing}${SEP}Reserve`,

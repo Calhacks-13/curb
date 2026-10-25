@@ -114,12 +114,12 @@ describe("findOptions", () => {
       findOptions(state, NOW, from, userId).find((o) => o.kind === "driveway");
 
     it("keeps someone else's booking on the map as a muted Booked pin, ranked last", () => {
-      const state = withDriveway({ state: "BOOKED", held_by_user_id: "driver_other" });
+      const state = withDriveway({ state: "BOOKED", held_by_user_id: "driver_other", price_usdc: "5.00" });
       const options = findOptions(state, NOW, from, "driver_demo");
       const o = options.find((x) => x.kind === "driveway")!;
       expect(o).toMatchObject({ booked: true, title: "Booked driveway" });
       expect(options[options.length - 1].id).toBe(o.id);
-      expect(mapPills([o])[0]).toMatchObject({ label: "Booked", muted: true });
+      expect(mapPills([o])[0]).toMatchObject({ label: "Booked $5.00", muted: true });
     });
 
     it("pins the driver's own booking as their reservation", () => {

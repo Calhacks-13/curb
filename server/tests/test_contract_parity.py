@@ -50,7 +50,12 @@ def test_seed_fixture_round_trips_between_typescript_and_pydantic():
     assert parsed.model_dump(mode="json") == raw_fixture
     assert parsed.driver.id == "driver_demo"
     assert parsed.owner.id == "owner_demo"
+    assert parsed.av.id == "av_demo"
     assert parsed.driveway.id == "driveway_demo_1"
+    assert [(driveway.id, driveway.price_usdc) for driveway in parsed.nearby.driveways] == [
+        ("driveway_demo_1", "8.00"),
+        ("driveway_av_1", "5.00"),
+    ]
     assert parsed.nearby.zones[0].id == "zone_demo_1"
     assert [space.id for space in parsed.nearby.spaces] == [
         "space_demo_1",

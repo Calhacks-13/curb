@@ -75,9 +75,47 @@ it("executes supply messages into stall polygons and semantic pin buttons, then 
     expect(page.messages.at(-1)).toEqual({ type: "spotTapped", id: "fresh" });
     page.handlers.get("click:stall-fill")?.({ features: [{ properties: { id: "fresh" } }] });
     expect(page.messages.at(-1)).toEqual({ type: "spotTapped", id: "fresh" });
+
+    page.send({ type: "setPills", pills: [
+      { id: "driveway", kind: "driveway", label: "Booked $5.00", position, muted: true },
+    ] });
+    const booked = page.document.querySelector<HTMLButtonElement>("button.pin");
+    expect(booked?.textContent).toContain("Booked $5.00");
+    expect(booked?.classList.contains("is-muted")).toBe(true);
+    expect(booked?.getAttribute("aria-label")).toBe("Driveway. Booked $5.00.");
+    expect(booked?.getAttribute("aria-label")).not.toMatch(/guaranteed after payment/i);
+    expect(page.window.getComputedStyle(booked!.querySelector(".callout")!).backgroundColor).toBe("rgb(242, 242, 244)");
+    expect(page.window.getComputedStyle(booked!.querySelector(".chip-driveway")!).backgroundColor).toBe("rgb(199, 199, 204)");
+    expect(page.window.getComputedStyle(booked!.querySelector(".tail")!).borderTopColor).toBe("rgb(242, 242, 244)");
+    page.document.body.classList.add("night");
+    expect(page.window.getComputedStyle(booked!.querySelector(".chip-driveway")!).backgroundColor).toBe("rgb(110, 110, 115)");
+
     page.send({ type: "setPills", pills: [] });
     page.send({ type: "setStalls", stalls: [] });
     expect(page.document.querySelectorAll("button.pin")).toHaveLength(0);
     expect(page.sources.get("stalls")?.data).toMatchObject({ features: [] });
+  } finally { page.dom.window.close(); }
+});
+
+it("renders one blue heading-aware AV marker without replacing the ego car", () => {
+  const page = mapPage();
+  try {
+    page.send({ type: "setCarPosition", position: [-122.42, 37.77], heading: 10 });
+    page.send({ type: "setAgentPosition", position: [-122.419, 37.775], heading: 45 });
+    page.handlers.get("load")?.();
+
+    const marker = page.document.querySelector<HTMLElement>(".av-marker");
+    expect(marker).not.toBeNull();
+    expect(page.document.querySelectorAll(".av-marker")).toHaveLength(1);
+    expect(marker?.dataset.position).toBe(JSON.stringify([-122.419, 37.775]));
+    expect(marker?.querySelector<HTMLElement>(".av-heading")?.style.transform).toBe("rotate(45deg)");
+    expect(page.window.getComputedStyle(marker!).backgroundColor).toBe("rgb(10, 132, 255)");
+    const ego = page.sources.get("ego")?.data as { features: { geometry: { coordinates: number[] } }[] };
+    expect(ego.features[0].geometry.coordinates).toEqual([-122.42, 37.77]);
+
+    page.send({ type: "setAgentPosition", position: [-122.418, 37.776], heading: 90 });
+    expect(page.document.querySelectorAll(".av-marker")).toHaveLength(1);
+    expect(marker?.dataset.position).toBe(JSON.stringify([-122.418, 37.776]));
+    expect(marker?.querySelector<HTMLElement>(".av-heading")?.style.transform).toBe("rotate(90deg)");
   } finally { page.dom.window.close(); }
 });

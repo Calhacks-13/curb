@@ -35,7 +35,8 @@ export type AppToMap =
   | { type: "setPadding"; padding: CameraPadding }
   /** Draws one route line to a target bay and frames it; null clears it. */
   | { type: "setRoute"; route: LngLat[] | null; targetId: string | null; fit?: boolean }
-  | { type: "setCarPosition"; position: LngLat; heading: number };
+  | { type: "setCarPosition"; position: LngLat; heading: number }
+  | { type: "setAgentPosition"; position: LngLat; heading: number };
 
 export type MapToApp =
   | { type: "mapReady" }

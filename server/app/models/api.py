@@ -142,6 +142,7 @@ class RouteDestination(ContractModel):
 class PublicSeedFixture(ContractModel):
     driver: UserView
     owner: UserView
+    av: UserView
     sign_rule: SignRuleView
     driveway: DrivewayView
     booking: BookingView
