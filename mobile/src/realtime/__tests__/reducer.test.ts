@@ -25,6 +25,18 @@ const event = (type: RealtimeEvent["type"], version: number, payload: object = {
 });
 
 describe("applyRealtimeEvent", () => {
+  it("leaves parking state untouched for an agent-only position event", () => {
+    const position = {
+      type: "agent.position",
+      entity_id: "av_demo",
+      entity_version: 1,
+      occurred_at: "2026-10-25T01:00:00Z",
+      payload: { position: [-122.42, 37.77], heading: 67 },
+    } as RealtimeEvent;
+
+    expect(applyRealtimeEvent(seeded, position)).toBe(seeded);
+  });
+
   it("applies a newer occupied event and hides the opening", () => {
     const next = applyRealtimeEvent(seeded, event("space.occupied", 4));
     expect(next.spaces[space.id].internal_state).toBe("OCCUPIED");

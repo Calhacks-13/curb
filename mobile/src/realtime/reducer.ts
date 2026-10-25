@@ -19,7 +19,7 @@ export const emptyParkingState: ParkingState = { zones: {}, spaces: {}, driveway
 
 type EntityCollection = "space" | "zone" | "driveway" | "booking" | "garage";
 
-function eventCollection(type: RealtimeEvent["type"]): EntityCollection {
+function eventCollection(type: Exclude<RealtimeEvent["type"], "agent.position">): EntityCollection {
   switch (type) {
     case "space.opened":
     case "space.refreshed":
@@ -83,6 +83,7 @@ function contractDriveway(payload: object): Partial<Driveway> | null {
 }
 
 export function applyRealtimeEvent(state: ParkingState, event: RealtimeEvent): ParkingState {
+  if (event.type === "agent.position") return state;
   const key = versionKey(eventCollection(event.type), event.entity_id);
   const held = state.versions[key] ?? 0;
   if (event.entity_version <= held) return state;

@@ -315,6 +315,58 @@ export const MAP_RUNTIME_JS = String.raw`
     lastCarMsg = now;
   }
 
+  // --- autonomous demo vehicle -----------------------------------------------------
+
+  var avMarker = null;
+  var avHeading = null;
+  var av = null, avFrom = null, avTo = null, avT0 = 0, avDur = 500;
+  var lastAgentMsg = 0, avGeneration = 0;
+
+  function drawAgent() {
+    if (!avMarker) {
+      var el = document.createElement("div");
+      el.className = "av-marker";
+      el.setAttribute("aria-label", "Autonomous vehicle");
+      avHeading = document.createElement("span");
+      avHeading.className = "av-heading";
+      el.appendChild(avHeading);
+      avMarker = new mapboxgl.Marker({ element: el, anchor: "center" }).setLngLat(av.pos).addTo(map);
+    } else {
+      avMarker.setLngLat(av.pos);
+    }
+    avHeading.style.transform = "rotate(" + av.heading + "deg)";
+  }
+
+  function agentTick(now, generation) {
+    if (!avTo || generation !== avGeneration) return;
+    var t = Math.min(1, (now - avT0) / avDur);
+    av = {
+      pos: [avFrom.pos[0] + (avTo.pos[0] - avFrom.pos[0]) * t, avFrom.pos[1] + (avTo.pos[1] - avFrom.pos[1]) * t],
+      heading: lerpAngle(avFrom.heading, avTo.heading, t),
+    };
+    drawAgent();
+    if (t < 1) requestAnimationFrame(function (next) { agentTick(next, generation); });
+  }
+
+  function setAgentPosition(pos, heading) {
+    var now = performance.now();
+    var next = { pos: pos, heading: heading };
+    avGeneration += 1;
+    if (!av || reduceMotion || now - lastAgentMsg > 2000) {
+      av = next;
+      avTo = null;
+      drawAgent();
+    } else {
+      avFrom = av;
+      avTo = next;
+      avT0 = now;
+      avDur = Math.max(80, Math.min(1000, now - lastAgentMsg));
+      var generation = avGeneration;
+      requestAnimationFrame(function (frameNow) { agentTick(frameNow, generation); });
+    }
+    lastAgentMsg = now;
+  }
+
   // --- route -------------------------------------------------------------------------
 
   function fitLine(line) {
@@ -406,6 +458,7 @@ export const MAP_RUNTIME_JS = String.raw`
         return;
       case "setRoute": return setRoute(msg.route, msg.targetId, msg.fit);
       case "setCarPosition": return setCarPosition(msg.position, msg.heading);
+      case "setAgentPosition": return setAgentPosition(msg.position, msg.heading);
     }
   }
 

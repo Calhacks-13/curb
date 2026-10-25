@@ -217,7 +217,8 @@ export type RealtimeEventType =
   | "driveway.held"
   | "driveway.released"
   | "booking.confirmed"
-  | "payment.failed";
+  | "payment.failed"
+  | "agent.position";
 
 export type RealtimeEvent = {
   type: RealtimeEventType;
@@ -226,6 +227,23 @@ export type RealtimeEvent = {
   occurred_at: string;
   payload: Record<string, unknown>;
 };
+
+export type AgentPosition = { position: LngLat; heading: number };
+
+/** Runtime validation for the non-persistent AV event before it reaches the map. */
+export function agentPositionPayload(event: RealtimeEvent): AgentPosition | null {
+  if (event.type !== "agent.position") return null;
+  const position = event.payload.position;
+  const heading = event.payload.heading;
+  if (!Array.isArray(position) || position.length !== 2) return null;
+  const [lng, lat] = position;
+  if (
+    typeof lng !== "number" || !Number.isFinite(lng) || lng < -180 || lng > 180
+    || typeof lat !== "number" || !Number.isFinite(lat) || lat < -90 || lat > 90
+    || typeof heading !== "number" || !Number.isFinite(heading) || heading < 0 || heading >= 360
+  ) return null;
+  return { position: [lng, lat], heading };
+}
 
 /** Fixed Find radius from the spec: 0.5 miles. */
 export const FIND_RADIUS_M = 804.672;

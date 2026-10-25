@@ -2,7 +2,7 @@
 // (re)connect, validates each message's envelope, and never clears app state on
 // disconnect; the caller keeps showing the last honest state.
 
-import type { RealtimeEvent, RealtimeEventType } from "@/api/types";
+import { agentPositionPayload, type RealtimeEvent, type RealtimeEventType } from "@/api/types";
 
 import type { RealtimeConnection, RealtimeStatus } from "@/api/client";
 
@@ -17,6 +17,7 @@ const EVENT_TYPES: ReadonlySet<RealtimeEventType> = new Set<RealtimeEventType>([
   "driveway.released",
   "booking.confirmed",
   "payment.failed",
+  "agent.position",
 ]);
 
 export function parseRealtimeEvent(raw: unknown): RealtimeEvent | null {
@@ -25,7 +26,9 @@ export function parseRealtimeEvent(raw: unknown): RealtimeEvent | null {
   if (typeof e.type !== "string" || !EVENT_TYPES.has(e.type as RealtimeEventType)) return null;
   if (typeof e.entity_id !== "string" || typeof e.entity_version !== "number") return null;
   if (typeof e.occurred_at !== "string" || !e.payload || typeof e.payload !== "object") return null;
-  return e as unknown as RealtimeEvent;
+  const event = e as unknown as RealtimeEvent;
+  if (event.type === "agent.position" && !agentPositionPayload(event)) return null;
+  return event;
 }
 
 const MAX_BACKOFF_MS = 10_000;

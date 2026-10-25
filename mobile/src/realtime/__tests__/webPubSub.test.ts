@@ -64,4 +64,19 @@ describe("Web PubSub client", () => {
   it("rejects unknown event types", () => {
     expect(parseRealtimeEvent({ type: "space.teleported", entity_id: "s", entity_version: 1, occurred_at: "", payload: {} })).toBeNull();
   });
+
+  it("accepts only finite longitude-latitude agent positions and headings", () => {
+    const event = {
+      type: "agent.position",
+      entity_id: "av_demo",
+      entity_version: 4,
+      occurred_at: "2026-10-25T01:00:00Z",
+      payload: { position: [-122.41825, 37.77539], heading: 67 },
+    };
+
+    expect(parseRealtimeEvent(event)).toEqual(event);
+    expect(parseRealtimeEvent({ ...event, payload: { position: [37.7], heading: 67 } })).toBeNull();
+    expect(parseRealtimeEvent({ ...event, payload: { position: [-122.4, 91], heading: 67 } })).toBeNull();
+    expect(parseRealtimeEvent({ ...event, payload: { position: [-122.4, 37.7], heading: Number.NaN } })).toBeNull();
+  });
 });
