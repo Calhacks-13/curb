@@ -59,30 +59,90 @@ class SignDeduplicator:
         self._positions: list[tuple[float, float, str]] = []
 
     async def find_existing(
-        self, lat: float, lng: float, radius_m: float | None = None,
+        self,
+        lat: float,
+        lng: float,
+        radius_m: float | None = None,
+        road_segment_id: str | None = None,
     ) -> SignDocument | None:
         if radius_m is None:
             radius_m = settings.sign_dedup_radius_m
+        target_direction = None
+        if road_segment_id:
+            segment_parts = road_segment_id.split(",")
+            if len(segment_parts) == 3:
+                target_direction = segment_parts[2]
 
         # Check memory cache first
         for plat, plng, sign_id in self._positions:
             if _haversine_m(lat, lng, plat, plng) <= radius_m:
                 doc = self._cache.get(sign_id)
-                if doc is not None:
+                if doc is not None and (
+                    target_direction is None
+                    or doc.road_segment_id.rsplit(",", 1)[-1] == target_direction
+                ):
                     return doc
 
         # Fall back to Cosmos
         nearby = await cosmos.query_signs_nearby(lat, lng, radius_m)
-        if nearby:
-            first = nearby[0]
-            if "pole_reading" in first:
-                return SignDocument(**first)
+        for document in nearby:
+            document_segment = document.get("road_segment_id", "")
+            if target_direction is not None and (
+                document_segment.rsplit(",", 1)[-1] != target_direction
+            ):
+                continue
+            if "pole_reading" in document:
+                return SignDocument(**document)
 
         return None
 
     def register(self, sign_doc: SignDocument) -> None:
         self._cache[sign_doc.id] = sign_doc
         self._positions.append((sign_doc.lat, sign_doc.lng, sign_doc.id))
+
+    async def find_rules_for_segment(
+        self,
+        segment_id: str,
+        lat: float,
+        lng: float,
+        radius_m: float | None = None,
+    ) -> SignPoleReading | None:
+        """Return recorded street-sign rules for the same directional curb."""
+        if radius_m is None:
+            radius_m = settings.sign_association_radius_m
+        segment_parts = segment_id.split(",")
+        if len(segment_parts) != 3:
+            return None
+        direction = segment_parts[2]
+        nearby = await cosmos.query_signs_nearby(lat, lng, radius_m)
+        documents_by_id = {
+            document.get("id"): document
+            for document in nearby
+            if document.get("id")
+        }
+        for document in self._cache.values():
+            if _haversine_m(lat, lng, document.lat, document.lng) <= radius_m:
+                documents_by_id[document.id] = document.model_dump(mode="json")
+        candidates: list[tuple[bool, float, SignPoleReading]] = []
+        for document in documents_by_id.values():
+            document_segment = document.get("road_segment_id", "")
+            document_parts = document_segment.split(",")
+            if len(document_parts) != 3 or document_parts[2] != direction:
+                continue
+            reading_data = document.get("pole_reading")
+            if not reading_data:
+                continue
+            reading = SignPoleReading.model_validate(reading_data)
+            if reading.sign_category in ("garage", "lot"):
+                continue
+            document_lat = document.get("lat", 0.0)
+            document_lng = document.get("lng", 0.0)
+            distance = _haversine_m(lat, lng, document_lat, document_lng)
+            candidates.append((document_segment == segment_id, distance, reading))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda candidate: (not candidate[0], candidate[1]))
+        return candidates[0][2]
 
 
 class SpotManager:
@@ -152,10 +212,16 @@ class SpotManager:
         logger.info("Spot OPENED %s at (%.5f, %.5f) segment=%s", spot.id, lat, lng, segment_id)
         return spot
 
-    async def refresh_spot(self, spot: SpotDocument) -> None:
+    async def refresh_spot(
+        self,
+        spot: SpotDocument,
+        sign_rules: SignPoleReading | None = None,
+    ) -> None:
         """Re-sighting of an existing OPEN spot — bump version, reset freshness."""
         spot.last_seen_at = datetime.utcnow()
         spot.version += 1
+        if sign_rules is not None:
+            spot.sign_rules = sign_rules
         self._spots[spot.segment_id] = spot
         asyncio.create_task(_safe(cosmos.upsert_spot(spot)))
         asyncio.create_task(_safe(signalr.broadcast_realtime_event(
@@ -164,6 +230,12 @@ class SpotManager:
             payload=_spot_payload(spot),
             entity_version=spot.version,
         )))
+        if sign_rules is not None:
+            asyncio.create_task(_safe(signalr.broadcast_realtime_event(
+                event_type="sign_rule.updated",
+                entity_id=spot.segment_id,
+                payload=_zone_payload(spot.segment_id, spot.lat, spot.lng, sign_rules),
+            )))
         logger.debug("Spot REFRESHED %s v=%d", spot.id, spot.version)
 
     async def occupy_spot(self, segment_id: str) -> None:
@@ -406,13 +478,22 @@ class Pipeline:
         if newly_confirmed:
             pipeline_state = "confirmed"
             segment_id = make_road_segment_id(lat, lng, heading)
+            current_rules = sign_pole_reading
+            sign_rules = (
+                current_rules
+                if current_rules and current_rules.sign_category not in ("garage", "lot")
+                else None
+            )
+            if sign_rules is None:
+                sign_rules = await self._sign_dedup.find_rules_for_segment(
+                    segment_id, lat, lng,
+                )
 
             existing_spot = self._spot_mgr.find_by_segment(segment_id)
             if existing_spot is not None:
-                asyncio.create_task(_safe(self._spot_mgr.refresh_spot(existing_spot)))
+                asyncio.create_task(_safe(self._spot_mgr.refresh_spot(existing_spot, sign_rules)))
             else:
                 best_gap = max(newly_confirmed, key=lambda g: g.duration)
-                sign_rules = sign_pole_reading or session.last_sign_reading
                 await self._spot_mgr.open_spot(
                     segment_id=segment_id,
                     lat=lat,
@@ -430,7 +511,7 @@ class Pipeline:
                 segment_id=segment_id,
                 gap_count=len(newly_confirmed),
                 confidence=1.0,
-                sign_rules=sign_pole_reading or session.last_sign_reading,
+                sign_rules=sign_rules,
                 confirmed_at=datetime.utcnow(),
                 ttl=-1 if self.mapping_mode else settings.default_ttl_sec,
                 lat=lat,
@@ -536,9 +617,12 @@ class Pipeline:
             ]
 
             est_lat, est_lng, uncertainty = triangulate_sign(observations)
+            road_seg_id = make_road_segment_id(est_lat, est_lng, heading)
 
             # Dedup check
-            existing = await self._sign_dedup.find_existing(est_lat, est_lng)
+            existing = await self._sign_dedup.find_existing(
+                est_lat, est_lng, road_segment_id=road_seg_id,
+            )
             if existing is not None:
                 pole_reading = existing.pole_reading
                 if pole_reading is None:
@@ -548,6 +632,7 @@ class Pipeline:
                     for t in pole_tracks:
                         t.read_result = pole_reading
                     existing.last_confirmed = datetime.utcnow()
+                    asyncio.create_task(_safe(cosmos.upsert_sign_document(existing)))
                     logger.info("Sign dedup hit at (%.5f, %.5f), reusing %s", est_lat, est_lng, existing.id)
                     if result is None:
                         result = pole_reading
@@ -560,7 +645,6 @@ class Pipeline:
             for t in pole_tracks:
                 t.read_result = pole_reading
 
-            road_seg_id = make_road_segment_id(est_lat, est_lng, heading)
             sign_doc = SignDocument(
                 id=str(uuid.uuid4()),
                 road_segment_id=road_seg_id,

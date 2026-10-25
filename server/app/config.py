@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     sign_track_confirm_hits: int = 3
     sign_default_distance_m: float = 8.0
     sign_dedup_radius_m: float = 15.0
+    sign_association_radius_m: float = 50.0
 
     # Spot TTL defaults (seconds)
     default_ttl_sec: int = 1800  # 30 min

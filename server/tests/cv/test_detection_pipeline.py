@@ -13,7 +13,7 @@ import pytest
 
 from app.azure import cosmos, signalr
 from app.config import settings
-from app.models import SignDetection, SignPoleReading, VehicleDetection
+from app.models import SignDetection, SignDocument, SignPoleReading, VehicleDetection
 
 
 @pytest.mark.parametrize("boundaries,expected", [
@@ -66,12 +66,15 @@ def make_vehicles():
     ]
 
 
-async def submit(pipeline, vehicles=None, signs=None, width=1000, height=600, session_id="drive"):
+async def submit(
+    pipeline, vehicles=None, signs=None, width=1000, height=600,
+    session_id="drive", heading=90.0,
+):
     return await pipeline.process_detections(
         vehicles=vehicles if vehicles is not None else [],
         signs=signs if signs is not None else [],
         frame_width=width, frame_height=height,
-        lat=37.8, lng=-122.44, session_id=session_id, heading=90.0,
+        lat=37.8, lng=-122.44, session_id=session_id, heading=heading,
     )
 
 
@@ -79,6 +82,206 @@ async def flush_background_tasks():
     # occupy_spot schedules its own persistence/broadcast tasks.
     await asyncio.sleep(0)
     await asyncio.sleep(0)
+
+
+def store_sign(sign_id, segment_id, lat, lng, summary, category="street"):
+    reading = SignPoleReading(combined_summary=summary, sign_category=category)
+    document = SignDocument(
+        id=sign_id,
+        road_segment_id=segment_id,
+        location={"type": "Point", "coordinates": [lng, lat]},
+        lat=lat,
+        lng=lng,
+        pole_reading=reading,
+    )
+    cosmos._mem_signs[sign_id] = document.model_dump(mode="json")
+    return reading
+
+
+@pytest.mark.asyncio
+async def test_persisted_sign_resolution_prefers_exact_segment(local_services):
+    from app.cv.pipeline import Pipeline
+
+    exact = store_sign(
+        "exact", "37.8,-122.44,E", 37.8002, -122.44, "Exact segment rules",
+    )
+    store_sign(
+        "closer", "37.8001,-122.44,E", 37.80001, -122.44, "Closer nearby rules",
+    )
+    deduplicator = Pipeline()._sign_dedup
+
+    assert hasattr(deduplicator, "find_rules_for_segment")
+    resolved = await deduplicator.find_rules_for_segment(
+        "37.8,-122.44,E", 37.8, -122.44,
+    )
+
+    assert resolved == exact
+
+
+@pytest.mark.asyncio
+async def test_persisted_sign_resolution_uses_nearest_same_direction_street_sign(local_services):
+    from app.cv.pipeline import Pipeline
+
+    store_sign(
+        "far", "37.8001,-122.4403,E", 37.8, -122.4403, "Far rules",
+    )
+    nearest = store_sign(
+        "nearest", "37.8001,-122.4401,E", 37.8, -122.4401, "Nearest rules",
+    )
+    store_sign(
+        "garage", "37.8001,-122.44001,E", 37.8, -122.44001, "Garage rules", "garage",
+    )
+
+    resolved = await Pipeline()._sign_dedup.find_rules_for_segment(
+        "37.8,-122.44,E", 37.8, -122.44,
+    )
+
+    assert resolved == nearest
+
+
+@pytest.mark.asyncio
+async def test_persisted_sign_resolution_rejects_opposite_direction_and_legacy_signs(local_services):
+    from app.cv.pipeline import Pipeline
+
+    store_sign(
+        "opposite", "37.8,-122.44,W", 37.8, -122.44, "Opposite-side rules",
+    )
+    store_sign(
+        "legacy", "", 37.8, -122.44, "Unlocated legacy rules",
+    )
+    cosmos._mem_signs["legacy"].pop("road_segment_id")
+
+    resolved = await Pipeline()._sign_dedup.find_rules_for_segment(
+        "37.8,-122.44,E", 37.8, -122.44,
+    )
+
+    assert resolved is None
+
+
+@pytest.mark.asyncio
+async def test_sign_resolution_uses_registered_sign_before_background_persistence(local_services):
+    from app.cv.pipeline import Pipeline
+
+    pipeline = Pipeline()
+    reading = SignPoleReading(combined_summary="Freshly recorded rules")
+    pipeline._sign_dedup.register(SignDocument(
+        id="fresh",
+        road_segment_id="37.8,-122.44,E",
+        location={"type": "Point", "coordinates": [-122.44, 37.8]},
+        lat=37.8,
+        lng=-122.44,
+        pole_reading=reading,
+    ))
+
+    resolved = await pipeline._sign_dedup.find_rules_for_segment(
+        "37.8,-122.44,E", 37.8, -122.44,
+    )
+
+    assert resolved == reading
+
+
+@pytest.mark.asyncio
+async def test_confirmed_space_inherits_rules_from_previously_recorded_sign(
+    local_services, monkeypatch,
+):
+    from app.cv import tracker
+    from app.cv.pipeline import Pipeline
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    recorded_rules = store_sign(
+        "recorded", "37.8,-122.44,E", 37.8, -122.44, "Previously recorded rules",
+    )
+    pipeline = Pipeline()
+
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
+        now[0] = stamp
+        result = await submit(pipeline, make_vehicles())
+    await flush_background_tasks()
+
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    stored_spot = cosmos._mem_spots[spot.id]
+    assert result["confirmed_block"].sign_rules == recorded_rules
+    assert spot.sign_rules == recorded_rules
+    assert stored_spot["sign_rules"]["combined_summary"] == "Previously recorded rules"
+
+
+@pytest.mark.asyncio
+async def test_existing_space_refresh_adds_previously_recorded_sign_rules(
+    local_services, monkeypatch,
+):
+    from app.cv import tracker
+    from app.cv.pipeline import Pipeline
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    pipeline = Pipeline()
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
+        now[0] = stamp
+        await submit(pipeline, make_vehicles())
+    await flush_background_tasks()
+    spot = next(iter(pipeline._spot_mgr._spots.values()))
+    assert spot.sign_rules is None
+
+    recorded_rules = store_sign(
+        "recorded", "37.8,-122.44,E", 37.8, -122.44, "Rules added on refresh",
+    )
+    pipeline.cleanup_session("drive")
+    for stamp in [110.0, 111.0, 112.5, 114.0]:
+        now[0] = stamp
+        result = await submit(pipeline, make_vehicles())
+    await flush_background_tasks()
+
+    assert result["confirmed_block"].sign_rules == recorded_rules
+    assert spot.sign_rules == recorded_rules
+    assert cosmos._mem_spots[spot.id]["sign_rules"]["combined_summary"] == "Rules added on refresh"
+    assert [event["type"] for event in signalr.get_recent_events()].count("sign_rule.updated") == 2
+
+
+@pytest.mark.asyncio
+async def test_confirmed_space_does_not_inherit_garage_reading_from_session(
+    local_services, monkeypatch,
+):
+    from app.cv import tracker
+    from app.cv.pipeline import Pipeline
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    pipeline = Pipeline()
+    pipeline._get_session("drive").last_sign_reading = SignPoleReading(
+        combined_summary="Garage parking ahead",
+        sign_category="garage",
+    )
+
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
+        now[0] = stamp
+        result = await submit(pipeline, make_vehicles())
+
+    assert result["confirmed_block"].sign_rules is None
+    assert next(iter(pipeline._spot_mgr._spots.values())).sign_rules is None
+
+
+@pytest.mark.asyncio
+async def test_confirmed_space_does_not_inherit_unlocated_prior_session_reading(
+    local_services, monkeypatch,
+):
+    from app.cv import tracker
+    from app.cv.pipeline import Pipeline
+
+    now = [100.0]
+    monkeypatch.setattr(tracker.time, "monotonic", lambda: now[0])
+    pipeline = Pipeline()
+    pipeline._get_session("drive").last_sign_reading = SignPoleReading(
+        combined_summary="Rules from a different block",
+        sign_category="street",
+    )
+
+    for stamp in [100.0, 101.0, 102.5, 104.0]:
+        now[0] = stamp
+        result = await submit(pipeline, make_vehicles())
+
+    assert result["confirmed_block"].sign_rules is None
+    assert next(iter(pipeline._spot_mgr._spots.values())).sign_rules is None
 
 
 @pytest.mark.asyncio
@@ -499,6 +702,63 @@ async def test_best_crop_reaches_sign_reading_and_sign_is_persisted(local_servic
     assert stored["lat"] < 37.8
     assert stored["lng"] > -122.44
     assert [e["type"] for e in signalr.get_recent_events()] == ["sign_rule.updated"]
+
+
+@pytest.mark.asyncio
+async def test_repeat_sign_scan_persists_confirmation_without_duplicate(local_services, monkeypatch):
+    from app.cv import pipeline as module
+
+    read_crops = []
+    reading = SignPoleReading(combined_summary="Two hour parking", confidence_score=0.9)
+
+    async def read_sign(crop):
+        read_crops.append(crop)
+        return reading
+
+    monkeypatch.setattr(module, "read_sign_pole", read_sign)
+    pipeline = module.Pipeline()
+    sign = SignDetection(bbox=[700, 40, 740, 120], confidence=0.9, crop_bytes=b"sign")
+
+    for _ in range(3):
+        await submit(pipeline, signs=[sign], session_id="first-pass")
+    await flush_background_tasks()
+    sign_id, stored_before = next(iter(cosmos._mem_signs.items()))
+    confirmed_before = stored_before["last_confirmed"]
+
+    for _ in range(3):
+        await submit(pipeline, signs=[sign], session_id="repeat-pass")
+    await flush_background_tasks()
+
+    assert read_crops == [b"sign"]
+    assert list(cosmos._mem_signs) == [sign_id]
+    assert cosmos._mem_signs[sign_id]["last_confirmed"] > confirmed_before
+
+
+@pytest.mark.asyncio
+async def test_opposite_direction_sign_scan_is_not_deduplicated(local_services, monkeypatch):
+    from app.cv import pipeline as module
+
+    read_crops = []
+
+    async def read_sign(crop):
+        read_crops.append(crop)
+        return SignPoleReading(combined_summary=f"Rules {len(read_crops)}")
+
+    monkeypatch.setattr(module, "read_sign_pole", read_sign)
+    monkeypatch.setattr(settings, "sign_dedup_radius_m", 25.0)
+    pipeline = module.Pipeline()
+    sign = SignDetection(bbox=[480, 40, 520, 120], confidence=0.9, crop_bytes=b"sign")
+
+    for _ in range(3):
+        await submit(pipeline, signs=[sign], session_id="east-pass", heading=90.0)
+    for _ in range(3):
+        await submit(pipeline, signs=[sign], session_id="west-pass", heading=270.0)
+    await flush_background_tasks()
+
+    assert read_crops == [b"sign", b"sign"]
+    assert len(cosmos._mem_signs) == 2
+    assert {document["road_segment_id"].rsplit(",", 1)[-1]
+            for document in cosmos._mem_signs.values()} == {"E", "W"}
 
 
 @pytest.mark.asyncio
