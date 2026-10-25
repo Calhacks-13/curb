@@ -24,6 +24,14 @@ build/
 ios/
 android/
 
+# Hand-maintained local Nitro module and generated bindings are source.
+!mobile/modules/curb-vision/ios/
+!mobile/modules/curb-vision/ios/**
+!mobile/modules/curb-vision/nitrogen/generated/ios/
+!mobile/modules/curb-vision/nitrogen/generated/ios/**
+mobile/modules/curb-vision/models/*.mlpackage/
+mobile/modules/curb-vision/models/*.mlmodelc/
+
 # Local capture and credentials
 *.jks
 *.p8

@@ -1,0 +1,2 @@
+# Preserve Nitrogen's exact output, including its indented blank lines.
+nitrogen/generated/** whitespace=-blank-at-eol linguist-generated=true
