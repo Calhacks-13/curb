@@ -145,6 +145,28 @@ it("runs iOS native inference with the required output options, schedules JSON, 
   expect(onSpotConfirmed).toHaveBeenCalledWith(accepted);
 });
 
+it("shows processed detections and moves the single live camera into a full-screen view", async () => {
+  await render(<CameraOverlay {...defaults} />);
+  await emitFrame();
+  await flushRN();
+
+  await act(async () => {
+    screen.getByTestId("detection-overlay").props.onLayout({
+      nativeEvent: { layout: { width: 128, height: 72 } },
+    });
+  });
+  expect(screen.getByLabelText("car, 90% confidence")).toBeTruthy();
+  expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+
+  await fireEvent.press(screen.getByLabelText("Expand live camera preview"));
+  expect(screen.getByText("On-device vision")).toBeTruthy();
+  expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+
+  await fireEvent.press(screen.getByLabelText("Close full-screen camera"));
+  expect(screen.queryByText("On-device vision")).toBeNull();
+  expect(screen.getAllByTestId("native-camera")).toHaveLength(1);
+});
+
 it("keeps preview active through Stop and Start while toggling inference and submissions", async () => {
   function ToggleCamera() {
     const [sampling, setSampling] = useState(true);

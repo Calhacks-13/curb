@@ -1,13 +1,14 @@
 import type { CurbVision } from "curb-vision";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import type { Frame } from "react-native-vision-camera";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { getApi } from "@/api/client";
 import type { FrameAccepted, OnDeviceInference } from "@/api/types";
 import { font, ink, radius, shadow } from "@/config/tokens";
+import { DetectionOverlay } from "@/components/DetectionOverlay";
 import { DetectionUploadController } from "@/features/capture/DetectionUploadController";
 import type { FrameContext } from "@/features/capture/detectionUpload";
 
@@ -72,6 +73,8 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   const device = useCameraDevice("back");
   const [native, setNative] = useState<CurbVision | null>(null);
   const [scannerError, setScannerError] = useState<string | null>(null);
+  const [latestInference, setLatestInference] = useState<{ session: object; result: OnDeviceInference } | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const latest = useRef({ frameContext, onSpotConfirmed });
   useEffect(() => { latest.current = { frameContext, onSpotConfirmed }; }, [frameContext, onSpotConfirmed]);
   const controller = useRef<DetectionUploadController | null>(null);
@@ -120,7 +123,10 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
   }, [enabled, session]);
 
   const onInference = useCallback((result: OnDeviceInference) => {
-    if (sessionRef.current === session) controller.current?.submit(result);
+    if (sessionRef.current === session) {
+      setLatestInference({ session, result });
+      controller.current?.submit(result);
+    }
   }, [session]);
   const failScanner = useCallback((message: string) => {
     sessionRef.current = null;
@@ -178,47 +184,98 @@ function NativeCameraOverlay({ active, sampling, frameContext, reduceMotion, onS
 
   if (!device) return <CameraUnavailable />;
 
-  return (
-    <View
-      style={styles.card}
-      accessible
-      accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
-    >
-      <View style={styles.preview}>
-        <Camera style={StyleSheet.absoluteFill} isActive={active && hasPermission} device={device} outputs={outputs} onError={onCameraError} />
-        <View style={styles.liveTag}>
-          <LiveDot on={enabled} reduceMotion={reduceMotion} />
-          <Text style={styles.liveText}>{enabled ? "Live" : "Preview"}</Text>
-        </View>
+  const visibleInference = enabled && latestInference?.session === session ? latestInference.result : null;
+
+  const cameraSurface = (fullScreen: boolean) => (
+    <View style={fullScreen ? styles.fullScreenPreview : styles.preview}>
+      <Camera
+        style={StyleSheet.absoluteFill}
+        isActive={active && hasPermission}
+        device={device}
+        outputs={outputs}
+        onError={onCameraError}
+        resizeMode="cover"
+      />
+      <DetectionOverlay result={visibleInference} />
+      <View style={styles.liveTag}>
+        <LiveDot on={enabled} reduceMotion={reduceMotion} />
+        <Text style={styles.liveText}>{enabled ? "Live" : "Preview"}</Text>
       </View>
-      {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
-      {sampling ? (
-        <>
-          <Text style={styles.caption}>{enabled ? "Scanning curb" : "Camera preview"}</Text>
-          <Pressable
-            onPress={onStopScan}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.stopButton, pressed && { opacity: 0.8 }]}
-          >
-            <Text style={styles.stopText}>Stop</Text>
-          </Pressable>
-        </>
-      ) : (
-        <Pressable
-          onPress={() => { setScannerError(null); onStartScan?.(); }}
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.startButton, pressed && { opacity: 0.8 }]}
-        >
-          <Text style={styles.startText}>Start Scanning</Text>
-        </Pressable>
-      )}
     </View>
+  );
+
+  return (
+    <>
+      <View
+        style={styles.card}
+        accessibilityLabel={scannerError ? `Scanner error: ${scannerError}` : enabled ? "Scanning the curb." : "Camera preview. Tap Start Scanning to begin."}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Expand live camera preview"
+          onPress={() => setExpanded(true)}
+          style={({ pressed }) => pressed && styles.previewPressed}
+        >
+          {!expanded && cameraSurface(false)}
+        </Pressable>
+        {scannerError && <Text accessibilityRole="alert" style={styles.sub}>{scannerError}</Text>}
+        {sampling ? (
+          <>
+            <Text style={styles.caption}>{enabled ? "Scanning curb" : "Camera preview"}</Text>
+            <Pressable
+              onPress={onStopScan}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.stopButton, pressed && { opacity: 0.8 }]}
+            >
+              <Text style={styles.stopText}>Stop</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Pressable
+            onPress={() => { setScannerError(null); onStartScan?.(); }}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.startButton, pressed && { opacity: 0.8 }]}
+          >
+            <Text style={styles.startText}>Start Scanning</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {expanded && (
+        <Modal
+          visible
+          animationType={reduceMotion ? "none" : "fade"}
+          presentationStyle="fullScreen"
+          statusBarTranslucent
+          onRequestClose={() => setExpanded(false)}
+        >
+          <View style={styles.fullScreen}>
+            {cameraSurface(true)}
+            <View style={styles.fullScreenHeader}>
+              <View>
+                <Text style={styles.fullScreenTitle}>On-device vision</Text>
+                <Text style={styles.fullScreenSubtitle}>Frames stay on this iPhone</Text>
+              </View>
+            </View>
+            <Pressable
+              onPress={() => setExpanded(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close full-screen camera"
+              style={({ pressed }) => [styles.closeButton, pressed && { opacity: 0.72 }]}
+            >
+              <Text style={styles.closeText}>×</Text>
+            </Pressable>
+          </View>
+        </Modal>
+      )}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   card: { width: 104, padding: 5, borderRadius: radius.button, backgroundColor: ink.black, ...shadow.floating },
   preview: { height: 72, borderRadius: 8, overflow: "hidden", backgroundColor: ink.grey900 },
+  previewPressed: { opacity: 0.88 },
   previewEmpty: { alignItems: "center", justifyContent: "center" },
   liveTag: {
     position: "absolute",
@@ -240,4 +297,29 @@ const styles = StyleSheet.create({
   startText: { fontFamily: font.bold, fontSize: 11, color: ink.white, marginTop: 1 },
   stopButton: { marginTop: 4, marginHorizontal: 2, height: 26, borderRadius: 13, backgroundColor: ink.grey900, alignItems: "center", justifyContent: "center" },
   stopText: { fontFamily: font.bold, fontSize: 11, color: ink.grey300, marginTop: 1 },
+  fullScreen: { flex: 1, backgroundColor: ink.black },
+  fullScreenPreview: { ...StyleSheet.absoluteFill, overflow: "hidden", backgroundColor: ink.black },
+  fullScreenHeader: {
+    position: "absolute",
+    top: 56,
+    left: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.68)",
+  },
+  fullScreenTitle: { fontFamily: font.bold, fontSize: 16, color: ink.white },
+  fullScreenSubtitle: { marginTop: 2, fontFamily: font.regular, fontSize: 11, color: ink.grey300 },
+  closeButton: {
+    position: "absolute",
+    top: 56,
+    right: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.72)",
+  },
+  closeText: { marginTop: -3, fontFamily: font.regular, fontSize: 34, lineHeight: 38, color: ink.white },
 });
