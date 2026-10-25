@@ -63,6 +63,7 @@ class Settings(BaseSettings):
 
     # Shared secret the payment service sends as its bearer token
     payment_service_token: str = ""
+    payment_service_url: str = "http://127.0.0.1:8787"
 
     # Anthropic
     anthropic_api_key: str = ""

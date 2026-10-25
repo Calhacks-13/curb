@@ -23,11 +23,21 @@ PAYMENT_SERVICE_USER = "payment_service"
 PLACEHOLDER_PHOTO = "https://placehold.co/640x400?text=Driveway"
 
 
+def _local_time(value: str) -> time:
+    """Accept seed HH:MM values and contract UTC timestamps at one boundary."""
+    if "T" not in value:
+        return time.fromisoformat(value)
+    instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if instant.tzinfo is None:
+        raise ValueError("driveway availability timestamp requires an offset")
+    return instant.astimezone(LA).time().replace(tzinfo=None)
+
+
 def _window(start_hhmm: str, end_hhmm: str, now: datetime) -> tuple[datetime, datetime]:
     """Today's Pacific window for HH:MM bounds, rolled forward once it has ended."""
     today = now.astimezone(LA).date()
-    start = datetime.combine(today, time.fromisoformat(start_hhmm), LA)
-    end = datetime.combine(today, time.fromisoformat(end_hhmm), LA)
+    start = datetime.combine(today, _local_time(start_hhmm), LA)
+    end = datetime.combine(today, _local_time(end_hhmm), LA)
     if end <= start:
         end += timedelta(days=1)  # overnight window
     if now >= end:

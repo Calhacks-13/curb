@@ -80,6 +80,18 @@ def test_seed_window_rolls_forward_after_it_ends():
     assert driveway.availability_start > late
 
 
+def test_seed_driveway_accepts_contract_utc_timestamps():
+    contract_seed = {
+        **SEED["driveway_demo_1"],
+        "availability_start": "2026-10-24T14:00:00Z",  # 07:00 Pacific
+        "availability_end": "2026-10-25T10:00:00Z",  # 03:00 Pacific
+    }
+
+    driveway = driveway_from_seed(contract_seed, NOW)
+
+    assert driveway.availability_start <= NOW < driveway.availability_end
+
+
 def test_unauthenticated_hold_is_rejected():
     client, _ = build_client()
     response = client.post("/v1/driveways/driveway_demo_1/holds", json={"expected_version": 1})

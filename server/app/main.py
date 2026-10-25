@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from app.azure import cosmos, signalr
 from app.config import settings
 from app.routes.bookings import router as bookings_router
+from app.routes.agent import AgentDemoRunner, HttpPaymentExecutor
+from app.routes.agent import router as agent_router
 from app.routes.driveways import router as driveways_router
 from app.routes.parking import router as parking_router
 from app.routes.sessions import router as sessions_router
@@ -37,11 +39,20 @@ async def lifespan(app: FastAPI):
     # Startup: initialize persistence and realtime clients.
     await cosmos.init()
     await signalr.init()
-    app.state.driveway_service = build_driveway_service(cosmos._mem_driveways, datetime.now(UTC))
+    driveway_docs = {
+        driveway.id: driveway.model_dump(mode="json")
+        for driveway in await repository.list_driveways()
+    }
+    app.state.driveway_service = build_driveway_service(driveway_docs, datetime.now(UTC))
+    app.state.agent_demo_runner = AgentDemoRunner(
+        app.state.driveway_service,
+        HttpPaymentExecutor(settings.payment_service_url),
+    )
     yield
     # Shutdown
     from app.cv.sign_reader import close_client
 
+    await app.state.agent_demo_runner.close()
     await close_client()
     await cosmos.close()
     await signalr.close()
@@ -71,6 +82,7 @@ from app.routes.signs import router as signs_router
 from app.routes.v1 import router as v1_router
 
 app.include_router(v1_router)
+app.include_router(agent_router)
 app.include_router(sessions_router)
 app.include_router(parking_router)
 app.include_router(signs_router)

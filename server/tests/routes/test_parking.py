@@ -121,6 +121,7 @@ def test_nearby_still_hides_unsigned_openings_in_illegal_zones(seed):
 
 
 def test_nearby_omits_outside_zones_and_driveways(seed):
+    seed["nearby"]["driveways"] = seed["nearby"]["driveways"][:1]
     seed["nearby"]["zones"][0]["geometry"]["coordinates"] = [[-122.5, 37.775], [-122.51, 37.775]]
     seed["nearby"]["driveways"][0]["location"]["coordinates"] = [-122.5, 37.775]
     client, _ = build_client(seed)
@@ -146,6 +147,7 @@ def test_nearby_recomputes_distance_and_preserves_longitude_latitude(seed):
 
 @pytest.mark.parametrize("state", ["UNAVAILABLE", "AVAILABLE"])
 def test_driveways_only_appear_while_currently_available(seed, state):
+    seed["nearby"]["driveways"] = seed["nearby"]["driveways"][:1]
     seed["nearby"]["driveways"][0]["state"] = state
     client, _ = build_client(seed, NOW + timedelta(hours=8))
     assert nearby(client).json()["driveways"] == []
@@ -155,6 +157,7 @@ def test_driveways_only_appear_while_currently_available(seed, state):
     (-3600.001, False), (-3600, True), (25199.999, True), (25200, False),
 ])
 def test_driveway_availability_window_has_inclusive_start_exclusive_end(seed, offset, visible):
+    seed["nearby"]["driveways"] = seed["nearby"]["driveways"][:1]
     client, _ = build_client(seed, NOW + timedelta(seconds=offset))
     assert bool(nearby(client).json()["driveways"]) == visible
 
@@ -162,6 +165,7 @@ def test_driveway_availability_window_has_inclusive_start_exclusive_end(seed, of
 @pytest.mark.parametrize("state", ["UNAVAILABLE", "HELD", "BOOKED"])
 def test_non_available_driveway_state_is_omitted_inside_window(seed, state):
     driveway = seed["nearby"]["driveways"][0]
+    seed["nearby"]["driveways"] = [driveway]
     driveway["state"] = state
     if state in {"HELD", "BOOKED"}:
         driveway["held_by_user_id"] = "another_driver"
@@ -300,6 +304,7 @@ def test_nearby_uses_committed_marketplace_state(seed):
 
 def test_owner_nearby_keeps_unavailable_listing_outside_radius_and_window(seed):
     driveway = seed["nearby"]["driveways"][0]
+    seed["nearby"]["driveways"] = [driveway]
     driveway["state"] = "UNAVAILABLE"
     driveway["location"]["coordinates"] = [-122.5, 37.775]
     client, _ = build_client(seed, NOW + timedelta(days=1))
