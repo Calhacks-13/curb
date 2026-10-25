@@ -8,7 +8,11 @@ import {
   PaymentFailedRequestSchema,
   RealtimeNegotiateResponseSchema,
 } from "./api.js";
-import { NearbyParkingResponseSchema, PublicSeedFixtureSchema } from "./domain.js";
+import {
+  NearbyParkingResponseSchema,
+  ParkingSpaceViewSchema,
+  PublicSeedFixtureSchema,
+} from "./domain.js";
 import { RealtimeEventSchema } from "./events.js";
 import { PUBLIC_SEED_FIXTURE } from "./fixtures.js";
 
@@ -20,6 +24,28 @@ describe("shared contracts", () => {
     expect(
       DemoSessionResponseSchema.parse({ user: seed.driver, token: "driver-demo-token" }),
     ).toEqual({ user: seed.driver, token: "driver-demo-token" });
+  });
+
+  it("carries bounded detection confidence for seeded and legacy parking spaces", () => {
+    expect(PUBLIC_SEED_FIXTURE.nearby.spaces.map((space) => space.detection_confidence)).toEqual([
+      0.93,
+      0.88,
+      0.84,
+    ]);
+
+    const invalid = structuredClone(PUBLIC_SEED_FIXTURE.nearby.spaces[0]) as Record<
+      string,
+      unknown
+    >;
+    invalid.detection_confidence = 1.01;
+    expect(() => ParkingSpaceViewSchema.parse(invalid)).toThrow();
+
+    const legacy = structuredClone(PUBLIC_SEED_FIXTURE.nearby.spaces[0]) as Record<
+      string,
+      unknown
+    >;
+    delete legacy.detection_confidence;
+    expect(ParkingSpaceViewSchema.parse(legacy).detection_confidence).toBe(0);
   });
 
   it("rejects latitude-longitude coordinates where longitude-latitude is required", () => {

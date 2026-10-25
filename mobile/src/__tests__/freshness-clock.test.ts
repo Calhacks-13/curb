@@ -10,7 +10,7 @@ const NOW = Date.parse("2026-10-24T21:00:00Z");
 const space: ParkingSpace = {
   id: "space", zone_id: "zone", location: { type: "Point", coordinates: [-122.43597, 37.79932] },
   stall_geometry: { type: "Polygon", coordinates: [] }, internal_state: "OPEN",
-  last_observed_at: new Date(NOW).toISOString(), base_confidence: 0.94, version: 1,
+  last_observed_at: new Date(NOW).toISOString(), base_confidence: 0.94, detection_confidence: 0.92, version: 1,
 };
 const driveway: Driveway = {
   id: "driveway", owner_id: "owner", location: space.location, photo_url: null, price_usdc: "8.00",

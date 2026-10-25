@@ -52,7 +52,7 @@ const nearby: NearbyParkingResponse = {
     { id: "aging", age: 120, internal_state: "OPEN" },
     { id: "stale", age: 220, internal_state: "OPEN" },
     { id: "occupied", age: 10, internal_state: "OCCUPIED" },
-  ].map(({ id, age, internal_state }) => ({ id, zone_id: "legal", location: { type: "Point", coordinates: CENTER }, stall_geometry: { type: "Polygon", coordinates: [ring] }, internal_state: internal_state as "OPEN" | "OCCUPIED", last_observed_at: new Date(NOW - age * 1000).toISOString(), base_confidence: 0.93, version: 1 })),
+  ].map(({ id, age, internal_state }) => ({ id, zone_id: "legal", location: { type: "Point", coordinates: CENTER }, stall_geometry: { type: "Polygon", coordinates: [ring] }, internal_state: internal_state as "OPEN" | "OCCUPIED", last_observed_at: new Date(NOW - age * 1000).toISOString(), base_confidence: 0.93, detection_confidence: 0.9, version: 1 })),
   driveways: [{ id: "driveway", owner_id: "owner", location: { type: "Point", coordinates: CENTER }, photo_url: null, price_usdc: "8.00", availability_start: "08:00", availability_end: "22:00", availability_timezone: "America/Los_Angeles", state: "AVAILABLE", held_by_user_id: null, version: 1 }],
 };
 const detail: SpaceDetail = {

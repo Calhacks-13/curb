@@ -101,6 +101,7 @@ export function buildDemoFixture(now: Date) {
         internal_state: opening ? "OPEN" : "OCCUPIED",
         last_observed_at: opening ? new Date(now.getTime() - opening[2] * 1000).toISOString() : null,
         base_confidence: opening ? 0.86 : 0,
+        detection_confidence: opening ? 0.84 : 0.82,
         version: 1,
       });
     });

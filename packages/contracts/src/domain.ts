@@ -113,6 +113,7 @@ export const ParkingSpaceViewSchema = z.strictObject({
   internal_state: InternalSpaceStateSchema,
   last_observed_at: UtcDateTimeSchema.nullable(),
   base_confidence: z.number().min(0).max(1),
+  detection_confidence: z.number().min(0).max(1).default(0),
   freshness: FreshnessSchema.nullable(),
   status_label: z.string().min(1),
   distance_m: z.number().nonnegative(),

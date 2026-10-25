@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime, timezone
 
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.azure import cosmos, signalr
 from app.domain.detections import DetectionSubmission
@@ -68,6 +68,7 @@ class ParkingSpace(BaseModel):
     internal_state: str = "UNKNOWN"
     last_observed_at: str | None = None
     base_confidence: float = 0.0
+    detection_confidence: float = Field(default=0, ge=0, le=1)
     version: int = 1
 
 
@@ -136,6 +137,7 @@ def _block_to_space(block: dict) -> ParkingSpace:
         internal_state=state,
         last_observed_at=last_observed,
         base_confidence=block.get("confidence", 0.0),
+        detection_confidence=block.get("detection_confidence", 0.0),
         version=1,
     )
 
@@ -173,6 +175,7 @@ def _spot_to_space(spot: dict) -> ParkingSpace:
         internal_state=state,
         last_observed_at=last_seen,
         base_confidence=spot.get("confidence", 0.0),
+        detection_confidence=spot.get("detection_confidence", 0.0),
         version=spot.get("version", 1),
     )
 
@@ -283,6 +286,7 @@ async def _persist_confirmed_scan(repository: ParkingRepository, block: BlockObs
         internal_state=InternalSpaceState.OPEN if block.gap_count > 0 else InternalSpaceState.OCCUPIED,
         last_observed_at=observed_at,
         base_confidence=max(0.0, min(1.0, block.confidence)),
+        detection_confidence=block.detection_confidence,
         freshness=None,
         status_label="Likely open",
         distance_m=0,

@@ -148,6 +148,7 @@ def test_detail_returns_canonical_rule_and_404_for_unknown_space(seed):
     assert response.status_code == 200
     detail = SpaceDetail.model_validate(response.json())
     assert detail.id == "space_demo_1"
+    assert detail.detection_confidence == 0.93
     assert detail.sign_rule.id == "sign_rule_demo_1"
     assert detail.max_minutes == 120
     assert client.get("/v1/spaces/missing", headers=AUTH).status_code == 404
@@ -175,7 +176,7 @@ def test_confirmed_scan_is_saved_to_the_canonical_map_repository(seed):
     client, repository = build_client(seed)
     observed_at = NOW - timedelta(seconds=20)
     scan = BlockObservation(
-        segment_id="scan_segment_1", gap_count=1, confidence=0.91,
+        segment_id="scan_segment_1", gap_count=1, confidence=0.91, detection_confidence=0.87,
         lat=37.80279, lng=-122.44935,
         location={"type": "Point", "coordinates": [-122.44935, 37.80279]},
         confirmed_at=observed_at,
@@ -188,6 +189,7 @@ def test_confirmed_scan_is_saved_to_the_canonical_map_repository(seed):
     body = response.json()
     assert [space["id"] for space in body["spaces"]] == [scan.segment_id]
     assert body["spaces"][0]["location"]["coordinates"] == [scan.lng, scan.lat]
+    assert body["spaces"][0]["detection_confidence"] == 0.87
     assert body["zones"][0]["current_rules"].startswith("Scanner-confirmed")
 
 

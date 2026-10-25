@@ -14,7 +14,7 @@ from app.models.api import (
     PublicSeedFixture,
     RealtimeNegotiateResponse,
 )
-from app.models.domain import DrivewayView, SignRuleView
+from app.models.domain import DrivewayView, ParkingSpaceView, SignRuleView
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -57,6 +57,7 @@ def test_seed_fixture_round_trips_between_typescript_and_pydantic():
         "space_demo_2",
         "space_demo_3",
     ]
+    assert [space.detection_confidence for space in parsed.nearby.spaces] == [0.93, 0.88, 0.84]
 
     coordinate_paths = {
         ("nearby", "zones", 0, "geometry", "coordinates", 0, 0),
@@ -142,3 +143,10 @@ def test_python_contracts_reject_values_rejected_by_typescript():
         NearbyParkingQuery(lat="37.775", lng=-122.419, radius_m=804.672)
     with pytest.raises(ValidationError):
         AgentParkingSearchRequest(lat=37.775, lng=-122.419, radius_m=float("inf"))
+
+
+def test_legacy_parking_space_defaults_detection_confidence_to_zero():
+    raw_space = _typescript_seed_fixture()["nearby"]["spaces"][0]
+    raw_space.pop("detection_confidence")
+
+    assert ParkingSpaceView.model_validate(raw_space).detection_confidence == 0

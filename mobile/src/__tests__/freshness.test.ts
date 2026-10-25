@@ -39,6 +39,7 @@ describe("visibleSpaces", () => {
     internal_state: state,
     last_observed_at: ago(age),
     base_confidence: 0.9,
+    detection_confidence: 0.88,
     version: 1,
   });
   const zones = { legal: zone("legal", "LEGAL"), illegal: zone("illegal", "ILLEGAL"), norule: zone("norule", "LEGAL", null) };

@@ -10,6 +10,7 @@ const space: ParkingSpace = {
   internal_state: "OPEN",
   last_observed_at: "2026-10-24T18:00:00Z",
   base_confidence: 0.9,
+  detection_confidence: 0.88,
   version: 3,
 };
 
@@ -65,6 +66,20 @@ describe("entity-scoped versions", () => {
   const update = (type: RealtimeEvent["type"], version: number, payload: object = {}): RealtimeEvent => ({
     type, entity_id: "shared", entity_version: version, occurred_at: "2026-10-24T18:00:05Z",
     payload: payload as Record<string, unknown>,
+  });
+
+  it("defaults legacy realtime openings to zero detection confidence", () => {
+    const { detection_confidence: _, ...legacySpace } = sharedSpace;
+    const next = applyRealtimeEvent(emptyParkingState, update("space.opened", 1, legacySpace));
+    expect(next.spaces.shared.detection_confidence).toBe(0);
+  });
+
+  it("preserves explicit realtime detection confidence", () => {
+    const next = applyRealtimeEvent(emptyParkingState, update("space.opened", 1, {
+      ...sharedSpace,
+      detection_confidence: 0.77,
+    }));
+    expect(next.spaces.shared.detection_confidence).toBe(0.77);
   });
 
   it.each([false, true])("keeps a same-ID space and zone with zone-first=%s", (zoneFirst) => {
